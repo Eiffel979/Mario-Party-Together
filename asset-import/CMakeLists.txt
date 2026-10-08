@@ -1,5 +1,7 @@
 add_library(mpt_asset_import
+  src/byte_source.cpp
   src/dump_format.cpp
+  src/gc_disc.cpp
   src/importer.cpp
   src/known_dumps.cpp
   src/sha256.cpp
