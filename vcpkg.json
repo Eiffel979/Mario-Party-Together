@@ -3,7 +3,21 @@
   "name": "mario-party-together",
   "version-string": "0.0.0",
   "dependencies": [
-    "sdl3",
+    {
+      "name": "sdl3",
+      "$comment": "Default features add ibus -> dbus[systemd] -> libsystemd/libxcrypt on Linux, which needs extra host tools. Revisit IME support in the input/ui phases.",
+      "default-features": false,
+      "features": [
+        {
+          "name": "x11",
+          "platform": "linux"
+        },
+        {
+          "name": "wayland",
+          "platform": "linux"
+        }
+      ]
+    },
     "nlohmann-json",
     "doctest"
   ]

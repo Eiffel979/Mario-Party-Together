@@ -57,7 +57,8 @@ jobs:
             preset: ci-linux
     runs-on: ${{ matrix.os }}
     env:
-      VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
+      # Not VCPKG_ROOT: msvc-dev-cmd points that at Visual Studio's bundled vcpkg.
+      MPT_VCPKG_DIR: ${{ github.workspace }}/../vcpkg
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/../vcpkg-cache
     steps:
       - uses: actions/checkout@v4
@@ -87,9 +88,11 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
-          git clone https://github.com/microsoft/vcpkg "$VCPKG_ROOT"
-          git -C "$VCPKG_ROOT" checkout "$VCPKG_COMMIT"
-          if [ "$RUNNER_OS" = "Windows" ]; then "$VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics; else "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics; fi
+          git clone https://github.com/microsoft/vcpkg "$MPT_VCPKG_DIR"
+          git -C "$MPT_VCPKG_DIR" checkout "$VCPKG_COMMIT"
+          if [ "$RUNNER_OS" = "Windows" ]; then "$MPT_VCPKG_DIR/bootstrap-vcpkg.bat" -disableMetrics; else "$MPT_VCPKG_DIR/bootstrap-vcpkg.sh" -disableMetrics; fi
+          # Written after msvc-dev-cmd so it overrides the VS-bundled vcpkg for the steps below.
+          echo "VCPKG_ROOT=$MPT_VCPKG_DIR" >> "$GITHUB_ENV"
 
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
