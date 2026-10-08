@@ -1,0 +1,4 @@
+# Paths exempt from the compliance scanner (check_repo.py), as glob patterns.
+# Only our own original files belong here, never anything derived from a game.
+# Every entry needs a comment saying what the file is and why it must be binary.
+# qa-reviewer approves additions.

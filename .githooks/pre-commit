@@ -1,0 +1,9 @@
+#!/bin/sh
+# Blocks commits that contain game dumps, extracted assets or stray binaries.
+# Enable once per clone:  git config core.hooksPath .githooks
+if command -v python3 >/dev/null 2>&1; then
+  PYTHON=python3
+else
+  PYTHON=python
+fi
+exec "$PYTHON" tests/compliance/check_repo.py --staged

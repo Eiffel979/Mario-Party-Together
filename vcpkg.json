@@ -1,0 +1,10 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "mario-party-together",
+  "version-string": "0.0.0",
+  "dependencies": [
+    "sdl3",
+    "nlohmann-json",
+    "doctest"
+  ]
+}
