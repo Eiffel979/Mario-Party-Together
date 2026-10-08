@@ -1,7 +1,7 @@
 # ADR 0010: UI stack for the launcher and overlays
 
-**Status:** Proposed
-Author: frontend-ui, 2026-10-08 (Phase 1 plan P1-19). Awaiting architect approval. Does not change a core contract.
+**Status:** Accepted
+Author: frontend-ui, 2026-10-08 (Phase 1 plan P1-19). Approved by: architect, 2026-10-08, with the amendments in the Review. Does not change a core contract.
 
 ## Context
 The user chose a **minimal launcher UI** for Phase 1 (plan decision D6). P1-23 builds exactly these screens:
@@ -122,5 +122,17 @@ All options can be kept out of deterministic state equally well. §3 is architec
 
 **Not done:** no prototype was built for this ADR. P1-23 starts with a time-boxed bring-up (at most 2 days): the RmlUi render interface on the shell's `SDL_Renderer`, one RML screen with spatial navigation driven by a gamepad, and the UI-on/UI-off replay check against `FakeRuntime`. If that bring-up fails, frontend-ui amends this ADR before building the screens. The fallback is Dear ImGui for Phase 1 only, with RmlUi deferred to Phase 2.
 
-## Review
-_Pending architect review (P1-19 acceptance: "Accepted ADR")._
+## Review (architect, 2026-10-08)
+**Verdict: Accepted, with the amendments below.** The ADR keeps the UI entirely left of the `InputFrame` boundary, never lets `ui/` touch a runtime or adapter, never lets UI state into `SaveState`, replays or `stateHash()`, and keeps the shell as the owner of the window and present. RmlUi is the right choice because Phase 2's lobby, room browser and ruleset editor would otherwise force a rewrite. Keeping ImGui for developer tools only, and adding it only when the first tool exists, matches the "small, versioned seams" principle. The 2-day bring-up with an ImGui fallback for Phase 1 is a sensible hedge.
+
+**Amendments (binding):**
+1. **`IOverlay` is a shell-internal seam, not a core contract.** It lives in `core/shell/` (architect-owned) and is not covered by `kCoreContractVersion`. Changing it needs architect review, not an ADR. Its final shape is settled in P1-06. `ui/` also needs a way to ask the shell to start, pause, resume and stop a session. That is a second shell-side interface, for example `IShellCommands`, implemented by the shell and handed to `ui/`, so that `ui/` never constructs a `Session` itself. It is defined in P1-06 together with `IOverlay`.
+2. **"No stepping while a screen has focus" is a Phase 1 (local-only) rule.** In Phase 2 netplay, a local overlay cannot pause the lockstep session. While an overlay is open there, the local player's pads are held at "neutral and connected" in the frames we send, and the session keeps stepping. The Phase 2 netplay ADR must confirm this. Host-initiated pause for everyone is a protocol message, not a UI action.
+3. **The host pause action must also be excluded from replays and netplay input by construction.** P1-07 implements it as a host-reserved binding consumed before `input::Mapper`, as §3.2 says. A unit test in `input/` shows that the reserved binding never sets a bit in `PadState::buttons`.
+4. **Fonts and assets.** The single OFL font is the only binary file `ui/` may add in Phase 1. Its exact path is allowlisted by qa-reviewer, and its `OFL.txt` sits next to it. Any further binary asset needs this ADR amended.
+5. **The bring-up gate is recorded in the Phase 1 plan** (P1-23). If it fails, the ADR amendment that switches Phase 1 to ImGui is written before any screen is built, and the `IOverlay` seam stays unchanged.
+
+**Requests to architect (§6), recorded as follow-ups rather than done now, because `ui/` does not exist yet:**
+- Adding `rmlui` (default features) to `vcpkg.json` and `add_subdirectory(ui)` to the root `CMakeLists.txt` is a **P1-23 prerequisite**. architect lands it in the first P1-23 PR, alongside the first `ui/` sources, so `main` never has a dangling subdirectory.
+- The overlay pass, the `IOverlay` and `IShellCommands` seams, event routing, not stepping while a screen has focus, and the UI-on/UI-off replay test are **added to P1-06**.
+
