@@ -1,9 +1,14 @@
 #!/bin/sh
 # Blocks commits that contain game dumps, extracted assets or stray binaries.
 # Enable once per clone:  git config core.hooksPath .githooks
-if command -v python3 >/dev/null 2>&1; then
-  PYTHON=python3
-else
-  PYTHON=python
-fi
-exec "$PYTHON" tests/compliance/check_repo.py --staged
+#
+# Uses the first Python 3 that actually runs. A name on PATH is not enough: on Windows,
+# python3 is often the Microsoft Store stub, which exists but fails when run.
+for candidate in python3 python "py -3"; do
+  # Unquoted on purpose, so "py -3" splits into a command and its argument.
+  if $candidate -c 'import sys; sys.exit(sys.version_info < (3, 7))' >/dev/null 2>&1; then
+    exec $candidate tests/compliance/check_repo.py --staged
+  fi
+done
+echo "pre-commit: no working Python 3 found (tried python3, python, py -3). See docs/BUILDING.md." >&2
+exit 1
