@@ -23,7 +23,7 @@ There are three technical strategies. Which one a title uses depends on how much
 | Strategy | What it is | Feasible for |
 |---|---|---|
 | **Static recompilation** | Translate the original MIPS/PowerPC machine code into C ahead of time and link it against our host libraries (e.g. N64Recomp + RT64 renderer). | N64: MP1, MP2, MP3 |
-| **Decompilation port** | Use the community decomp's matching C source. Replace the console SDK (GX graphics, audio, pad, DVD) with PC implementations. | MP4 (fully decompiled, May 2025). MP5–MP8 as their decomps mature. |
+| **Decompilation port** | Use the community decomp's matching C source. Replace the console SDK (GX graphics, audio, pad, DVD) with PC implementations. | MP4 (fully decompiled, May 2025), built from upstream's CC0 PC port of the decomp, Party Board (ADR 0009). MP5–MP8 as their decomps mature. |
 | **Embedded high-level emulation core** | Last resort: embed a CPU/GPU core as a library behind the same interface. The user never sees "an emulator", but it is one internally. | MP9 (Wii), MP10 (Wii U). Switch titles only if legally viable. |
 
 Every title, whatever its strategy, sits behind the same two interfaces (§5). That is what makes the shell one engine.
@@ -33,7 +33,7 @@ Every title, whatever its strategy, sits behind the same two interfaces (§5). T
 | Title | Platform | Strategy | Risk |
 |---|---|---|---|
 | MP1, MP2, MP3 | N64 | Recomp, with decomp symbols | Low–Med |
-| MP4 | GameCube | Decomp port (100% decompiled) | **Low (first target)** |
+| MP4 | GameCube | Decomp port, built from upstream's CC0 PC port (Party Board) of the 100% matching decomp (ADR 0009) | **Low–Med (first target).** Re-verified in P1-01: sources are complete and already run natively. Our determinism, save-state, audio and movie work keeps it above Low. |
 | MP5, MP6, MP7 | GameCube | Decomp port (decomps in progress: mariopartyrd) | Med |
 | MP8 | Wii | Decomp port + motion remap | Med–High |
 | MP9 | Wii | Decomp if one exists, otherwise embedded core | High |
@@ -97,7 +97,7 @@ struct ITitleAdapter {
 
 Stable content IDs: `mp4.board.toads_midway_madness` and `mp2.minigame.bumper_balls`.
 
-The sketch above is simplified. The real headers are in `core/include/mpt/core/`; ADR 0002 records the v0 contract and how it differs from this sketch.
+The sketch above is simplified. The real headers are in `core/include/mpt/core/`; ADR 0002 records the v0 contract and how it differs from this sketch. Phase 1 defines contract v1 in ADRs 0003–0005 (Accepted): `frameRate()`, host-owned save media, `PartySnapshot::phase`, `Session` and `PartyDirector`. The headers land in Phase 1 work item P1-03.
 
 ## 6. Repository layout and ownership
 
@@ -112,18 +112,23 @@ The sketch above is simplified. The real headers are in `core/include/mpt/core/`
 | `runtimes/n64/`, `adapters/mp1..mp3/` | N64 titles | `runtime-n64` |
 | `runtimes/gc_wii/`, `adapters/mp4..mp8/` | GameCube/Wii titles | `runtime-gc-wii` |
 | `runtimes/modern/`, `adapters/mp9, mp10, smp, mpss/` | Feasibility research and runtimes | `runtime-modern` |
-| `tests/`, `.github/` | Test harnesses, CI, determinism checks | `qa-reviewer` |
+| `runtimes/gc_wii/<title>/` | Per-title game-module glue: build recipe, shims, patches against pinned CC0/MIT/ISC sources, `decomp.lock` (ADR 0009). Game source itself (decomp or upstream port) is never in the repo. | `runtime-gc-wii` |
+| `input/profiles/<title>/` | Per-title input profiles | `input-mapping` |
+| `tests/`, `.github/`, `.githooks/`, `.gitignore` | Test harnesses, CI, determinism checks, compliance config | `qa-reviewer` |
+| Root build files (`CMakeLists.txt`, `CMakePresets.json`, `vcpkg*.json`) | Top-level build and dependency pins | `architect` (owners request changes) |
 | `docs/adr/`, `docs/titles/` | Decisions, per-title notes | everyone; ADRs approved by `architect` |
+| `docs/PLAN.md` | This plan, including the ownership table and roadmap | `architect` |
+| `docs/phases/` | Phase plans | `architect` |
 
 ## 7. Roadmap
 
 | Phase | Goal | Exit criteria |
 |---|---|---|
 | **0. Foundations** | CMake/vcpkg, SDL3 shell, CI, interfaces, asset-import skeleton, compliance checks | Empty shell boots on Windows/Linux. CI blocks commits containing binaries or dumps. |
-| **1. Vertical slice: MP4** | MP4 decomp running behind `ITitleRuntime` with a PC GX layer | Full local 4-player party on keyboard/controller. Deterministic replay test passes. |
-| **2. Online + rulesets (single-title)** | Lobby, lockstep netplay, room browser, ruleset schema + MP4 presets and custom options | 4 players on separate PCs finish a 20-turn MP4 party with a custom ruleset and no desync. |
+| **1. Vertical slice: MP4** ([plan](phases/phase-1.md)) | MP4 decomp running behind `ITitleRuntime` with a PC GX layer | Full local 4-player party on keyboard/controller. Deterministic replay test passes. Detailed, testable criteria E1–E11 in the phase plan. |
+| **2. Online + rulesets (single-title)** | Lobby, lockstep netplay, room browser, ruleset schema + MP4 presets and custom options | 4 players on separate PCs finish a 20-turn MP4 party with a custom ruleset and no desync. **Entry blocker:** an ADR closing the ADR 0008 save-state portability exception. |
 | **3. N64 trilogy** | MP1–3 via recomp. Adapters and presets. Fix MP1's analog-stick-spin minigames for keyboard. | MP1/2/3 Only presets playable online. |
-| **4. GameCube/Wii rest** | MP5, 6, 7 (decomp-gated), MP8 with motion remap | Each title playable as its own preset. |
+| **4. GameCube/Wii rest** | MP5, 6, 7 (decomp-gated), MP8 with motion remap | Each title playable as its own preset. **Entry requirement:** RVZ input in asset-import before MP8 (and before MP9 in Phase 6), per Phase 1 plan §12. |
 | **5. Cross-game parties** | Party Director suspend/launch/resume; mixed minigame pools and "Greatest Hits" presets | Mixed-pool ruleset across ≥3 titles playable online. |
 | **6. Wii/Wii U** | MP9 and MP10 feasibility study, then integration | Go/no-go ADR, then playable if go. |
 | **7. Switch titles** | Legal and technical research only | Go/no-go ADR. Default assumption: out of scope. |
@@ -134,3 +139,11 @@ The sketch above is simplified. The real headers are in `core/include/mpt/core/`
 - Interface changes require an ADR in `docs/adr/NNNN-title.md`.
 - Each title keeps a living `docs/titles/<id>.md` (strategy, decomp status, hooks found, known issues).
 - `qa-reviewer` reviews before merge. Determinism and compliance checks must pass.
+
+## 9. Phase plans
+
+Each phase gets a plan in `docs/phases/phase-<N>.md`, written by `architect` before the phase starts. It holds the scope and non-goals, testable exit criteria, work items (one owner each, with files, contract, dependencies and test), the proposed ADRs, risks and the decisions needed from the user. Re-check the §3 feasibility snapshot for the phase's titles when the plan is written.
+
+| Phase | Plan | Status |
+|---|---|---|
+| 1 | [phase-1.md](phases/phase-1.md) | Approved. User decisions recorded (§10). Gate G1 signed off 2026-10-08. ADRs 0003–0009 Accepted, except ADR 0007 §6 (waits for spike S1). |
