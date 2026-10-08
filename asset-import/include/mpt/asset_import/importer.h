@@ -5,6 +5,7 @@
 #include <string>
 
 #include "mpt/asset_import/dump_format.h"
+#include "mpt/asset_import/gc_disc.h"
 #include "mpt/asset_import/known_dumps.h"
 #include "mpt/core/dump.h"
 
@@ -14,6 +15,7 @@ struct IdentifyReport {
   DumpFormat format = DumpFormat::unknown;
   std::string sha256;              // empty if the file was not hashed
   std::optional<KnownDump> match;  // set when the hash is in known_dumps.json
+  std::optional<GcDiscHeader> gc_disc;  // set for a structurally valid GameCube disc (ID, region, revision)
   std::string message;             // why identification failed, for the user
 };
 

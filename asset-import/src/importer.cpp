@@ -3,6 +3,8 @@
 #include <fstream>
 #include <vector>
 
+#include "mpt/asset_import/byte_source.h"
+#include "mpt/asset_import/gc_disc.h"
 #include "mpt/asset_import/sha256.h"
 
 namespace mpt::asset_import {
@@ -34,8 +36,27 @@ IdentifyReport Importer::identify(const std::filesystem::path& path) const {
   }
   if (is_compressed_container(report.format)) {
     report.message = std::string(to_string(report.format)) +
-                     " images are not supported yet. Convert the dump to a plain .iso and try again.";
+                     " images are not supported yet: only plain, full-size .iso disc images can be imported. "
+                     "Convert the dump to a plain .iso (for example with Dolphin's Convert File, format ISO) "
+                     "and try again.";
     return report;
+  }
+
+  if (report.format == DumpFormat::gc_disc) {
+    // Validate the disc structure before spending time on the hash, so a damaged,
+    // truncated or altered image gets a specific message.
+    std::string error;
+    const auto source = FileSource::open(path, error);
+    if (!source) {
+      report.message = error;
+      return report;
+    }
+    const auto disc = GcDisc::open(*source, error);
+    if (!disc) {
+      report.message = error;
+      return report;
+    }
+    report.gc_disc = disc->header();
   }
 
   file.clear();
@@ -65,6 +86,16 @@ IdentifyReport Importer::identify(const std::filesystem::path& path) const {
 
   if (const KnownDump* match = known_.find_by_sha256(report.sha256); match && match->size == size) {
     report.match = *match;
+  } else if (report.gc_disc) {
+    const GcDiscHeader& h = *report.gc_disc;
+    report.message = "This GameCube disc (" + h.disc_id + ", " + std::string(gc_region_name(h.region_code())) + ", " +
+                     gc_revision_name(h.version) + ") is not in the known-good list.";
+    if (size != kGcFullDiscSize) {
+      report.message += " The image is " + std::to_string(size) + " bytes but a full disc is " +
+                        std::to_string(kGcFullDiscSize) + " bytes, so it is probably truncated or trimmed.";
+    } else {
+      report.message += " It may be a bad dump, a hack, or an unsupported revision or region.";
+    }
   } else {
     report.message = "This dump is not in the known-good list. It may be a bad dump, a hack, or an unsupported revision.";
   }

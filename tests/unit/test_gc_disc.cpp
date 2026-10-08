@@ -14,6 +14,9 @@
 
 #include "mpt/asset_import/byte_source.h"
 #include "mpt/asset_import/gc_disc.h"
+#include "mpt/asset_import/importer.h"
+#include "mpt/asset_import/known_dumps.h"
+#include "mpt/asset_import/sha256.h"
 
 using namespace mpt;
 using namespace mpt::asset_import;
@@ -38,6 +41,12 @@ void put32(std::vector<std::byte>& image, std::size_t offset, std::uint32_t valu
 std::uint32_t get32(const std::vector<std::byte>& image, std::size_t offset) {
   return (std::to_integer<std::uint32_t>(image[offset]) << 24) | (std::to_integer<std::uint32_t>(image[offset + 1]) << 16) |
          (std::to_integer<std::uint32_t>(image[offset + 2]) << 8) | std::to_integer<std::uint32_t>(image[offset + 3]);
+}
+
+std::vector<std::byte> bytes_of(std::string_view text) {
+  std::vector<std::byte> out(text.size());
+  for (std::size_t i = 0; i < text.size(); ++i) out[i] = static_cast<std::byte>(text[i]);
+  return out;
 }
 
 struct DiscSpec {
@@ -253,6 +262,15 @@ void check_contained(const fs::path& dir) {
     CHECK_FALSE(rel.empty());
     CHECK(*rel.begin() != "..");
   }
+}
+
+KnownDumps known_mp4(const std::string& sha256, std::uint64_t size) {
+  std::string error;
+  const std::string json = R"({"version":1,"dumps":[{"title":"mp4","region":"USA","revision":"Rev 0","sha256":")" +
+                           sha256 + R"(","size":)" + std::to_string(size) + "}]}";
+  auto known = KnownDumps::parse(json, error);
+  REQUIRE_MESSAGE(known.has_value(), error);
+  return *known;
 }
 
 }  // namespace
@@ -637,4 +655,63 @@ TEST_CASE("randomly corrupted FSTs never yield unsafe or overlapping entries") {
   // The fuzzer must exercise both paths, or it is not testing much.
   CHECK(accepted > 0);
   CHECK(accepted < 4000);
+}
+
+TEST_CASE("the importer validates and identifies a synthetic GameCube disc") {
+  const BuiltDisc built = build_disc(default_spec());
+  Sha256 hasher;
+  hasher.update(built.image);
+  const std::string sha = hasher.finish_hex();
+  const TempDir tmp;
+
+  SUBCASE("known disc") {
+    const Importer importer(known_mp4(sha, built.image.size()));
+    const IdentifyReport report = importer.identify(tmp.write("synthetic.iso", built.image));
+    CHECK(report.format == DumpFormat::gc_disc);
+    REQUIRE(report.match.has_value());
+    CHECK(report.match->title == TitleId::mp4);
+    REQUIRE(report.gc_disc.has_value());
+    CHECK(gc_version_tag(*report.gc_disc) == "GMPE01_00");
+  }
+
+  SUBCASE("unknown revision is named") {
+    DiscSpec spec = default_spec();
+    spec.version = 1;
+    const Importer importer(known_mp4(sha, built.image.size()));
+    const IdentifyReport report = importer.identify(tmp.write("rev1.iso", build_disc(spec).image));
+    CHECK_FALSE(report.match.has_value());
+    CHECK(report.message.find("GMPE01") != std::string::npos);
+    CHECK(report.message.find("Rev 1") != std::string::npos);
+    CHECK(report.message.find("USA") != std::string::npos);
+    CHECK(report.message.find("truncated or trimmed") != std::string::npos);  // synthetic discs are small
+  }
+
+  SUBCASE("damaged disc is rejected before hashing") {
+    auto img = built.image;
+    put32(img, built.entry_at(built.index_of("deep.bin")) + 4, 0xFFFFFFF0);
+    const Importer importer(known_mp4(sha, built.image.size()));
+    const IdentifyReport report = importer.identify(tmp.write("damaged.iso", img));
+    CHECK_FALSE(report.match.has_value());
+    CHECK(report.sha256.empty());
+    CHECK(report.message.find("truncated") != std::string::npos);
+  }
+
+  SUBCASE("NKit image gets its own message") {
+    auto img = built.image;
+    put32(img, 0x200, 0x4E4B4954);
+    const Importer importer(known_mp4(sha, built.image.size()));
+    const IdentifyReport report = importer.identify(tmp.write("game.nkit.iso", img));
+    CHECK_FALSE(report.match.has_value());
+    CHECK(report.message.find("NKit") != std::string::npos);
+  }
+
+  SUBCASE("RVZ image gets its own message") {
+    std::vector<std::byte> rvz = bytes_of("RVZ\x01 synthetic container header");
+    rvz.resize(0x100);
+    const Importer importer(known_mp4(sha, built.image.size()));
+    const IdentifyReport report = importer.identify(tmp.write("game.rvz", rvz));
+    CHECK(report.format == DumpFormat::rvz);
+    CHECK(report.message.find("RVZ") != std::string::npos);
+    CHECK(report.message.find("plain") != std::string::npos);
+  }
 }
