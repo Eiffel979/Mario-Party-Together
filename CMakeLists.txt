@@ -34,6 +34,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 # asset-import first: core/ reads MPT_KNOWN_DUMPS_JSON from it.
 add_subdirectory(asset-import)
 add_subdirectory(core)
+add_subdirectory(input)
 
 if(MPT_BUILD_TESTS)
   enable_testing()
