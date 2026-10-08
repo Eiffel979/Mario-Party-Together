@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "../support/determinism_harness.h"
 #include "../support/fake_runtime.h"
 #include "../support/replay_harness.h"
 
@@ -7,17 +8,8 @@ using namespace mpt;
 
 namespace {
 
-// Synthetic input script: mashing A and sweeping the stick, different per player.
-InputFrame scripted_input(std::uint64_t frame) {
-  InputFrame in;
-  in.frame = frame;
-  for (std::size_t p = 0; p < kMaxPlayers; ++p) {
-    in.pads[p].connected = 1;
-    if ((frame + p) % 3 == 0) in.pads[p].buttons |= kButtonA;
-    in.pads[p].stick_x = static_cast<std::int16_t>(static_cast<std::int64_t>((frame * 997 + p * 31) % 65536) - 32768);
-  }
-  return in;
-}
+// Synthetic input script, shared with the sequential and cross-process harness.
+using test::scripted_input;
 
 constexpr std::uint64_t kFrames = 600;
 constexpr std::uint64_t kInterval = 60;
