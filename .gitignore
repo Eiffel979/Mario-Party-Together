@@ -1,0 +1,26 @@
+# Build output
+build/
+out/
+cmake-build-*/
+.vs/
+*.user
+
+# NEVER commit game dumps or extracted content (see ADR 0001)
+*.z64
+*.n64
+*.v64
+*.iso
+*.gcm
+*.rvz
+*.wbfs
+*.wia
+*.ciso
+*.wud
+*.wux
+*.rpx
+*.nsp
+*.xci
+*.nca
+*.keys
+extracted/
+dumps/
