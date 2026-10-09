@@ -81,7 +81,8 @@ one, the built-in GameCube-style default (`builtin_default_profile()`) is used.
 ```
 
 - `format`, `version`, `name` and `bindings` are required; `title`, `options` and
-  `minigames` are optional. Unknown keys, names or out-of-range values are errors.
+  `minigames` are optional. Unknown keys, names, out-of-range values and duplicate
+  keys within one object are errors.
 - **Base bindings:** a control that is not listed is unbound.
 - **Minigame overrides:** keys are content IDs of kind `minigame` for the profile's
   title. A listed control replaces the base list (`[]` unbinds it); unlisted controls

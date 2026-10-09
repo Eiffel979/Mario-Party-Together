@@ -136,6 +136,15 @@ TEST_CASE("profile errors are reported and leave the output unchanged") {
       {with_replaced(s, "mp4.minigame.test_mash", "mp3.minigame.test_mash"), "another title"},
       {with_replaced(s, "\"note\"", "\"comment\""), "unknown key 'comment'"},
       {with_replaced(s, "\"bindings\": {\n    \"a\"", "\"bindingz\": {\n    \"a\""), "unknown key 'bindingz'"},
+      // Duplicate keys at every level: top level, options, bindings, a minigame entry.
+      {with_replaced(s, "\"version\": 1,", "\"version\": 1, \"version\": 1,"), "duplicate key 'version'"},
+      {with_replaced(s, "\"trigger_button_threshold\": 200", "\"trigger_button_threshold\": 200, "
+                                                              "\"trigger_button_threshold\": 100"),
+       "duplicate key 'trigger_button_threshold'"},
+      {with_replaced(s, "\"trigger_l\": [\"axis:left_trigger\"]",
+                     "\"trigger_l\": [\"axis:left_trigger\"], \"a\": [\"key:j\"]"),
+       "duplicate key 'a'"},
+      {with_replaced(s, "\"stick_up\": [] }", "\"stick_up\": [], \"stick_up\": [] }"), "duplicate key 'stick_up'"},
   };
   for (const Case& c : cases) {
     CAPTURE(c.json);
@@ -147,6 +156,19 @@ TEST_CASE("profile errors are reported and leave the output unchanged") {
     CHECK(r.error().find(c.expect) != std::string::npos);
     CHECK(p.name == "untouched");
   }
+}
+
+TEST_CASE("the same key in sibling or nested objects is not a duplicate") {
+  Profile p;
+  const mpt::Result r = parse_profile(R"({"format":"mpt.input_profile","version":1,"name":"x",
+      "bindings":{"a":["key:k"]},
+      "minigames":{
+        "mp4.minigame.one":{"note":"n","bindings":{"a":["key:j"]}},
+        "mp4.minigame.two":{"note":"n","bindings":{"a":["key:l"]}}}})",
+                                      p);
+  CAPTURE(r.error());
+  REQUIRE(r.ok());
+  CHECK(p.minigames.size() == 2);
 }
 
 TEST_CASE("bindings section is required; title is optional") {

@@ -4,6 +4,7 @@
 #include <charconv>
 #include <cstdlib>
 #include <initializer_list>
+#include <set>
 #include <utility>
 
 #include <nlohmann/json.hpp>
@@ -257,8 +258,24 @@ ResolvedProfile Profile::resolve(std::string_view minigame_id) const {
 }
 
 Result parse_profile(std::string_view json_text, Profile& out) {
-  const json root = json::parse(json_text, nullptr, /*allow_exceptions=*/false);
+  // nlohmann keeps the last of duplicate keys silently. Track the keys of each
+  // open object (one set per nesting depth) and reject any repeat.
+  std::vector<std::set<std::string>> open_keys;
+  std::string duplicate;
+  const json::parser_callback_t track_keys = [&](int depth, json::parse_event_t event, json& parsed) {
+    const auto d = static_cast<std::size_t>(depth);
+    if (event == json::parse_event_t::object_start) {
+      if (open_keys.size() < d + 2) open_keys.resize(d + 2);
+      open_keys[d + 1].clear();
+    } else if (event == json::parse_event_t::key && duplicate.empty() && d < open_keys.size()) {
+      const auto key = parsed.get<std::string>();
+      if (!open_keys[d].insert(key).second) duplicate = key;
+    }
+    return true;
+  };
+  const json root = json::parse(json_text, track_keys, /*allow_exceptions=*/false);
   if (root.is_discarded()) return Result::failure("profile: not valid JSON");
+  if (!duplicate.empty()) return Result::failure("profile: duplicate key '" + duplicate + "'");
   if (!root.is_object()) return Result::failure("profile: top level must be an object");
   if (Result r = check_keys(root, "profile", {"format", "version", "name", "title", "options", "bindings", "minigames"});
       !r) {
