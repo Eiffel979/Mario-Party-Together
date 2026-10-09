@@ -245,6 +245,31 @@ TEST_CASE("loadState rejects old, foreign or corrupt states and keeps the curren
   CHECK(target.stateHash() == source.stateHash());
 }
 
+TEST_CASE("a stick at -32768 is treated exactly as -32767") {
+  // core/input.h pad conventions: runtimes must not let the extra negative value diverge.
+  auto with_stick = [](std::int16_t value) {
+    return [value](std::uint64_t frame) {
+      InputFrame in = test::scripted_input(frame);
+      for (PadState& pad : in.pads) {
+        pad.stick_x = value;
+        pad.stick_y = value;
+        pad.c_stick_x = value;
+        pad.c_stick_y = value;
+      }
+      return in;
+    };
+  };
+  const auto min16 = test::run_fresh_instance(make_fake, spec_with(std::nullopt, with_stick(-32768)));
+  const auto min15 = test::run_fresh_instance(make_fake, spec_with(std::nullopt, with_stick(-32767)));
+  const auto other = test::run_fresh_instance(make_fake, spec_with(std::nullopt, with_stick(-30000)));
+  REQUIRE(min16.status.ok());
+  REQUIRE(min15.status.ok());
+  REQUIRE(other.status.ok());
+  INFO(test::describe_divergence(min16.trail, min15.trail));
+  CHECK_FALSE(test::first_divergence(min16.trail, min15.trail).has_value());
+  CHECK(test::first_divergence(min15.trail, other.trail).has_value());
+}
+
 TEST_CASE("PartySnapshot v1 fields default to no party") {
   const PartySnapshot snapshot;
   CHECK(snapshot.phase == PartyPhase::none);

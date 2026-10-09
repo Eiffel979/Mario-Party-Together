@@ -72,7 +72,9 @@ class FakeRuntime final : public ITitleRuntime {
     for (std::size_t p = 0; p < kMaxPlayers; ++p) {
       const PadState& pad = inputs.pads[p];
       state_.score[p] += static_cast<std::int64_t>(pad.buttons & kButtonA ? rng.below(10) : 0);
-      state_.score[p] += pad.stick_x / 1024;
+      // -32768 is treated exactly as -32767 (pad conventions in core/input.h).
+      const int stick_x = pad.stick_x < -32767 ? -32767 : pad.stick_x;
+      state_.score[p] += stick_x / 1024;
     }
     state_.rng_state = rng.next();
 
