@@ -10,6 +10,18 @@
 
 namespace mpt {
 
+// Where a party is (ADR 0005). Adapters fill it as well as the title allows. A title
+// that cannot tell `results` from `finished` must report `finished` only once the
+// results are final. Values are stable: append only, never reorder.
+enum class PartyPhase : std::uint8_t {
+  none,      // not in a party (menus, title screen)
+  setup,     // party settings, character select
+  board,     // board turns
+  minigame,  // a minigame is running
+  results,   // end-of-party bonus stars and results
+  finished,  // the party is over and its results are final
+};
+
 // Canonical party state, owned by the Party Director. Adapters mirror their
 // title's in-memory state into this and write Director decisions back.
 struct PlayerState {
@@ -18,6 +30,8 @@ struct PlayerState {
   std::int32_t coins = 0;
   std::int32_t stars = 0;
   std::int32_t board_space = -1;  // title-defined space index, -1 if unknown
+
+  friend bool operator==(const PlayerState&, const PlayerState&) = default;
 };
 
 struct PartySnapshot {
@@ -25,6 +39,10 @@ struct PartySnapshot {
   std::int32_t turn = 0;        // 1-based current turn, 0 before the party starts
   std::int32_t max_turns = 0;
   std::array<PlayerState, kMaxPlayers> players{};
+  PartyPhase phase = PartyPhase::none;
+  std::optional<MinigameId> current_minigame;  // set while phase == minigame, else nullopt
+
+  friend bool operator==(const PartySnapshot&, const PartySnapshot&) = default;
 };
 
 struct MinigameSetup {
