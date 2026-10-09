@@ -42,12 +42,14 @@ enum Button : std::uint32_t {
 // ARM64, all little-endian) that equals their in-memory bytes, which is the only
 // reason byte-for-byte copies are allowed. The static_asserts below enforce it.
 //
-// Pad conventions (clarified in contract v1; comments only, no layout change):
+// Pad conventions (ADR 0002 amendment 12; comments only, no layout change):
 // - Sticks (stick_*, c_stick_*): +X is right and +Y is up, 0 at rest. input/ produces
 //   values in the symmetric range -32767..32767. Runtimes must still accept -32768
 //   and treat it exactly as -32767, so a replay or peer that sends it cannot diverge.
 //   Each runtime scales this range onto its console's native stick range.
-// - Triggers (trigger_*): 0 is released, 255 is fully pressed.
+// - Triggers (trigger_*): 0 is released, 255 is fully pressed. Every value is valid.
+// - The -32768 folding rule covers the four stick fields only. pointer_* uses the
+//   full range -32768..32767 as plain values, and accel/gyro are not folded either.
 struct PadState {
   std::uint32_t buttons = 0;          // Button bitmask
   std::int16_t stick_x = 0;           // left stick, -32767..32767, +X right
@@ -60,7 +62,7 @@ struct PadState {
   std::uint8_t reserved = 0;
   std::array<std::int16_t, 3> accel{};  // motion (Wii Remote, Joy-Con), units defined by input/
   std::array<std::int16_t, 3> gyro{};
-  std::int16_t pointer_x = 0;          // IR pointer, normalized to -32768..32767
+  std::int16_t pointer_x = 0;          // IR pointer, normalized to -32768..32767 (full range, not folded)
   std::int16_t pointer_y = 0;
 
   friend bool operator==(const PadState&, const PadState&) = default;

@@ -40,7 +40,8 @@ struct PartySnapshot {
   std::int32_t max_turns = 0;
   std::array<PlayerState, kMaxPlayers> players{};
   PartyPhase phase = PartyPhase::none;
-  std::optional<MinigameId> current_minigame;  // set while phase == minigame, else nullopt
+  // Set exactly when phase == minigame, nullopt in every other phase (ADR 0005).
+  std::optional<MinigameId> current_minigame;
 
   friend bool operator==(const PartySnapshot&, const PartySnapshot&) = default;
 };

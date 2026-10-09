@@ -96,10 +96,20 @@ class ITitleRuntime {
   virtual FrameRate frameRate() const = 0;
 
   // Save media (ADR 0004). The generation starts at 0 after boot() and increments each
-  // time the game commits a write to its save media. Writes complete after
-  // a fixed, documented number of frames, so the generation changes on the same frame
-  // on every peer. The shell persists saveMedia() when the generation changes, except
-  // in ephemeral sessions (replays, tests, netplay guests).
+  // time the game commits a write to its save media. Writes complete after a fixed,
+  // documented number of frames, so the generation changes on the same frame on every
+  // peer.
+  //
+  // The image and the generation are game state and are part of SaveState:
+  // loadState(s) restores both to the producer's values at s.frame, so a rewind can
+  // lower the generation (ADR 0004 rule 9).
+  //
+  // The shell detects writes only across stepFrame(): it compares the generation just
+  // before and just after each step and persists saveMedia() when they differ. A
+  // loadState() is a resync point, not a write. The shell takes the restored generation
+  // as its new baseline and persists nothing, so rewind and rollback never persist by
+  // themselves or miss a later write (ADR 0004 rule 10). Ephemeral sessions (replays,
+  // tests, netplay guests) never persist.
   virtual std::uint64_t saveMediaGeneration() const = 0;
   // Current image. Only meaningful to persist when the generation has changed.
   virtual SaveMedia saveMedia() const = 0;
