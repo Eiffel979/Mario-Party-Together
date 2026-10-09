@@ -228,6 +228,35 @@ std::string build_key(const BuildRecipe& recipe, std::string_view dump_sha256,
   return sha.finish_hex();
 }
 
+std::optional<DumpForBuild> dump_for_build(const IdentifyReport& report, const fs::path& dump_path,
+                                           std::string& error) {
+  if (!report.match) {
+    error = "The dump is not a known dump, so it cannot be built.";
+    return std::nullopt;
+  }
+  return DumpForBuild{report.match->sha256, report.match->size, dump_path,
+                      report.gc_disc ? gc_version_tag(*report.gc_disc) : std::string{}};
+}
+
+std::optional<VerifiedDump> make_verified(const IdentifyReport& report, const BuildOutcome& outcome,
+                                          std::string& error) {
+  if (!report.match) {
+    error = "The dump is not a known dump.";
+    return std::nullopt;
+  }
+  const KnownDump& dump = *report.match;
+  if (report.sha256 != dump.sha256 || outcome.manifest.dump_sha256 != dump.sha256) {
+    error = "The build is not a build of this dump.";
+    return std::nullopt;
+  }
+  std::error_code ec;
+  if (outcome.build_dir.empty() || !fs::is_regular_file(outcome.build_dir / kManifestName, ec)) {
+    error = "The build folder is missing or incomplete. Build the game again.";
+    return std::nullopt;
+  }
+  return VerifiedDump{dump.title, dump.region, dump.revision, dump.sha256, outcome.build_dir};
+}
+
 std::optional<BuildOutcome> BuildCache::build(const BuildRecipe& recipe, const BuildRequest& request,
                                               std::string& error) {
   std::error_code ec;

@@ -900,3 +900,47 @@ TEST_CASE("a recipe with no disc and no sources still caches") {
   CHECK(f.build_ok().reused);
   CHECK(f.git.calls.empty());
 }
+
+TEST_CASE("a VerifiedDump comes only from an identified dump and its build") {
+  BuildFixture f;
+  std::string error;
+  const auto known = KnownDumps::parse(R"({"version":1,"dumps":[{"title":"mp4","region":"USA","revision":"Rev 0",)"
+                                       R"("sha256":")" + f.request.dump.sha256 + R"(","size":)" +
+                                           std::to_string(f.request.dump.size) + "}]}",
+                                       error);
+  REQUIRE_MESSAGE(known.has_value(), error);
+  const Importer importer(*known);
+  const IdentifyReport report = importer.identify(f.request.dump.path);
+  REQUIRE(report.match.has_value());
+
+  const auto input = dump_for_build(report, f.request.dump.path, error);
+  REQUIRE_MESSAGE(input.has_value(), error);
+  CHECK(input->sha256 == f.request.dump.sha256);
+  CHECK(input->size == f.request.dump.size);
+  CHECK(input->game_version == "GMPE01_00");
+  f.request.dump = *input;
+  const BuildOutcome outcome = f.build_ok();
+
+  const auto verified = make_verified(report, outcome, error);
+  REQUIRE_MESSAGE(verified.has_value(), error);
+  CHECK(verified->title == TitleId::mp4);
+  CHECK(verified->region == "USA");
+  CHECK(verified->revision == "Rev 0");
+  CHECK(verified->sha256 == f.request.dump.sha256);
+  CHECK(verified->build_dir == outcome.build_dir);
+
+  // A build of another dump, an unknown dump, or a vanished build folder is refused.
+  BuildOutcome other = outcome;
+  other.manifest.dump_sha256 = std::string(64, '0');
+  CHECK_FALSE(make_verified(report, other, error).has_value());
+  CHECK(error.find("not a build of this dump") != std::string::npos);
+
+  IdentifyReport unknown = report;
+  unknown.match.reset();
+  CHECK_FALSE(make_verified(unknown, outcome, error).has_value());
+  CHECK_FALSE(dump_for_build(unknown, f.request.dump.path, error).has_value());
+
+  fs::remove_all(outcome.build_dir);
+  CHECK_FALSE(make_verified(report, outcome, error).has_value());
+  CHECK(error.find("Build the game again") != std::string::npos);
+}

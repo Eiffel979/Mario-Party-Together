@@ -39,9 +39,11 @@
 #include <string_view>
 #include <vector>
 
+#include "mpt/asset_import/importer.h"
 #include "mpt/asset_import/process.h"
 #include "mpt/asset_import/source_lock.h"
 #include "mpt/asset_import/sources.h"
+#include "mpt/core/dump.h"
 #include "mpt/core/result.h"
 
 namespace mpt::asset_import {
@@ -158,6 +160,17 @@ struct BuildOutcome {
 // The build key for these inputs: SHA-256 over a canonical description of them.
 std::string build_key(const BuildRecipe& recipe, std::string_view dump_sha256,
                       const std::vector<ManifestSource>& sources, const ToolchainInfo& toolchain);
+
+// The build input for a dump the importer matched. Fails if the report has no match.
+std::optional<DumpForBuild> dump_for_build(const IdentifyReport& report, const std::filesystem::path& dump_path,
+                                           std::string& error);
+
+// The only way to make a VerifiedDump (ADR 0009, amendment after P1-10): from the
+// importer's report for a known dump and a successful build of that same dump. Its
+// build_dir is the build's folder. The shell and UI call this and never assemble a
+// VerifiedDump themselves.
+std::optional<VerifiedDump> make_verified(const IdentifyReport& report, const BuildOutcome& outcome,
+                                          std::string& error);
 
 class BuildCache {
  public:

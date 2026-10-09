@@ -28,9 +28,6 @@ class Importer {
   // Reads the file at `path`. Never modifies or copies it.
   IdentifyReport identify(const std::filesystem::path& path) const;
 
-  // Handle for a matched dump; its build output lives under cache_root/<title>/<sha256>.
-  static VerifiedDump make_verified(const KnownDump& dump, const std::filesystem::path& cache_root);
-
  private:
   KnownDumps known_;
 };

@@ -183,10 +183,6 @@ TEST_CASE("importer identifies a synthetic N64 dump in any byte order") {
     CHECK(report.match->title == TitleId::mp1);
     CHECK(report.match->region == "USA");
   }
-
-  const VerifiedDump verified = Importer::make_verified(*importer.identify(dir.write("a.z64", z64)).match, "cache");
-  CHECK(verified.title == TitleId::mp1);
-  CHECK(verified.build_dir == std::filesystem::path("cache") / "mp1" / expected_sha);
 }
 
 TEST_CASE("importer rejects unknown, unsupported and unreadable files") {
