@@ -14,6 +14,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -46,9 +47,22 @@ class SourceResolver {
   SourceResolver(std::filesystem::path cache_dir, ProcessRunner& runner)
       : cache_dir_(std::move(cache_dir)), runner_(runner) {}
 
-  std::optional<ResolvedSource> resolve(const SourcePin& pin, const SourceInput& input, std::string& error);
+  // Resolves the lock entry `name`. If the entry has deps or skipped_deps (lock
+  // version 2) and resolves as pinned, its DEPS file is cross-checked: every DEPS
+  // entry must be pinned in `deps` at the same commit or named in `skipped_deps`, and
+  // every listed path must still be in DEPS. The dependencies themselves are separate
+  // lock entries, resolved by their own calls.
+  std::optional<ResolvedSource> resolve(const SourceLock& lock, std::string_view name, const SourceInput& input,
+                                        std::string& error);
+
+  // Resolves every entry of a lock, for example a host dependency's lock such as
+  // runtimes/gc_wii/gx/dawn.lock, which is not part of any title's build. Entries
+  // without an input are fetched.
+  std::optional<std::map<std::string, ResolvedSource>> resolve_all(
+      const SourceLock& lock, const std::map<std::string, SourceInput>& inputs, std::string& error);
 
  private:
+  bool check_deps(const SourceLock& lock, const SourcePin& pin, const std::filesystem::path& dir, std::string& error);
   std::optional<ResolvedSource> fetch(const SourcePin& pin, std::string& error);
   std::optional<ResolvedSource> from_archive(const SourcePin& pin, const std::filesystem::path& dir,
                                              std::string& error);

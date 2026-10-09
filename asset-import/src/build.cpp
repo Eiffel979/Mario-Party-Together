@@ -314,7 +314,7 @@ std::optional<BuildOutcome> BuildCache::build(const BuildRecipe& recipe, const B
     if (cancelled()) return fail("The build was cancelled.");
     const auto input = request.source_inputs.find(pin.name);
     const SourceInput source_input = input != request.source_inputs.end() ? input->second : SourceInput{};
-    auto source = resolver.resolve(pin, source_input, error);
+    auto source = resolver.resolve(recipe.sources(), pin.name, source_input, error);
     if (!source) return std::nullopt;
     unpinned = unpinned || !source->pinned;
     manifest_sources.push_back(

@@ -16,6 +16,7 @@
 
 #include "asset_import_test_support.h"
 #include "mpt/asset_import/build.h"
+#include "mpt/asset_import/gclient_deps.h"
 #include "mpt/asset_import/git_tree.h"
 #include "mpt/asset_import/process.h"
 #include "mpt/asset_import/sha1.h"
@@ -407,7 +408,7 @@ TEST_CASE("source locks are parsed and validated") {
   rejected(one(repo + R"(,"commit":")" + kCommitA + R"(","modes":{"a":"100666"})"), "100755");
   rejected(one(repo + R"(,"commit":")" + kCommitA + R"(","submodules":[{"path":"e/l","source":"nope"}])"),
            "unknown source");
-  rejected(R"({"lock_version":2,"sources":[]})", "lock_version");
+  rejected(R"({"lock_version":0,"sources":[]})", "lock_version");
   rejected(R"({"lock_version":1,"sources":[{"name":"x","repo":"https://e.invalid/x","commit":")" + kCommitA +
                R"(","license":"MIT"},{"name":"x","repo":"https://e.invalid/y","commit":")" + kCommitB +
                R"(","license":"MIT"}]})",
@@ -439,7 +440,7 @@ TEST_CASE("sources are fetched by commit, verified and reused") {
   SourceResolver resolver(tmp.path() / "sources", git);
 
   std::string error;
-  const auto first = resolver.resolve(*lock.find("gamesrc"), {}, error);
+  const auto first = resolver.resolve(lock, "gamesrc", {}, error);
   REQUIRE_MESSAGE(first.has_value(), error);
   CHECK(first->pinned);
   CHECK(first->origin == SourceOrigin::fetched);
@@ -450,26 +451,26 @@ TEST_CASE("sources are fetched by commit, verified and reused") {
   CHECK(std::find(clone.begin(), clone.end(), "--filter=blob:none") != clone.end());
   CHECK_FALSE(fs::exists(tmp.path() / "sources" / "gamesrc" / (".tmp-" + kCommitA)));
 
-  const auto second = resolver.resolve(*lock.find("gamesrc"), {}, error);
+  const auto second = resolver.resolve(lock, "gamesrc", {}, error);
   REQUIRE_MESSAGE(second.has_value(), error);
   CHECK(git.count("clone") == 1);  // reused, not fetched again
 
   SUBCASE("a lock whose tree does not match the commit is refused") {
     const SourceLock wrong = parse_lock(lock_json(kCommitA, std::string(40, 'f')));
     SourceResolver other(tmp.path() / "other_sources", git);
-    CHECK_FALSE(other.resolve(*wrong.find("gamesrc"), {}, error).has_value());
+    CHECK_FALSE(other.resolve(wrong, "gamesrc", {}, error).has_value());
     CHECK(error.find("lock is wrong") != std::string::npos);
     CHECK_FALSE(fs::exists(tmp.path() / "other_sources" / "gamesrc" / kCommitA));
   }
   SUBCASE("a commit the repository does not have is refused") {
     const SourceLock missing = parse_lock(lock_json(kCommitB, tree));
-    CHECK_FALSE(resolver.resolve(*missing.find("gamesrc"), {}, error).has_value());
+    CHECK_FALSE(resolver.resolve(missing, "gamesrc", {}, error).has_value());
     CHECK(error.find("Checking out the locked commit") != std::string::npos);
   }
   SUBCASE("git not installed") {
     git.installed = false;
     const SourceLock other = parse_lock(lock_json(kCommitB, tree));
-    CHECK_FALSE(resolver.resolve(*other.find("gamesrc"), {}, error).has_value());
+    CHECK_FALSE(resolver.resolve(other, "gamesrc", {}, error).has_value());
     CHECK(error.find("Git was not found") != std::string::npos);
   }
 }
@@ -487,7 +488,7 @@ TEST_CASE("submodule gitlinks are checked against the lock") {
 
   std::string error;
   SourceResolver resolver(tmp.path() / "sources", git);
-  CHECK_MESSAGE(resolver.resolve(*lock.find("gamesrc"), {}, error).has_value(), error);
+  CHECK_MESSAGE(resolver.resolve(lock, "gamesrc", {}, error).has_value(), error);
 
   // The tree matches (the lock's tree was taken from a commit recording kCommitB), but
   // the lock says the submodule is at kSubCommit: refused on the gitlink itself.
@@ -496,7 +497,7 @@ TEST_CASE("submodule gitlinks are checked against the lock") {
   const SourceLock inconsistent =
       parse_lock(lock_json(kCommitA, tree_of(reference, options), /*with_submodule=*/true));
   SourceResolver fresh(tmp.path() / "sources2", git);
-  CHECK_FALSE(fresh.resolve(*inconsistent.find("gamesrc"), {}, error).has_value());
+  CHECK_FALSE(fresh.resolve(inconsistent, "gamesrc", {}, error).has_value());
   CHECK(error.find("submodule 'extern/lib'") != std::string::npos);
 }
 
@@ -512,7 +513,7 @@ TEST_CASE("archives are accepted only if their tree matches the lock") {
   SourceResolver resolver(tmp.path() / "sources", git);
   std::string error;
 
-  const auto ok = resolver.resolve(*lock.find("gamesrc"), {SourceOrigin::archive, archive}, error);
+  const auto ok = resolver.resolve(lock, "gamesrc", {SourceOrigin::archive, archive}, error);
   REQUIRE_MESSAGE(ok.has_value(), error);
   CHECK(ok->pinned);
   CHECK(ok->dir == archive / "gamesrc-aaaa");
@@ -520,16 +521,16 @@ TEST_CASE("archives are accepted only if their tree matches the lock") {
 
   // Lost executable bit, as after extracting on Windows: still matches, because the
   // lock supplies the modes.
-  CHECK(resolver.resolve(*lock.find("gamesrc"), {SourceOrigin::archive, archive / "gamesrc-aaaa"}, error).has_value());
+  CHECK(resolver.resolve(lock, "gamesrc", {SourceOrigin::archive, archive / "gamesrc-aaaa"}, error).has_value());
 
   write_text(archive / "gamesrc-aaaa" / "src" / "game.c", "int synthetic_main(void) { return 0; }\r\n");  // CRLF
-  CHECK_FALSE(resolver.resolve(*lock.find("gamesrc"), {SourceOrigin::archive, archive}, error).has_value());
+  CHECK_FALSE(resolver.resolve(lock, "gamesrc", {SourceOrigin::archive, archive}, error).has_value());
   CHECK(error.find("git checkout") != std::string::npos);
 
   const SourceLock no_tree = parse_lock(
       R"({"lock_version":1,"sources":[{"name":"gamesrc","repo":"https://e.invalid/g","commit":")" + kCommitA +
       R"(","license":"CC0-1.0"}]})");
-  CHECK_FALSE(resolver.resolve(*no_tree.find("gamesrc"), {SourceOrigin::archive, archive}, error).has_value());
+  CHECK_FALSE(resolver.resolve(no_tree, "gamesrc", {SourceOrigin::archive, archive}, error).has_value());
   CHECK(error.find("tree hash") != std::string::npos);
 }
 
@@ -542,16 +543,15 @@ TEST_CASE("overrides are used as they are and marked unpinned unless they match"
   options.modes = kSourceModes;
   const std::string tree = tree_of(plain, options);
   const SourceLock lock = parse_lock(lock_json(kCommitA, tree));
-  const SourcePin& pin = *lock.find("gamesrc");
   SourceResolver resolver(tmp.path() / "sources", git);
   std::string error;
 
-  auto matching = resolver.resolve(pin, {SourceOrigin::override_dir, plain}, error);
+  auto matching = resolver.resolve(lock, "gamesrc", {SourceOrigin::override_dir, plain}, error);
   REQUIRE(matching.has_value());
   CHECK(matching->pinned);
 
   write_text(plain / "src" / "local_change.c", "a developer's edit\n");
-  auto edited = resolver.resolve(pin, {SourceOrigin::override_dir, plain}, error);
+  auto edited = resolver.resolve(lock, "gamesrc", {SourceOrigin::override_dir, plain}, error);
   REQUIRE(edited.has_value());
   CHECK_FALSE(edited->pinned);
   CHECK(edited->actual.starts_with("tree:"));
@@ -561,23 +561,23 @@ TEST_CASE("overrides are used as they are and marked unpinned unless they match"
   const fs::path checkout = tmp.path() / "checkout";
   write_tree(checkout, kSourceFiles);
   set_fake_checkout(checkout, kCommitA, tree, false);
-  auto clean = resolver.resolve(pin, {SourceOrigin::override_dir, checkout}, error);
+  auto clean = resolver.resolve(lock, "gamesrc", {SourceOrigin::override_dir, checkout}, error);
   REQUIRE(clean.has_value());
   CHECK(clean->pinned);
 
   set_fake_checkout(checkout, kCommitA, tree, true);
-  auto dirty = resolver.resolve(pin, {SourceOrigin::override_dir, checkout}, error);
+  auto dirty = resolver.resolve(lock, "gamesrc", {SourceOrigin::override_dir, checkout}, error);
   REQUIRE(dirty.has_value());
   CHECK_FALSE(dirty->pinned);
   CHECK(dirty->actual.starts_with(kCommitA + "-dirty:tree:"));
 
   set_fake_checkout(checkout, kCommitB, tree, false);
-  auto other = resolver.resolve(pin, {SourceOrigin::override_dir, checkout}, error);
+  auto other = resolver.resolve(lock, "gamesrc", {SourceOrigin::override_dir, checkout}, error);
   REQUIRE(other.has_value());
   CHECK_FALSE(other->pinned);
   CHECK(other->actual == kCommitB);
 
-  CHECK_FALSE(resolver.resolve(pin, {SourceOrigin::override_dir, tmp.path() / "missing"}, error).has_value());
+  CHECK_FALSE(resolver.resolve(lock, "gamesrc", {SourceOrigin::override_dir, tmp.path() / "missing"}, error).has_value());
 }
 
 TEST_CASE("fetching from a local git repository works end to end" * doctest::description("skips if git is absent")) {
@@ -618,13 +618,217 @@ TEST_CASE("fetching from a local git repository works end to end" * doctest::des
                                      local);
   SourceResolver resolver(tmp.path() / "cache" / "sources", runner);
   std::string error;
-  const auto fetched = resolver.resolve(*lock.find("gamesrc"), {}, error);
+  const auto fetched = resolver.resolve(lock, "gamesrc", {}, error);
   REQUIRE_MESSAGE(fetched.has_value(), error);
   CHECK(fetched->pinned);
   CHECK(read_text(fetched->dir / "src" / "game.c") == kSourceFiles.at("src/game.c"));
 
   // The same commit as a plain folder (as from an archive) verifies by tree hash.
-  CHECK_MESSAGE(resolver.resolve(*lock.find("gamesrc"), {SourceOrigin::archive, upstream}, error).has_value(), error);
+  CHECK_MESSAGE(resolver.resolve(lock, "gamesrc", {SourceOrigin::archive, upstream}, error).has_value(), error);
+}
+
+// --- Lock version 2: dependencies pinned through a DEPS file -----------------
+
+namespace {
+
+// A made-up DEPS file in gclient syntax, exercising the subset the parser accepts.
+// None of these names, URLs or hashes refer to a real project.
+std::string synthetic_deps(const std::string& alpha_commit) {
+  return std::string(R"(# Synthetic DEPS for tests.
+use_relative_paths = True
+
+vars = {
+  'example_git': 'https://git.example.invalid',
+  'alpha_revision': ')") + alpha_commit + R"(',
+  'standalone': True,
+  'tool_version': 'version:1.2.3',
+}
+
+deps = {
+  'third_party/alpha': {
+    'url': '{example_git}/alpha.git@' + Var('alpha_revision'),
+    'condition': 'standalone',
+  },
+  'third_party/beta': Var('example_git') + '/beta.git' + '@' + ')" + std::string(40, '4') + R"(',
+  "third_party/gamma": {
+    "url": "{example_git}/gamma.git@)" + std::string(40, '5') + R"(",
+  },
+  'tools/fetcher': {
+    'packages': [
+      {
+        'package': 'synthetic/tools/fetcher/${{platform}}',
+        'version': Var('tool_version'),
+      },
+    ],
+    'dep_type': 'cipd',
+    'condition': 'standalone and host_os == "linux"',
+  },
+}
+
+hooks = [
+  {
+    'name': 'synthetic_hook',
+    'pattern': '.',
+    'action': [ 'python3', 'never_run.py' ],
+  },
+]
+
+recursedeps = [ 'third_party/alpha' ]
+)";
+}
+
+const std::string kAlpha = std::string(40, '3');
+
+std::string host_lock_json(const std::string& tree, const std::string& alpha_commit = kAlpha,
+                           const std::string& extra_skipped = {}) {
+  return R"({"lock_version":2,"sources":[
+    {"name":"host","repo":"https://example.invalid/host","commit":")" + kCommitA + R"(","tree":")" + tree +
+         R"(","license":"BSD-3-Clause",
+     "deps":[{"path":"third_party/alpha","source":"host_alpha"},
+             {"path":"third_party/beta","source":"host_beta"}],
+     "skipped_deps":[{"path":"third_party/gamma","reason":"Not needed by our backend."},
+                     {"path":"tools/fetcher","reason":"A CIPD tool we do not use."})" + extra_skipped + R"(]},
+    {"name":"host_alpha","repo":"https://example.invalid/alpha","commit":")" + alpha_commit + R"(","license":"Apache-2.0"},
+    {"name":"host_beta","repo":"https://example.invalid/beta","commit":")" + std::string(40, '4') +
+         R"(","license":"MIT"}]})";
+}
+
+}  // namespace
+
+TEST_CASE("lock version 2 adds deps and skipped_deps, and unknown fields are errors") {
+  const SourceLock lock = parse_lock(host_lock_json(std::string(40, 'e')));
+  const SourcePin& host = *lock.find("host");
+  REQUIRE(host.deps.size() == 2);
+  CHECK(host.deps[0].path == "third_party/alpha");
+  CHECK(host.deps[0].source == "host_alpha");
+  REQUIRE(host.skipped_deps.size() == 2);
+  CHECK(host.skipped_deps[1].reason == "A CIPD tool we do not use.");
+
+  auto rejected = [](const std::string& json, std::string_view needle) {
+    std::string error;
+    CHECK_FALSE(SourceLock::parse(json, error).has_value());
+    CHECK_MESSAGE(error.find(needle) != std::string::npos, "error was: " << error);
+  };
+  const std::string head = R"({"name":"x","repo":"https://e.invalid/x","commit":")" + kCommitA + R"(","license":"MIT")";
+  rejected(R"({"lock_version":1,"sources":[)" + head + R"(,"deps":[]}]})", "needs lock_version 2");
+  rejected(R"({"lock_version":2,"sources":[)" + head + R"(,"submodule":[]}]})", "unknown field 'submodule'");
+  rejected(R"({"lock_version":2,"sources":[],"comment":"x"})", "unknown field 'comment'");
+  rejected(R"({"lock_version":3,"sources":[]})", "lock_version");
+  rejected(R"({"lock_version":2,"sources":[)" + head + R"(,"skipped_deps":[{"path":"a"}]}]})", "reason");
+  rejected(R"({"lock_version":2,"sources":[)" + head + R"(,"deps":[{"path":"a","source":"nope"}]}]})",
+           "unknown source");
+  rejected(R"({"lock_version":2,"sources":[)" + head +
+               R"(,"deps":[{"path":"a","source":"x"}]}]})",
+           "cannot be the entry itself");
+  rejected(R"({"lock_version":2,"sources":[)" + head +
+               R"(,"skipped_deps":[{"path":"a","reason":"r"},{"path":"a","reason":"r"}]}]})",
+           "repeats the path");
+  rejected(R"({"lock_version":2,"sources":[)" + head + R"(,"deps":[{"path":"a","source":"x","commit":"y"}]}]})",
+           "unknown field 'commit'");
+
+  std::string error;
+  CHECK(SourceLock::parse(R"({"lock_version":1,"sources":[]})", error).has_value());  // version 1 still reads
+}
+
+TEST_CASE("gclient DEPS files are read without running them") {
+  std::string error;
+  const auto deps = parse_gclient_deps(synthetic_deps(kAlpha), error);
+  REQUIRE_MESSAGE(deps.has_value(), error);
+  REQUIRE(deps->size() == 4);
+  CHECK(deps->at("third_party/alpha").url == "https://git.example.invalid/alpha.git@" + kAlpha);
+  CHECK(deps->at("third_party/alpha").commit == kAlpha);
+  CHECK(deps->at("third_party/beta").commit == std::string(40, '4'));
+  CHECK(deps->at("third_party/gamma").commit == std::string(40, '5'));
+  CHECK(deps->at("tools/fetcher").cipd);
+  CHECK(deps->at("tools/fetcher").commit.empty());
+
+  auto bad = [](const std::string& text, std::string_view needle) {
+    std::string e;
+    CHECK_FALSE(parse_gclient_deps(text, e).has_value());
+    CHECK_MESSAGE(e.find(needle) != std::string::npos, "error was: " << e);
+  };
+  bad("deps = { 'a': '{nope}/a@x' }", "unknown variable 'nope'");
+  bad("deps = { 'a': 'unterminated }", "unterminated string");
+  bad("import os\ndeps = {}", "expected '='");
+  bad("deps = { 'a': exec('rm') }", "unsupported name 'exec'");
+  bad("deps = { 'a': 'x', 'a': 'y' }", "twice");
+  bad("vars = {}", "no 'deps'");
+  bad("deps = " + std::string(200, '[') + std::string(200, ']'), "nested too deeply");
+  bad("deps = { 'a': 1 + 'x' }", "joins strings only");
+}
+
+TEST_CASE("a source's DEPS is cross-checked against the lock's deps") {
+  const TempDir tmp;
+  FakeGit git;
+  git.repos["https://example.invalid/alpha"] = {kAlpha, {{"alpha.c", "synthetic alpha\n"}}, {}};
+  git.repos["https://example.invalid/beta"] = {std::string(40, '4'), {{"beta.c", "synthetic beta\n"}}, {}};
+  const fs::path host = tmp.path() / "host";
+  auto make_host = [&](const std::string& deps_text) {
+    fs::remove_all(host);
+    write_text(host / "DEPS", deps_text);
+    write_text(host / "src" / "host.cc", "synthetic host source\n");
+    return tree_of(host);
+  };
+  SourceResolver resolver(tmp.path() / "sources", git);
+  const std::map<std::string, SourceInput> inputs{{"host", {SourceOrigin::archive, host}}};
+  std::string error;
+
+  SUBCASE("matching: everything resolves, dependencies fetched as their own entries") {
+    const SourceLock lock = parse_lock(host_lock_json(make_host(synthetic_deps(kAlpha))));
+    const auto all = resolver.resolve_all(lock, inputs, error);
+    REQUIRE_MESSAGE(all.has_value(), error);
+    CHECK(all->size() == 3);
+    CHECK(all->at("host").origin == SourceOrigin::archive);
+    CHECK(all->at("host_alpha").origin == SourceOrigin::fetched);
+    CHECK(read_text(all->at("host_beta").dir / "beta.c") == "synthetic beta\n");
+    const auto& clone = git.calls.front();
+    CHECK(std::find(clone.begin(), clone.end(), "core.longpaths=true") != clone.end());
+  }
+  SUBCASE("DEPS pins a dependency at another commit") {
+    const SourceLock lock = parse_lock(host_lock_json(make_host(synthetic_deps(std::string(40, '9')))));
+    CHECK_FALSE(resolver.resolve(lock, "host", inputs.at("host"), error).has_value());
+    CHECK(error.find("DEPS pins 'third_party/alpha' at " + std::string(40, '9')) != std::string::npos);
+  }
+  SUBCASE("DEPS has an entry the lock neither pins nor skips") {
+    std::string text = synthetic_deps(kAlpha);
+    text.replace(text.find("deps = {"), 8, "deps = {\n  'third_party/delta': 'https://e.invalid/d@" +
+                                                 std::string(40, '6') + "',");
+    const SourceLock lock = parse_lock(host_lock_json(make_host(text)));
+    CHECK_FALSE(resolver.resolve(lock, "host", inputs.at("host"), error).has_value());
+    CHECK(error.find("'third_party/delta', which the lock neither pins") != std::string::npos);
+  }
+  SUBCASE("the lock skips something DEPS no longer has") {
+    const SourceLock lock = parse_lock(host_lock_json(make_host(synthetic_deps(kAlpha)), kAlpha,
+                                                      R"(,{"path":"third_party/old","reason":"Gone."})"));
+    CHECK_FALSE(resolver.resolve(lock, "host", inputs.at("host"), error).has_value());
+    CHECK(error.find("skipped_deps lists 'third_party/old'") != std::string::npos);
+  }
+  SUBCASE("a CIPD package listed as a git dependency") {
+    std::string json = host_lock_json(make_host(synthetic_deps(kAlpha)));
+    json.replace(json.find(R"({"path":"tools/fetcher","reason":"A CIPD tool we do not use."})"),
+                 std::string_view(R"({"path":"tools/fetcher","reason":"A CIPD tool we do not use."})").size(),
+                 R"({"path":"third_party/unused","reason":"placeholder"})");
+    json.replace(json.find(R"({"path":"third_party/beta","source":"host_beta"})"),
+                 std::string_view(R"({"path":"third_party/beta","source":"host_beta"})").size(),
+                 R"({"path":"third_party/beta","source":"host_beta"},{"path":"tools/fetcher","source":"host_beta"})");
+    const SourceLock lock = parse_lock(json);
+    CHECK_FALSE(resolver.resolve(lock, "host", inputs.at("host"), error).has_value());
+    CHECK(error.find("CIPD package") != std::string::npos);
+  }
+  SUBCASE("no DEPS file at all") {
+    make_host(synthetic_deps(kAlpha));
+    fs::remove(host / "DEPS");
+    const SourceLock relocked = parse_lock(host_lock_json(tree_of(host)));
+    CHECK_FALSE(resolver.resolve(relocked, "host", inputs.at("host"), error).has_value());
+    CHECK(error.find("no DEPS file") != std::string::npos);
+  }
+  SUBCASE("an unpinned override is not cross-checked") {
+    const SourceLock lock = parse_lock(host_lock_json(std::string(40, 'e')));  // tree will not match
+    make_host(synthetic_deps(std::string(40, '9')));
+    const auto local = resolver.resolve(lock, "host", {SourceOrigin::override_dir, host}, error);
+    REQUIRE_MESSAGE(local.has_value(), error);
+    CHECK_FALSE(local->pinned);
+  }
 }
 
 // --- Build cache ------------------------------------------------------------

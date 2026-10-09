@@ -1,6 +1,8 @@
 #include "mpt/asset_import/source_lock.h"
 
+#include <algorithm>
 #include <fstream>
+#include <initializer_list>
 #include <set>
 #include <sstream>
 
@@ -11,7 +13,7 @@
 namespace mpt::asset_import {
 namespace {
 
-constexpr int kLockVersion = 1;
+constexpr int kLockVersion = 2;  // newest supported; 1 is still read
 
 bool is_source_name(std::string_view text) {
   if (text.empty() || text.size() > 64) return false;
@@ -33,6 +35,21 @@ bool is_relative_tree_path(std::string_view path) {
     if (slash == std::string_view::npos) return true;
     start = slash + 1;
   }
+}
+
+// The first key of `object` not in `allowed`, or an empty string.
+std::string unknown_field(const nlohmann::json& object, std::initializer_list<std::string_view> allowed) {
+  for (const auto& [key, value] : object.items()) {
+    if (std::find(allowed.begin(), allowed.end(), key) == allowed.end()) return key.empty() ? "(empty)" : key;
+  }
+  return {};
+}
+
+std::string unknown_field(const nlohmann::json& object, const std::vector<std::string_view>& allowed) {
+  for (const auto& [key, value] : object.items()) {
+    if (std::find(allowed.begin(), allowed.end(), key) == allowed.end()) return key.empty() ? "(empty)" : key;
+  }
+  return {};
 }
 
 std::string string_field(const nlohmann::json& object, const char* key) {
@@ -58,17 +75,32 @@ std::optional<SourceLock> SourceLock::parse(std::string_view json_text, std::str
     return std::nullopt;
   };
   if (root.is_discarded() || !root.is_object()) return fail("not a JSON object.");
-  if (root.value("lock_version", 0) != kLockVersion) {
-    return fail("unsupported lock_version (expected " + std::to_string(kLockVersion) + ").");
+  const int version = root.value("lock_version", 0);
+  if (version < 1 || version > kLockVersion) {
+    return fail("unsupported lock_version (expected 1 to " + std::to_string(kLockVersion) + ").");
+  }
+  // Unknown fields are errors, so a misspelt or newer field is never silently ignored.
+  if (const std::string bad = unknown_field(root, {"lock_version", "sources"}); !bad.empty()) {
+    return fail("unknown field '" + bad + "'.");
   }
   const auto sources = root.find("sources");
   if (sources == root.end() || !sources->is_array()) return fail("needs a \"sources\" array.");
+
+  std::vector<std::string_view> entry_fields{"name", "repo", "commit", "tree", "license", "modes", "submodules"};
+  if (version >= 2) {
+    entry_fields.push_back("deps");
+    entry_fields.push_back("skipped_deps");
+  }
 
   SourceLock lock;
   for (std::size_t i = 0; i < sources->size(); ++i) {
     const nlohmann::json& entry = (*sources)[i];
     const std::string where = "sources[" + std::to_string(i) + "]";
     if (!entry.is_object()) return fail(where + " is not an object.");
+    if (const std::string bad = unknown_field(entry, entry_fields); !bad.empty()) {
+      return fail(where + " has an unknown field '" + bad + "'" +
+                  (version < 2 && (bad == "deps" || bad == "skipped_deps") ? " (it needs lock_version 2)." : "."));
+    }
 
     SourcePin pin;
     pin.name = string_field(entry, "name");
@@ -104,6 +136,9 @@ std::optional<SourceLock> SourceLock::parse(std::string_view json_text, std::str
         const nlohmann::json& sub = (*subs)[j];
         const std::string sub_where = where + ".submodules[" + std::to_string(j) + "]";
         if (!sub.is_object()) return fail(sub_where + " is not an object.");
+        if (const std::string bad = unknown_field(sub, {"path", "source", "gitlink", "reason"}); !bad.empty()) {
+          return fail(sub_where + " has an unknown field '" + bad + "'.");
+        }
         SubmodulePin s{string_field(sub, "path"), string_field(sub, "source"), string_field(sub, "gitlink"),
                        string_field(sub, "reason")};
         if (!is_relative_tree_path(s.path)) return fail(sub_where + ".path is not a valid relative path.");
@@ -114,10 +149,54 @@ std::optional<SourceLock> SourceLock::parse(std::string_view json_text, std::str
         pin.submodules.push_back(std::move(s));
       }
     }
+
+    // lock_version 2: dependencies pinned by the source's own lock file (Dawn's DEPS).
+    std::set<std::string> dep_paths;
+    if (const auto deps = entry.find("deps"); deps != entry.end()) {
+      if (!deps->is_array()) return fail(where + ".deps must be an array.");
+      for (std::size_t j = 0; j < deps->size(); ++j) {
+        const nlohmann::json& dep = (*deps)[j];
+        const std::string dep_where = where + ".deps[" + std::to_string(j) + "]";
+        if (!dep.is_object()) return fail(dep_where + " is not an object.");
+        if (const std::string bad = unknown_field(dep, {"path", "source"}); !bad.empty()) {
+          return fail(dep_where + " has an unknown field '" + bad + "'.");
+        }
+        DepPin d{string_field(dep, "path"), string_field(dep, "source")};
+        if (!is_relative_tree_path(d.path)) return fail(dep_where + ".path is not a valid relative path.");
+        if (!dep_paths.insert(d.path).second) return fail(dep_where + " repeats the path '" + d.path + "'.");
+        if (d.source == pin.name) return fail(dep_where + ".source cannot be the entry itself.");
+        pin.deps.push_back(std::move(d));
+      }
+    }
+    if (const auto skipped = entry.find("skipped_deps"); skipped != entry.end()) {
+      if (!skipped->is_array()) return fail(where + ".skipped_deps must be an array.");
+      for (std::size_t j = 0; j < skipped->size(); ++j) {
+        const nlohmann::json& dep = (*skipped)[j];
+        const std::string dep_where = where + ".skipped_deps[" + std::to_string(j) + "]";
+        if (!dep.is_object()) return fail(dep_where + " is not an object.");
+        if (const std::string bad = unknown_field(dep, {"path", "reason"}); !bad.empty()) {
+          return fail(dep_where + " has an unknown field '" + bad + "'.");
+        }
+        SkippedDep d{string_field(dep, "path"), string_field(dep, "reason")};
+        if (!is_relative_tree_path(d.path)) return fail(dep_where + ".path is not a valid relative path.");
+        if (!dep_paths.insert(d.path).second) {
+          return fail(dep_where + " repeats the path '" + d.path + "' (a dependency is pinned or skipped, not both).");
+        }
+        if (d.reason.empty()) return fail(dep_where + " must give a reason for skipping '" + d.path + "'.");
+        pin.skipped_deps.push_back(std::move(d));
+      }
+    }
     lock.pins_.push_back(std::move(pin));
   }
 
-  // Second pass: submodules refer to entries that exist, and differing gitlinks say why.
+  // Second pass: references point at entries that exist, and differing gitlinks say why.
+  for (const SourcePin& pin : lock.pins_) {
+    for (const DepPin& dep : pin.deps) {
+      if (!lock.find(dep.source)) {
+        return fail(pin.name + ": dependency '" + dep.path + "' names an unknown source '" + dep.source + "'.");
+      }
+    }
+  }
   for (SourcePin& pin : lock.pins_) {
     for (SubmodulePin& sub : pin.submodules) {
       const SourcePin* target = lock.find(sub.source);

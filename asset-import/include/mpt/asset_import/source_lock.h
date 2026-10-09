@@ -24,10 +24,22 @@
 //           { "path": "extern/musyx", "source": "musyx",   // the lock entry that pins it
 //             "gitlink": "<40 hex>",                       // optional: the commit the parent
 //             "reason": "..." }                            // records, if it differs from the
-//         ]                                                // source's pin (reason required)
+//         ],                                               // source's pin (reason required)
+//         "deps": [                                        // lock_version 2: dependencies the
+//           { "path": "third_party/abseil-cpp",            // source's own lock file (Dawn's
+//             "source": "dawn_abseil_cpp" }                // DEPS) pins; each source is a
+//         ],                                               // full entry of this lock
+//         "skipped_deps": [                                // lock_version 2: DEPS entries we
+//           { "path": "third_party/dxc",                   // deliberately do not fetch
+//             "reason": "We compile shaders with FXC." }
+//         ]
 //       }
 //     ]
 //   }
+//
+// lock_version 1 files are still read; they cannot use deps or skipped_deps. Unknown
+// fields are errors in both versions. When a source with deps or skipped_deps is
+// resolved, its DEPS file is cross-checked against them (see sources.h).
 
 #include <filesystem>
 #include <map>
@@ -45,6 +57,16 @@ struct SubmodulePin {
   std::string reason;   // why gitlink differs from the source's commit, if it does
 };
 
+struct DepPin {
+  std::string path;    // the DEPS key, e.g. "third_party/abseil-cpp"
+  std::string source;  // name of the lock entry that pins it
+};
+
+struct SkippedDep {
+  std::string path;
+  std::string reason;  // required
+};
+
 struct SourcePin {
   std::string name;
   std::string repo;
@@ -53,6 +75,8 @@ struct SourcePin {
   std::string license;
   std::map<std::string, std::string> modes;  // path → git mode ("100755" or "120000")
   std::vector<SubmodulePin> submodules;
+  std::vector<DepPin> deps;               // lock_version 2
+  std::vector<SkippedDep> skipped_deps;   // lock_version 2
 };
 
 struct LockParseOptions {

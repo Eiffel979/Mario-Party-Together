@@ -1,6 +1,10 @@
 #include "mpt/asset_import/sources.h"
 
+#include <fstream>
+#include <sstream>
+
 #include "mpt/asset_import/byte_source.h"
+#include "mpt/asset_import/gclient_deps.h"
 #include "mpt/asset_import/git_tree.h"
 
 namespace mpt::asset_import {
@@ -48,15 +52,101 @@ ProcessResult SourceResolver::git(const fs::path& cwd, std::vector<std::string> 
   return runner_.run(request);
 }
 
-std::optional<ResolvedSource> SourceResolver::resolve(const SourcePin& pin, const SourceInput& input,
-                                                      std::string& error) {
-  switch (input.origin) {
-    case SourceOrigin::fetched: return fetch(pin, error);
-    case SourceOrigin::archive: return from_archive(pin, input.path, error);
-    case SourceOrigin::override_dir: return from_override(pin, input.path, error);
+std::optional<ResolvedSource> SourceResolver::resolve(const SourceLock& lock, std::string_view name,
+                                                      const SourceInput& input, std::string& error) {
+  const SourcePin* pin = lock.find(name);
+  if (!pin) {
+    error = "The lock has no source named '" + std::string(name) + "'.";
+    return std::nullopt;
   }
-  error = "Unknown source origin.";
-  return std::nullopt;
+  std::optional<ResolvedSource> resolved;
+  switch (input.origin) {
+    case SourceOrigin::fetched: resolved = fetch(*pin, error); break;
+    case SourceOrigin::archive: resolved = from_archive(*pin, input.path, error); break;
+    case SourceOrigin::override_dir: resolved = from_override(*pin, input.path, error); break;
+  }
+  if (!resolved) return std::nullopt;
+  // An unpinned override is not the locked commit, so its DEPS says nothing about the lock.
+  if (resolved->pinned && (!pin->deps.empty() || !pin->skipped_deps.empty()) &&
+      !check_deps(lock, *pin, resolved->dir, error)) {
+    return std::nullopt;
+  }
+  return resolved;
+}
+
+std::optional<std::map<std::string, ResolvedSource>> SourceResolver::resolve_all(
+    const SourceLock& lock, const std::map<std::string, SourceInput>& inputs, std::string& error) {
+  for (const auto& [name, input] : inputs) {
+    if (!lock.find(name)) {
+      error = "The lock has no source named '" + name + "'.";
+      return std::nullopt;
+    }
+  }
+  std::map<std::string, ResolvedSource> out;
+  for (const SourcePin& pin : lock.pins()) {
+    const auto input = inputs.find(pin.name);
+    auto source = resolve(lock, pin.name, input != inputs.end() ? input->second : SourceInput{}, error);
+    if (!source) return std::nullopt;
+    out.emplace(pin.name, std::move(*source));
+  }
+  return out;
+}
+
+bool SourceResolver::check_deps(const SourceLock& lock, const SourcePin& pin, const fs::path& dir,
+                                std::string& error) {
+  std::ifstream file(dir / "DEPS", std::ios::binary);
+  if (!file) {
+    error = pin.name + " has no DEPS file, but the lock lists dependencies for it.";
+    return false;
+  }
+  std::ostringstream text;
+  text << file.rdbuf();
+  std::string parse_error;
+  const auto deps = parse_gclient_deps(text.str(), parse_error);
+  if (!deps) {
+    error = "Could not read " + pin.name + "'s DEPS: " + parse_error;
+    return false;
+  }
+  const std::string where = "The lock for " + pin.name + " does not match its DEPS: ";
+  std::map<std::string, const DepPin*> pinned;
+  std::map<std::string, const SkippedDep*> skipped;
+  for (const DepPin& dep : pin.deps) pinned[dep.path] = &dep;
+  for (const SkippedDep& dep : pin.skipped_deps) skipped[dep.path] = &dep;
+
+  for (const auto& [path, dep] : *deps) {
+    if (const auto it = pinned.find(path); it != pinned.end()) {
+      const SourcePin* source = lock.find(it->second->source);
+      if (dep.cipd) {
+        error = where + "'" + path + "' is a CIPD package, not a git repository; list it in skipped_deps.";
+        return false;
+      }
+      if (dep.commit.empty()) {
+        error = where + "DEPS does not pin '" + path + "' by commit hash.";
+        return false;
+      }
+      if (source->commit != dep.commit) {
+        error = where + "DEPS pins '" + path + "' at " + dep.commit + ", the lock's '" + source->name + "' at " +
+                source->commit + ".";
+        return false;
+      }
+    } else if (!skipped.contains(path)) {
+      error = where + "DEPS lists '" + path + "', which the lock neither pins in deps nor names in skipped_deps.";
+      return false;
+    }
+  }
+  for (const auto& [path, dep] : pinned) {
+    if (!deps->contains(path)) {
+      error = where + "deps lists '" + path + "', which DEPS no longer has.";
+      return false;
+    }
+  }
+  for (const auto& [path, dep] : skipped) {
+    if (!deps->contains(path)) {
+      error = where + "skipped_deps lists '" + path + "', which DEPS no longer has.";
+      return false;
+    }
+  }
+  return true;
 }
 
 bool SourceResolver::check_checkout(const SourcePin& pin, const fs::path& dir, std::string& error) {
@@ -115,7 +205,9 @@ std::optional<ResolvedSource> SourceResolver::fetch(const SourcePin& pin, std::s
 
   const std::u8string tmp_utf8 = tmp.u8string();
   const ProcessResult clone =
-      git({}, {"clone", "--filter=blob:none", "--no-checkout", "-c", "core.autocrlf=false", "--", pin.repo,
+      git({}, {"clone", "--filter=blob:none", "--no-checkout", "-c", "core.autocrlf=false",
+               // Deep dependency trees (Dawn's third_party) pass Windows' 260-character limit.
+               "-c", "core.longpaths=true", "--", pin.repo,
                std::string(reinterpret_cast<const char*>(tmp_utf8.data()), tmp_utf8.size())});
   if (!clone.ok()) {
     cleanup();
