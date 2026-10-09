@@ -10,6 +10,10 @@
 
 namespace mpt::asset_import {
 
+// A path as UTF-8 text for messages. Unlike path::string(), it never throws on
+// Windows when the path has characters outside the ANSI code page.
+std::string path_for_message(const std::filesystem::path& path);
+
 // Random-access, read-only view of a dump. Readers take this instead of a path so
 // they can be tested against synthetic in-memory images.
 class ByteSource {

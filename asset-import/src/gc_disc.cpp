@@ -313,7 +313,7 @@ Result extract_gc_disc(const ByteSource& source, const GcDisc& disc, const std::
 
   if (fs::exists(fs::symlink_status(dest, ec))) {
     if (!fs::is_directory(fs::symlink_status(dest, ec)) || !fs::is_empty(dest, ec) || ec) {
-      return Result::failure("The extraction folder " + dest.string() + " must be empty.");
+      return Result::failure("The extraction folder " + path_for_message(dest) + " must be empty.");
     }
   }
   if (source.size() != disc.image_size()) {
@@ -335,7 +335,7 @@ Result extract_gc_disc(const ByteSource& source, const GcDisc& disc, const std::
   std::vector<std::byte> buffer;
   auto copy = [&](std::uint64_t offset, std::uint64_t size, const fs::path& out_path) -> Result {
     std::ofstream out(out_path, std::ios::binary | std::ios::trunc);
-    if (!out) return Result::failure("Could not create " + out_path.string());
+    if (!out) return Result::failure("Could not create " + path_for_message(out_path));
     buffer.resize(static_cast<std::size_t>(std::min<std::uint64_t>(size, kCopyChunk)));
     while (size > 0) {
       const auto n = static_cast<std::size_t>(std::min<std::uint64_t>(size, kCopyChunk));
@@ -385,7 +385,7 @@ Result extract_gc_disc(const ByteSource& source, const GcDisc& disc, const std::
     const fs::path out = files / fs::path(dir);
     if (!inside_root(out)) return cleanup_and_fail("Refusing to extract outside the folder: " + dir);
     fs::create_directories(out, ec);
-    if (ec) return cleanup_and_fail("Could not create " + out.string() + ": " + ec.message());
+    if (ec) return cleanup_and_fail("Could not create " + path_for_message(out) + ": " + ec.message());
   }
   for (const GcFile& file : disc.files()) {
     const fs::path out = files / fs::path(file.path);

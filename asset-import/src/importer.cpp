@@ -22,7 +22,7 @@ IdentifyReport Importer::identify(const std::filesystem::path& path) const {
   const std::uintmax_t size = std::filesystem::file_size(path, ec);
   std::ifstream file(path, std::ios::binary);
   if (ec || !file) {
-    report.message = "Could not read " + path.string();
+    report.message = "Could not read " + path_for_message(path);
     return report;
   }
 
