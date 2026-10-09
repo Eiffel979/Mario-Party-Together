@@ -17,11 +17,12 @@
 //                                             when complete, removed if interrupted)
 //     builds/<recipe id>/.lock                held while a build of that recipe runs
 //
-// <key> is derived from the dump's SHA-256, the recipe ID and version, the runtime
-// build version and every source pin (or, for an unpinned override, a fingerprint
-// of what was found). Changing any of them gives a new key, so a dump is built once
-// and rebuilt only when one of them changes. A build directory without a complete,
-// matching manifest is never used.
+// <key> is the first 32 hex characters (to keep paths short) of a SHA-256 over the
+// dump's SHA-256, the recipe ID and version, the runtime build version and every
+// source pin (or, for an unpinned override, a fingerprint of what was found). The
+// manifest holds the full key. Changing any input gives a new key, so a dump is
+// built once and rebuilt only when one of them changes. A build directory without a
+// complete manifest carrying the full matching key is never used.
 //
 // Nothing here uploads, shares or copies the output anywhere else: build output is
 // the user's own and stays on their machine (ADR 0001).
