@@ -233,7 +233,9 @@ TEST_CASE("loadState rejects old, foreign or corrupt states and keeps the curren
   SaveState short_data = good;
   short_data.data.pop_back();
   SaveState zero_rate = good;
-  for (std::size_t b = 0; b < 8; ++b) zero_rate.data[6 * 8 + b] = std::byte{0};  // rate numerator
+  REQUIRE(zero_rate.data.size() >= 7 * 8);
+  // at() rather than [] keeps GCC's -Wstringop-overflow from misjudging the copied vector.
+  for (std::size_t b = 0; b < 8; ++b) zero_rate.data.at(6 * 8 + b) = std::byte{0};  // rate numerator
   SaveState wrong_frame = good;
   wrong_frame.frame = good.frame + 1;
 
