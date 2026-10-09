@@ -3,6 +3,7 @@ find_package(doctest CONFIG REQUIRED)
 add_executable(mpt_unit_tests
   unit/main.cpp
   unit/test_asset_import.cpp
+  unit/test_contract_init.cpp
   unit/test_core.cpp
   unit/test_determinism.cpp
   unit/test_determinism_harness.cpp

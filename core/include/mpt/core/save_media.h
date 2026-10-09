@@ -18,7 +18,7 @@ namespace mpt {
 // are never committed, never embedded in committed replays and never uploaded.
 struct SaveMedia {
   std::uint32_t format_version = 0;  // runtime-defined layout version
-  std::vector<std::byte> data;       // opaque, runtime-defined (e.g. a memory card image)
+  std::vector<std::byte> data{};       // opaque, runtime-defined (e.g. a memory card image)
 
   friend bool operator==(const SaveMedia&, const SaveMedia&) = default;
 };

@@ -13,14 +13,14 @@ namespace mpt {
 
 struct CatalogEntry {
   ContentId id;
-  std::string display_name;
+  std::string display_name{};
 };
 
 // Everything a title offers, by stable content ID.
 struct Catalog {
-  std::vector<CatalogEntry> boards;
-  std::vector<CatalogEntry> minigames;
-  std::vector<CatalogEntry> characters;
+  std::vector<CatalogEntry> boards{};
+  std::vector<CatalogEntry> minigames{};
+  std::vector<CatalogEntry> characters{};
 };
 
 // Title-specific knowledge layered on a running ITitleRuntime: what content

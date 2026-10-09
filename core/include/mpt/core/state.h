@@ -14,7 +14,7 @@ struct SaveState {
   TitleId title{};
   std::uint32_t format_version = 0;  // bumped by the runtime when its layout changes
   std::uint64_t frame = 0;           // frame number the state was taken at
-  std::vector<std::byte> data;
+  std::vector<std::byte> data{};
 };
 
 // 64-bit FNV-1a. Used for state hashes: cheap, platform independent, and good
