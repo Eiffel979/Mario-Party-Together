@@ -2,9 +2,12 @@ add_library(mpt_asset_import
   src/byte_source.cpp
   src/dump_format.cpp
   src/gc_disc.cpp
+  src/git_tree.cpp
   src/importer.cpp
   src/known_dumps.cpp
+  src/sha1.cpp
   src/sha256.cpp
+  src/source_lock.cpp
 )
 add_library(mpt::asset_import ALIAS mpt_asset_import)
 target_include_directories(mpt_asset_import PUBLIC include)
