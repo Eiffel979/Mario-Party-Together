@@ -16,7 +16,7 @@ This note was written by reading the community decomp and its PC-port fork in pl
 | `https://github.com/mariopartyrd/marioparty4` | Matching decomp (the reference) | `main` = `147b165a83187ac9e6cfdc3bf52f2e73437b1ffd` (2026-06-04, "Backport mp5 macros") | **None on `main`.** A CC0 1.0 license is proposed in open PR #663 (branch `license-change`, `db93f095a90dcc2e5fc27e1a66e313e752a3a06d`, 2026-09-24), not merged. |
 | `https://github.com/mariopartyrd/partyboard` | Upstream's own PC port ("Party Board"). Same organisation, game sources forked from the decomp. | `main` = `98ac07fd1e8f7ab938bbb6fe75789fad99419010` (2026-09-29) | **CC0 1.0** (`LICENSE` at the root) |
 | `https://github.com/AxioDL/musyx` | MusyX sound-library decomp (submodule `extern/musyx` of both repos) | Party Board pins `2a0e01aeff0d06a9ee9e12966c435cb75144af9e`. Upstream HEAD is `86851a3a8d51788d166ea42d137b49526f570400`. | CC0 1.0 |
-| `https://github.com/encounter/aurora` | GameCube/Wii source-level compatibility layer used by Party Board | Party Board pins `514339438178ef2bed1b14e5149d90ece0c6e0cc` | MIT |
+| `https://github.com/encounter/aurora` | GameCube/Wii source-level compatibility layer used by Party Board. **Adopted after S1: its GX front end, Dawn renderer, MTX and headers, without `aurora_core`** (ADR 0007 §6, ADR 0009 §1). | Party Board pins `514339438178ef2bed1b14e5149d90ece0c6e0cc`. Upstream HEAD on 2026-10-08 is `50e5be30ec12cc72768bc564bc016b55e82be868`, 132 commits later. | MIT |
 | `https://github.com/higan-emu/libco` | Coroutines used by Party Board for game processes | Party Board pins `e18e09d634d612a01781168ad4d76be10a7e3bad` | ISC (check during P1-15) |
 
 The decomp also has branches `port` (now a stub whose README points to the Party Board repo), `pal` and `mod` (2024, unrelated).
@@ -122,7 +122,7 @@ AxioDL musyx has a PC backend with a pull API (`sndPCRender(out, frames)`) and a
 | Call | Game-code users | Feeds logic? | Handling |
 |---|---|---|---|
 | `GXPeekZ`, `GXPeekARGB`, `GXPoke*`, `GXReadDrawSync`, `GXGetGPStatus` | none | — | — |
-| `GXCopyTex` (EFB to texture) | `hsfman.c` (shadow maps), `wipe.c` (screen transitions), `board/boo.c`, and 20 RELs: m405, m410, m411, m416, m417, m419, m421, m423, m427, m428, m430, m434, m439, m440, m442, m448, m455, m456, m460, modeltest | No CPU reads of the destination buffers found. They are used as textures for later draws. m434 invalidates the cache when it allocates, then the GPU writes. | GX layer keeps copies GPU-side as render targets keyed by destination address. The CPU-side bytes of the destination stay deterministic (zero) and outside the hash manifest. P1-14 should add a debug assert that traps CPU reads of those ranges. |
+| `GXCopyTex` (EFB to texture) | `hsfman.c` (shadow maps), `wipe.c` (screen transitions), `board/boo.c`, and 20 RELs: m405, m410, m411, m416, m417, m419, m421, m423, m427, m428, m430, m434, m439, m440, m442, m448, m455, m456, m460, modeltest | No game-logic reads of the destination buffers. They are used as textures for later draws. m434 invalidates the cache when it allocates, then the GPU writes. **Correction from S1:** m415 (Stamp Out!) `memcpy`s the shadow-map copy destination into another texture's CPU buffer. That is presentation only. Party Board aliases the pointer under `TARGET_PC`, and we keep that branch. | GX layer keeps copies GPU-side as render targets keyed by destination address. The CPU-side bytes of the destination stay deterministic (zero) and outside the hash manifest. P1-14 should add a debug assert that traps CPU reads of those ranges. |
 | `GXRead{GP,VCache,Pix,Mem}Metric` | `game/main.c` every frame, `game/perf.c` | Stored in globals for the perf overlay only | Return 0. |
 | `GXSetDrawSync` + `GXSetDrawSyncCallback` | `game/perf.c` | Perf timing only | Fire the callback synchronously. |
 | `GXDrawDone`, `GXSetDrawDone`/`GXWaitDrawDone` | `init.c`, `hsfman.c` | Synchronisation only | No-op / immediate. |
@@ -296,6 +296,6 @@ MP4 is a good first target. The decomp is complete and matching for the user's e
 ---
 
 ## Sections still to fill (P1-18)
-- Spike S1 result and the pinned GX backend version (P1-12).
+- Spike S1 result and the pinned GX backend version (P1-12). **Reported:** `docs/spikes/s1-gx-backend.md`. Recommendation: aurora GX/MTX on Dawn at `514339438178ef2bed1b14e5149d90ece0c6e0cc`, with a host shim, a null backend and a small patch set. A gate runs at the start of P1-14. Folded into ADR 0007 §6 (Accepted). GX surface measured on Party Board's sources: 131 distinct entry points, 104 implemented by aurora at the pin, one real gap (`GXSetZTexture`, m419), no `GD*` calls.
 - Hash manifest. Starting areas: RNGs (§7), `GWSystem`/`GWPlayer`/`GWPlayerCfg`/game stats, HuPrc process list, object manager, overlay history, pad state, data-dir cache and ARAM map, MusyX sequencer and voice state, CARD/save media, virtual clock.
 - Known issues, the E1 sign-off checklist and the E2 input coverage table. The E7 reference-machine specs live in the Phase 1 plan's D7 table.
