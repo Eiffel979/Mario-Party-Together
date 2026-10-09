@@ -11,6 +11,7 @@ add_executable(mpt_unit_tests
   unit/test_fake_adapter.cpp
   unit/test_fake_runtime_v1.cpp
   unit/test_golden_trail.cpp
+  unit/test_session.cpp
 )
 target_link_libraries(mpt_unit_tests PRIVATE mpt::core mpt::asset_import doctest::doctest)
 target_compile_definitions(mpt_unit_tests PRIVATE
