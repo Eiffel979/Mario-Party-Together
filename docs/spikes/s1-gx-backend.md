@@ -4,7 +4,7 @@
 **Date:** 2026-10-08
 **Time-box:** 2 weeks (P1-12). This report is the desk study plus the probes that could run without fetching new dependencies. The render check on synthetic scenes is moved to a gate at the start of P1-14 (§8), still inside the time-box.
 **Inputs:** ADR 0007 (§4–6 and the S1 brief), ADR 0008, ADR 0009, `docs/titles/mp4.md` §8–10, Phase 1 plan (P1-12, P1-14, E6, E7, R6).
-**Output:** a recommendation for ADR 0007 §6. The proposed text is `docs/adr/0007-s6-proposed-amendment.md`, for architect to review and fold in.
+**Output:** a recommendation for ADR 0007 §6. The proposed text was folded into ADR 0007 §6 by architect on 2026-10-08, and the separate amendment file was deleted.
 
 ## 1. Recommendation
 
