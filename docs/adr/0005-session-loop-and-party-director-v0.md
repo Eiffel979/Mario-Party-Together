@@ -93,3 +93,37 @@ class PartyDirector {
 - **Amended in P1-03** (qa-reviewer review of the v1 headers):
   - The `current_minigame` rule is tightened to "set exactly when `phase == minigame`, `nullopt` otherwise", which matches `party.h`. The first draft only said when it is set, so the Director could not rely on it being cleared, and a stale ID would make `minigame_ended` events ambiguous. The adapters enforce the rule (`FakeAdapter` in P1-20b2, `Mp4Adapter` in P1-17). The P1-20c conformance suite checks it on every `readParty()` when it is given an adapter factory.
   - `PlayerState` and `PartySnapshot` gained defaulted `operator==` (ADR 0002, amendment 13). The Director's snapshot diff uses it.
+
+## Amendment for P1-04 (architect, 2026-10-09)
+Implementing `Session` and `PartyDirector` pinned down details that the sketch above left open. They are additive. `session.h` and `party_director.h` were counted in contract v1 from the start, so `kCoreContractVersion` stays 1.
+
+1. **`Session::step` returns `Result`.** If `inputs.frame != frame()`, it fails and steps nothing. A wrong frame number is a caller bug that would otherwise desync without a trace.
+2. **`Session::loadState(const SaveState&)`** is the only way to load a state into a running session. Callers must never call `boot`, `stepFrame` or `loadState` through `runtime()`. On success it does three things:
+   - sets `frame()` to `state.frame`;
+   - resyncs the Director (rule 5);
+   - takes the restored save-media generation as the new baseline, without reporting a write (ADR 0004 rules 9–10).
+   On failure the session's frame and Director are unchanged. Whether the runtime is unchanged is up to the runtime, because `ITitleRuntime::loadState` does not promise it.
+3. **Save-media writes.** `Session` reads `saveMediaGeneration()` just before and just after each `stepFrame()`. When the two differ, it copies `saveMedia()` into a pending slot, replacing any older pending image. `std::optional<SaveMedia> takeSaveMedia()` returns that image and clears the slot.
+   - `loadState` neither sets nor clears the slot. A write that happened before a rewind is still handed over exactly as it was written.
+   - Whether to persist is up to the shell (ADR 0004 rules 5–6). `Session` has no filesystem access and no notion of an ephemeral session.
+4. **Events.**
+   - `PartyEvent::frame` is the `inputs.frame` of the step after which the change was seen. A change in the snapshot read after stepping frame `f` gets `frame == f`.
+   - `PartyEvent` gains `std::optional<MinigameId> minigame`, which names the minigame for `minigame_started` and `minigame_ended`. For `minigame_ended`, the event's snapshot no longer holds the ID.
+   - Events are derived from consecutive snapshots `prev` and `cur`, in this fixed order within one frame:
+     1. `minigame_ended` when `prev.current_minigame` is set and differs from `cur.current_minigame`;
+     2. `phase_changed` when the phase differs;
+     3. `turn_started` when `cur.turn > 0` and differs from `prev.turn`;
+     4. `minigame_started` when `cur.current_minigame` is set and differs from `prev.current_minigame`.
+   - Back-to-back minigames A → B therefore give `minigame_ended(A)` and then `minigame_started(B)`. The `Kind` values are append-only.
+5. **Baseline and resync.** `PartyDirector::resync(f, snapshot)` drops every event whose `frame >= f` and makes `snapshot` the mirror, without emitting events.
+   - `Session::start` calls it with frame 0 and the snapshot read after boot and rules.
+   - `Session::loadState(s)` calls it with `s.frame`. Restoring an earlier state therefore gives exactly the event list a straight run would have had up to `s.frame`, and re-simulating from there reproduces the rest.
+   - A forward load (a state later than every event so far) leaves a gap. Events for the frames it skipped are not synthesized.
+6. **Instances (ADR 0002 rule 10).**
+   - In v0, `Session` treats every title as single-instance. At most one live `Session` per `TitleId` per process. `start` reserves the title before it creates the runtime, and a failed `start` releases it.
+   - `start` also fails if the runtime's `id()` differs from `dump.title`, or if either factory returns null.
+   - Destruction order is: adapter, then runtime, then the title reservation.
+   - A per-title "multi-instance is safe" flag (for netplay simulation tests in Phase 2) is an additive change to `TitleRegistry` and needs its own amendment.
+7. **Lifetimes.**
+   - `director().events()` is a view that a later `step` or `loadState` may invalidate. Copy it to keep it.
+   - `runtime()` is for presentation, audio, `frameRate()`, `saveState()` and `stateHash()`.
