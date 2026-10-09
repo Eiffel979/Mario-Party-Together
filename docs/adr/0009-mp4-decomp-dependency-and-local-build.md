@@ -12,7 +12,7 @@ A decomp port compiles the community's reverse-engineered C source of the game. 
 P1-01 (`docs/titles/mp4.md` §1–5, §13) established:
 - **`mariopartyrd/marioparty4`** (the matching decomp) is complete and fully matching for `GMPE01_00` and `GMPE01_01`. `main` is at `147b165a83187ac9e6cfdc3bf52f2e73437b1ffd` and has **no license**. A CC0 1.0 license is proposed in open PR #663, not merged. Its matching build `#include`s about 20 data blobs that decomp-toolkit extracts from the user's `main.dol` and `bootDll.rel`, so it cannot compile without a dump.
 - **`mariopartyrd/partyboard`** ("Party Board") is the same organisation's PC port. Its game sources are forked from the decomp and adapted for PC. It is licensed **CC0 1.0** today. Under its PC build it reads those blobs **at runtime** from the user's disc data through a per-revision address table, so the compiled game code contains no dump-derived bytes. It supports `GMPE01_00` and `GMPE01_01`. It has **no audio** (MusyX init is disabled), **no THP movies**, and memory-card saves that do not fit our host-owned model. Its OS time layer (aurora) reads the host clock.
-- Party Board's submodules: `AxioDL/musyx` (CC0 1.0), `encounter/aurora` (MIT) and `higan-emu/libco` (ISC, to be confirmed if adopted).
+- Party Board's submodules: `AxioDL/musyx` (CC0 1.0), `encounter/aurora` (MIT) and `higan-emu/libco` (ISC, to be confirmed if adopted). aurora in turn builds Dawn (BSD-3-Clause), at a commit it records (spike S1).
 - The developer's local copy of `marioparty4` is a zip with no `.git` and an empty `extern/musyx`. Sampled blobs match `main` at `147b165`, but a zip cannot prove a commit.
 - The developer's dump is USA Rev 0 (`GMPE01`, version byte `0x00`), the primary matching target.
 
@@ -30,11 +30,12 @@ P1-01 (`docs/titles/mp4.md` §1–5, §13) established:
 |---|---|---|---|---|
 | `partyboard` | `https://github.com/mariopartyrd/partyboard` | `98ac07fd1e8f7ab938bbb6fe75789fad99419010` | `CC0-1.0` | MP4 game source: game core, RELs, `msm`, MSL math, THP, and selected port files (§2) |
 | `musyx` | `https://github.com/AxioDL/musyx` | `2a0e01aeff0d06a9ee9e12966c435cb75144af9e` (the commit Party Board's pin records) | `CC0-1.0` | Sound library, run through its PC synth in pull mode (ADR 0007) |
-| `aurora` | `https://github.com/encounter/aurora` | `514339438178ef2bed1b14e5149d90ece0c6e0cc` (Party Board's pin). **Only if spike S1 adopts it** (ADR 0007 §6). | `MIT` | GX, GD and MTX only |
+| `aurora` | `https://github.com/encounter/aurora` | `514339438178ef2bed1b14e5149d90ece0c6e0cc` (Party Board's pin). **Required** (spike S1, ADR 0007 §6). | `MIT` | GX front end, WebGPU renderer, MTX and Dolphin headers (GD for later titles). Not `aurora_core`, and not its OS/VI/PAD/DVD/CARD/SI/THP/time code. Carries the ADR 0007 §6 patch set. |
+| `dawn` | `https://dawn.googlesource.com/dawn` (GitHub mirror `google/dawn`) | `13abc3bc8ea2d3c2050f9e77a12d012108ceee24` (the commit aurora records). **Required.** | `BSD-3-Clause` (some dependencies, such as Tint's, are `Apache-2.0`) | WebGPU implementation for aurora's renderer. **Built from source, never prebuilt.** Its own dependencies are pinned by the `DEPS` file at this commit, and fetched with that commit's `fetch_dawn_dependencies.py`. Linked into the host-side renderer library, never into the game module (ADR 0007 §6). |
 | `libco` | `https://github.com/higan-emu/libco` | `e18e09d634d612a01781168ad4d76be10a7e3bad` (Party Board's pin). **Only if P1-13 adopts it** (ADR 0008 §1). | `ISC` (confirm when adopted) | Coroutines |
 
 Rules:
-- **Pins are full upstream commit hashes**, never tags, branches or archive checksums. A submodule is pinned to the commit the parent's pin records unless the lock says otherwise and gives a reason. Submodules that are not in the lock are not fetched.
+- **Pins are full upstream commit hashes**, never tags, branches or archive checksums. A dependency's own lock file (such as Dawn's `DEPS`) counts as part of its pin only if it pins by commit hash too. A submodule is pinned to the commit the parent's pin records unless the lock says otherwise and gives a reason. Submodules that are not in the lock are not fetched.
 - **Never vendored**, never committed as a submodule. The recipe fetches by hash (`git clone --filter=blob:none`, `git checkout <sha>`) into **`external/`** at the repository root for developer builds (gitignored and rejected by the compliance scanner, P1-20e1), or into asset-import's user cache for builds started from the launcher, and refuses to build if `git rev-parse HEAD` differs from the lock.
 - **A user-supplied archive** (for example a GitHub zip) is accepted only if its computed git **tree hash** equals the tree of the locked commit, with submodule paths checked against the locked gitlinks and each submodule verified the same way. Otherwise the recipe asks for a git checkout. The developer's existing `marioparty4` zip is irrelevant to the build, since `marioparty4` is not a build input.
 - **Local override (development only).** A developer may point the recipe at an existing checkout outside the repo, for example with `MPT_MP4_SOURCE_DIR`. If the tree hash does not match the lock, the manifest marks the build **`unpinned`**. Such a build never produces committed golden trails, exit evidence or known-good results, and never joins netplay.
@@ -99,8 +100,8 @@ The earlier draft had interim rules I1–I4 because no licensed source existed. 
 
 ## Review (architect, 2026-10-08)
 **Verdict: Accepted.** The earlier draft stayed Proposed for two reasons, and both are now resolved for the sources we actually build:
-1. **Pins.** Every source is pinned by a full upstream commit hash from P1-01 (§1). aurora and libco are conditional on S1 and P1-13, and their pins are already known.
-2. **License.** The pinned game source is CC0 1.0, musyx is CC0 1.0, aurora is MIT and libco is ISC (to be confirmed if adopted). These clearly permit fetching, patching and compiling locally. The unlicensed `marioparty4` is no longer a build input.
+1. **Pins.** Every source is pinned by a full upstream commit hash from P1-01 (§1). After spike S1, aurora and Dawn are required. libco stays conditional on P1-13, and its pin is already known.
+2. **License.** The pinned game source is CC0 1.0, musyx is CC0 1.0, aurora is MIT, Dawn is BSD-3-Clause (with Apache-2.0 dependencies) and libco is ISC (to be confirmed if adopted). These clearly permit fetching, patching and compiling locally. The unlicensed `marioparty4` is no longer a build input.
 
 The build-success condition in the earlier draft ("a clean build from the pins") belongs to P1-15's acceptance test, not to this decision, and the fallback covers the case where it fails.
 
