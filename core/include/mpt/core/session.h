@@ -19,9 +19,9 @@
 namespace mpt {
 
 struct SessionConfig {
-  VerifiedDump dump;
-  RuntimeConfig runtime;
-  std::optional<ResolvedRuleset> rules;  // Phase 1: nullopt or empty
+  VerifiedDump dump{};
+  RuntimeConfig runtime{};
+  std::optional<ResolvedRuleset> rules{};  // Phase 1: nullopt or empty
 };
 
 // One running title: its runtime, its adapter and the Party Director (ADR 0005). The

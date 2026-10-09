@@ -19,9 +19,9 @@ struct PartyEvent {
   // inputs.frame of the step after which the change was seen.
   std::uint64_t frame = 0;
   // minigame_started / minigame_ended: the minigame. nullopt for the other kinds.
-  std::optional<MinigameId> minigame;
+  std::optional<MinigameId> minigame{};
   // The snapshot read after that step.
-  PartySnapshot snapshot;
+  PartySnapshot snapshot{};
 
   friend bool operator==(const PartyEvent&, const PartyEvent&) = default;
 };
