@@ -21,6 +21,8 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   endif()
 endif()
 
+option(MPT_REQUIRE_GC_WII "Fail the configure if the GameCube SDK layer cannot be built (no Clang); CI sets this" OFF)
+
 set(MPT_CORE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../core/include" CACHE PATH
   "core/ headers (the SDK uses header-only core types: InputFrame, DeterministicRng, StateHasher, Result)")
 
@@ -42,6 +44,10 @@ else()
 endif()
 
 if(NOT MPT_GC_WII_CLANG_CXX OR NOT MPT_GC_WII_CLANG_C)
+  if(MPT_REQUIRE_GC_WII)
+    message(FATAL_ERROR "runtimes/gc_wii: no Clang toolchain found and MPT_REQUIRE_GC_WII is ON (ADR 0008 §4). "
+                        "Install Clang (clang-cl on Windows) or set MPT_GC_WII_CLANG_CXX / MPT_GC_WII_CLANG_C.")
+  endif()
   message(WARNING "runtimes/gc_wii: no Clang toolchain found (ADR 0008 §4 requires it); the GameCube SDK layer is not built. "
                   "Set MPT_GC_WII_CLANG_CXX / MPT_GC_WII_CLANG_C.")
   return()
@@ -67,6 +73,7 @@ ExternalProject_Add(mpt_gc_wii_clang
     "-DMPT_CORE_INCLUDE_DIR:PATH=${MPT_CORE_INCLUDE_DIR}"
     "-DMPT_BUILD_TESTS:BOOL=${MPT_BUILD_TESTS}"
     "-DMPT_WARNINGS_AS_ERRORS:BOOL=${MPT_WARNINGS_AS_ERRORS}"
+    "-DMPT_REQUIRE_GC_WII:BOOL=${MPT_REQUIRE_GC_WII}"
   INSTALL_COMMAND ""
   BUILD_ALWAYS ON
   USES_TERMINAL_BUILD ON)

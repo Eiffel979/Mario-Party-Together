@@ -33,12 +33,12 @@
     {
       "name": "ci-windows",
       "inherits": "windows-release",
-      "cacheVariables": { "MPT_WARNINGS_AS_ERRORS": "ON" }
+      "cacheVariables": { "MPT_WARNINGS_AS_ERRORS": "ON", "MPT_REQUIRE_GC_WII": "ON" }
     },
     {
       "name": "ci-linux",
       "inherits": "linux-release",
-      "cacheVariables": { "MPT_WARNINGS_AS_ERRORS": "ON" }
+      "cacheVariables": { "MPT_WARNINGS_AS_ERRORS": "ON", "MPT_REQUIRE_GC_WII": "ON" }
     }
   ],
   "buildPresets": [

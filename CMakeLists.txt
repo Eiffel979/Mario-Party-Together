@@ -35,6 +35,8 @@ find_package(nlohmann_json CONFIG REQUIRED)
 add_subdirectory(asset-import)
 add_subdirectory(core)
 add_subdirectory(input)
+# GameCube/Wii SDK layer: built with Clang as its own project (ADR 0008 §4).
+add_subdirectory(runtimes/gc_wii)
 
 if(MPT_BUILD_TESTS)
   enable_testing()
