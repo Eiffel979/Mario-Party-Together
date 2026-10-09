@@ -67,7 +67,8 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build pkg-config autoconf automake libtool \
+          # clang: runtimes/gc_wii is built with Clang on every platform (ADR 0008 rule 4).
+          sudo apt-get install -y clang ninja-build pkg-config autoconf automake libtool \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev \
             libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols \
             libegl1-mesa-dev libgl1-mesa-dev libdrm-dev libgbm-dev \
@@ -76,6 +77,19 @@ jobs:
       - name: Set up MSVC
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
+
+      # Logged so a runner image update that changes the Clang version is visible next to
+      # any golden-trail mismatch. Linux fails here if clang is missing; on Windows the
+      # SDK's CMake also searches the Visual Studio and LLVM install directories.
+      - name: Show the Clang toolchain
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            if command -v clang-cl >/dev/null 2>&1; then clang-cl --version; else echo "clang-cl is not on PATH"; fi
+          else
+            clang --version
+            clang++ --version
+          fi
 
       - name: Restore vcpkg binary cache
         uses: actions/cache@v4
@@ -94,8 +108,10 @@ jobs:
           # Written after msvc-dev-cmd so it overrides the VS-bundled vcpkg for the steps below.
           echo "VCPKG_ROOT=$MPT_VCPKG_DIR" >> "$GITHUB_ENV"
 
+      # MPT_REQUIRE_GC_WII: fail the configure step instead of silently skipping the
+      # GameCube SDK layer when no Clang toolchain is found (P1-21, E10).
       - name: Configure
-        run: cmake --preset ${{ matrix.preset }}
+        run: cmake --preset ${{ matrix.preset }} -DMPT_REQUIRE_GC_WII=ON
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
