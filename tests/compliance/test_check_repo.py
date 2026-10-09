@@ -153,5 +153,25 @@ class ForbiddenPathsRepoTest(unittest.TestCase):
         self.assertIn("external/partyboard/src/main.c", err.getvalue())
 
 
+class GraphicsArtifactsTest(unittest.TestCase):
+    """P1-14 gate: Dawn libraries and GPU pipeline caches are local build output (ADR 0007)."""
+
+    def test_dawn_and_pipeline_caches_fail_at_any_depth(self):
+        for name in ["webgpu_dawn.dll", "build/bin/webgpu_dawn.dll", "WebGPU_Dawn.DLL",
+                     "dawn_cache.db", "cache/gx/dawn_cache.db", "pipeline_cache.db", "x/y/Pipeline_Cache.DB"]:
+            with self.subTest(name=name):
+                self.assertTrue(any("Dawn build output or GPU pipeline cache" in r for r in reasons(name)))
+
+    def test_text_content_does_not_help(self):
+        # Even a synthetic text file under one of these names is rejected: the name is the rule.
+        self.assertTrue(any("forbidden file" in r for r in reasons("pipeline_cache.db", b"synthetic text\n")))
+
+    def test_similar_names_pass(self):
+        for name in ["docs/pipeline_cache.md", "src/dawn_cache.cpp", "pipeline_cache.db.txt",
+                     "runtimes/gc_wii/gx/webgpu_dawn.h", "notes/dawn.txt"]:
+            with self.subTest(name=name):
+                self.assertEqual(reasons(name), [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -10,7 +10,8 @@ Modes:
   check_repo.py --commits A..B       scan files added or changed by each commit in A..B
 
 A file fails if it has a dump/container extension, is a memory-card or save
-image (ADR 0004), sits in a dump or extracted-asset directory, sits under the
+image (ADR 0004), is a Dawn library or GPU pipeline cache (ADR 0007),
+sits in a dump or extracted-asset directory, sits under the
 root external/ directory where game-source checkouts live (ADR 0009), starts with
 a known console image signature, is binary, or is larger than the size limit.
 Legitimate exceptions go in allowlist.txt with a reason.
@@ -43,6 +44,11 @@ FORBIDDEN_EXTENSIONS = {
 # Memory-card and save images. They are user data that embed game-made icons and
 # banners, so they are never committed (ADR 0004, P1-20e1).
 SAVE_MEDIA_EXTENSIONS = {".gci", ".gcs", ".sav", ".raw"}
+
+# Graphics build output and caches, matched by file name at any depth (ADR 0007 section 6,
+# P1-14 gate). Dawn is built locally from pinned source and never committed, and GPU
+# pipeline caches hold driver- and shader-derived data from a local run.
+FORBIDDEN_FILENAMES = {"webgpu_dawn.dll", "dawn_cache.db", "pipeline_cache.db"}
 
 # Forbidden at any depth.
 FORBIDDEN_DIRS = {"dumps", "extracted", "roms", "isos"}
@@ -104,6 +110,8 @@ def check_file(path: str, size: int, head: bytes, allowlist: list[str]) -> list[
         findings.append(Finding(path, f"forbidden file type '{pure.suffix}'"))
     if pure.suffix.lower() in SAVE_MEDIA_EXTENSIONS:
         findings.append(Finding(path, f"memory-card or save image '{pure.suffix}' (save media is user data, ADR 0004)"))
+    if pure.name.lower() in FORBIDDEN_FILENAMES:
+        findings.append(Finding(path, f"forbidden file '{pure.name}' (Dawn build output or GPU pipeline cache, ADR 0007)"))
     if len(pure.parts) > 1 and pure.parts[0].lower() in FORBIDDEN_ROOT_DIRS:
         findings.append(Finding(path, f"inside the root '{pure.parts[0]}/' directory (game-source checkouts, ADR 0009)"))
     for part in pure.parts[:-1]:
