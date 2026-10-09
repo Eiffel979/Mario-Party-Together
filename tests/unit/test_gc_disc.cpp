@@ -686,14 +686,35 @@ TEST_CASE("the importer validates and identifies a synthetic GameCube disc") {
     CHECK(report.message.find("truncated or trimmed") != std::string::npos);  // synthetic discs are small
   }
 
-  SUBCASE("damaged disc is rejected before hashing") {
+  SUBCASE("an unknown damaged disc is explained") {
     auto img = built.image;
     put32(img, built.entry_at(built.index_of("deep.bin")) + 4, 0xFFFFFFF0);
     const Importer importer(known_mp4(sha, built.image.size()));
     const IdentifyReport report = importer.identify(tmp.write("damaged.iso", img));
     CHECK_FALSE(report.match.has_value());
-    CHECK(report.sha256.empty());
+    CHECK_FALSE(report.sha256.empty());
+    REQUIRE(report.gc_disc.has_value());
+    CHECK(report.message.find("GMPE01") != std::string::npos);
+    CHECK(report.message.find("damaged or altered") != std::string::npos);
     CHECK(report.message.find("truncated") != std::string::npos);
+  }
+
+  SUBCASE("a known-good hash is accepted even if a strict rule objects, but not extracted") {
+    // Two files sharing bytes: structurally readable, but against the overlap rule.
+    BuiltDisc strict = built;
+    put32(strict.image, strict.entry_at(strict.index_of("board.bin")) + 4,
+          get32(strict.image, strict.entry_at(strict.index_of("deep.bin")) + 4));
+    Sha256 strict_hasher;
+    strict_hasher.update(strict.image);
+    const Importer importer(known_mp4(strict_hasher.finish_hex(), strict.image.size()));
+    const IdentifyReport report = importer.identify(tmp.write("strict.iso", strict.image));
+    REQUIRE(report.match.has_value());
+    REQUIRE(report.gc_disc.has_value());
+    CHECK(gc_version_tag(*report.gc_disc) == "GMPE01_00");
+
+    std::string error;
+    CHECK_FALSE(open_image(strict.image, error).has_value());  // so extract_gc_disc never sees it
+    CHECK(error.find("overlaps") != std::string::npos);
   }
 
   SUBCASE("NKit image gets its own message") {

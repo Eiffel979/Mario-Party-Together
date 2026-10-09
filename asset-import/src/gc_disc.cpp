@@ -116,6 +116,52 @@ const GcFile* GcDisc::find(std::string_view path) const {
   return nullptr;
 }
 
+std::string gc_name_problem(std::string_view name) { return check_name(name); }
+
+std::optional<GcDiscHeader> read_gc_disc_header(const ByteSource& source, std::string& error) {
+  const std::uint64_t image_size = source.size();
+  auto fail = [&error](std::string message) {
+    error = std::move(message);
+    return std::nullopt;
+  };
+  if (image_size < kGcHeaderSize) {
+    return fail("The image is too small to be a GameCube disc (" + std::to_string(image_size) +
+                " bytes). It is probably truncated.");
+  }
+  std::vector<std::byte> header(kGcHeaderSize);
+  if (!source.read(0, header)) return fail("Could not read the disc header.");
+
+  if (be32(header, kNkitMagicOffset) == 0x4E4B4954) {  // "NKIT"
+    return fail("NKit images are not supported: they are altered and do not hash as a retail dump. "
+                "Restore the disc to a full, plain .iso and try again.");
+  }
+  if (be32(header, kWiiMagicOffset) == kWiiMagic) {
+    return fail("This is a Wii disc image, not a GameCube one.");
+  }
+  if (be32(header, kGcMagicOffset) != kGcMagic) {
+    return fail("This is not a GameCube disc image (the disc header magic is missing).");
+  }
+
+  GcDiscHeader h;
+  for (std::size_t i = 0; i < 6; ++i) {
+    const char c = static_cast<char>(header[i]);
+    if (!is_upper_alnum(c)) return fail("The disc header has an invalid disc ID.");
+    h.disc_id.push_back(c);
+  }
+  h.disc_number = std::to_integer<std::uint8_t>(header[6]);
+  h.version = std::to_integer<std::uint8_t>(header[7]);
+  for (std::size_t i = 0; i < kGameNameSize; ++i) {
+    const auto byte = std::to_integer<std::uint8_t>(header[kGameNameOffset + i]);
+    if (byte == 0) break;
+    h.game_name.push_back(byte >= 0x20 && byte <= 0x7E ? static_cast<char>(byte) : '?');
+  }
+  h.dol_offset = be32(header, 0x420);
+  h.fst_offset = be32(header, 0x424);
+  h.fst_size = be32(header, 0x428);
+  h.fst_max_size = be32(header, 0x42C);
+  return h;
+}
+
 std::optional<GcDisc> GcDisc::open(const ByteSource& source, std::string& error) {
   GcDisc disc;
   disc.image_size_ = source.size();
@@ -137,37 +183,10 @@ std::optional<GcDisc> GcDisc::open(const ByteSource& source, std::string& error)
     return fail("The image is larger than a GameCube disc (" + std::to_string(image_size) + " bytes, at most " +
                 std::to_string(kGcFullDiscSize) + " expected).");
   }
-  std::vector<std::byte> header(kGcHeaderSize);
-  if (!source.read(0, header)) return fail("Could not read the disc header.");
-
-  if (be32(header, kNkitMagicOffset) == 0x4E4B4954) {  // "NKIT"
-    return fail("NKit images are not supported: they are altered and do not hash as a retail dump. "
-                "Restore the disc to a full, plain .iso and try again.");
-  }
-  if (be32(header, kWiiMagicOffset) == kWiiMagic) {
-    return fail("This is a Wii disc image, not a GameCube one.");
-  }
-  if (be32(header, kGcMagicOffset) != kGcMagic) {
-    return fail("This is not a GameCube disc image (the disc header magic is missing).");
-  }
-
-  GcDiscHeader& h = disc.header_;
-  for (std::size_t i = 0; i < 6; ++i) {
-    const char c = static_cast<char>(header[i]);
-    if (!is_upper_alnum(c)) return fail("The disc header has an invalid disc ID.");
-    h.disc_id.push_back(c);
-  }
-  h.disc_number = std::to_integer<std::uint8_t>(header[6]);
-  h.version = std::to_integer<std::uint8_t>(header[7]);
-  for (std::size_t i = 0; i < kGameNameSize; ++i) {
-    const auto byte = std::to_integer<std::uint8_t>(header[kGameNameOffset + i]);
-    if (byte == 0) break;
-    h.game_name.push_back(byte >= 0x20 && byte <= 0x7E ? static_cast<char>(byte) : '?');
-  }
-  h.dol_offset = be32(header, 0x420);
-  h.fst_offset = be32(header, 0x424);
-  h.fst_size = be32(header, 0x428);
-  h.fst_max_size = be32(header, 0x42C);
+  auto header = read_gc_disc_header(source, error);
+  if (!header) return std::nullopt;
+  disc.header_ = std::move(*header);
+  const GcDiscHeader& h = disc.header_;
 
   // --- Apploader ----------------------------------------------------------
   std::array<std::byte, kGcApploaderHeaderSize> apploader{};

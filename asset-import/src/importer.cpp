@@ -1,6 +1,7 @@
 #include "mpt/asset_import/importer.h"
 
 #include <fstream>
+#include <memory>
 #include <vector>
 
 #include "mpt/asset_import/byte_source.h"
@@ -42,23 +43,6 @@ IdentifyReport Importer::identify(const std::filesystem::path& path) const {
     return report;
   }
 
-  if (report.format == DumpFormat::gc_disc) {
-    // Validate the disc structure before spending time on the hash, so a damaged,
-    // truncated or altered image gets a specific message.
-    std::string error;
-    const auto source = FileSource::open(path, error);
-    if (!source) {
-      report.message = error;
-      return report;
-    }
-    const auto disc = GcDisc::open(*source, error);
-    if (!disc) {
-      report.message = error;
-      return report;
-    }
-    report.gc_disc = disc->header();
-  }
-
   file.clear();
   file.seekg(0);
   Sha256 hasher;
@@ -84,8 +68,26 @@ IdentifyReport Importer::identify(const std::filesystem::path& path) const {
   }
   report.sha256 = hasher.finish_hex();
 
+  // The hash is the identity: a known-good dump is accepted on its hash alone, even
+  // if a strict structural rule would object (extraction enforces those rules on
+  // what it writes). For a GameCube image the header names the disc either way, and
+  // on a mismatch the full structural check explains what is wrong with it.
+  std::unique_ptr<FileSource> gc_source;
+  std::string gc_error;
+  if (report.format == DumpFormat::gc_disc) {
+    gc_source = FileSource::open(path, gc_error);
+    if (gc_source) {
+      if (auto header = read_gc_disc_header(*gc_source, gc_error)) report.gc_disc = std::move(*header);
+    }
+  }
+
   if (const KnownDump* match = known_.find_by_sha256(report.sha256); match && match->size == size) {
     report.match = *match;
+  } else if (report.format == DumpFormat::gc_disc && !report.gc_disc) {
+    report.message = gc_error;
+  } else if (std::string error; report.gc_disc && !GcDisc::open(*gc_source, error)) {
+    report.message = "This GameCube disc (" + report.gc_disc->disc_id + ") is not in the known-good list, and " +
+                     "it is damaged or altered: " + error;
   } else if (report.gc_disc) {
     const GcDiscHeader& h = *report.gc_disc;
     report.message = "This GameCube disc (" + h.disc_id + ", " + std::string(gc_region_name(h.region_code())) + ", " +

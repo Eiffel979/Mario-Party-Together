@@ -58,6 +58,25 @@ struct GcDiscHeader {
   char region_code() const { return disc_id.size() > 3 ? disc_id[3] : '\0'; }
 };
 
+// Reads only the disc header (boot.bin): checks the GameCube magic, refuses NKit and
+// Wii images, and parses the disc ID, version and table offsets. It does not look at
+// the FST, so it also works on images that GcDisc::open would refuse.
+std::optional<GcDiscHeader> read_gc_disc_header(const ByteSource& source, std::string& error);
+
+// Why an FST name is unsafe to create on disk (path separators, ".", "..", control or
+// non-ASCII bytes, a trailing dot or space, Windows device names...), or an empty
+// string if it is fine.
+std::string gc_name_problem(std::string_view name);
+
+// Longest output path extract_gc_disc() creates, in characters, counting the
+// destination folder. Windows refuses longer paths unless the executable opts into
+// long paths in its manifest (a shell decision, not asset-import's).
+#ifdef _WIN32
+inline constexpr std::size_t kGcMaxOutputPathLength = 259;
+#else
+inline constexpr std::size_t kGcMaxOutputPathLength = 4095;
+#endif
+
 // Region name for the 4th disc-ID character: 'E' → "USA", 'P' → "EUR", 'J' → "JPN", ...
 // Returns "unknown" for codes this table does not list.
 std::string_view gc_region_name(char region_code);
@@ -78,8 +97,10 @@ struct GcFile {
 
 class GcDisc {
  public:
-  // Reads and validates a plain GameCube disc image. On failure `error` says why, in
-  // words a user can act on.
+  // Reads and validates a plain GameCube disc image with every structural and safety
+  // rule. On failure `error` says why, in words a user can act on. The importer
+  // identifies dumps by hash first and uses this to explain a mismatch; extraction
+  // requires a GcDisc, so the rules always hold for what is written to disk.
   static std::optional<GcDisc> open(const ByteSource& source, std::string& error);
 
   const GcDiscHeader& header() const { return header_; }
