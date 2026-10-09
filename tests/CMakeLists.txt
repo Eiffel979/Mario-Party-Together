@@ -7,6 +7,7 @@ add_executable(mpt_unit_tests
   unit/test_determinism.cpp
   unit/test_determinism_harness.cpp
   unit/test_gc_disc.cpp
+  unit/test_fake_runtime_v1.cpp
 )
 target_link_libraries(mpt_unit_tests PRIVATE mpt::core mpt::asset_import doctest::doctest)
 target_compile_definitions(mpt_unit_tests PRIVATE MPT_KNOWN_DUMPS_JSON="${MPT_KNOWN_DUMPS_JSON}")

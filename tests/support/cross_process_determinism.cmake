@@ -4,7 +4,9 @@
 # byte-identical hash trails. The second process also skews its heap and runs two
 # instances one after another, so hashes that depend on addresses, or on state left
 # behind by an earlier instance, show up as a mismatch. A run with another seed must
-# differ, which shows the comparison is not vacuous. Each trail is written to WORK_DIR
+# differ, which shows the comparison is not vacuous. The same holds for the initial
+# save image (ADR 0004 rule 3): two processes booted with the same image must agree,
+# and their trail must differ from the blank-media one. Each trail is written to WORK_DIR
 # for diffing when the test fails.
 #
 # Usage: cmake -DCHILD=<path> -DWORK_DIR=<dir> -P cross_process_determinism.cmake
@@ -56,4 +58,17 @@ if(checkpoints STREQUAL other_checkpoints)
   message(FATAL_ERROR "a different seed gave the same trail, so the trail does not cover RNG state")
 endif()
 
-message(STATUS "cross-process determinism: ${count} checkpoints identical in two processes")
+run_child(process_save_media --seed 1234 --save-counter 5)
+run_child(process_save_media_b --seed 1234 --save-counter 5 --heap-skew 4099 --instances 2)
+if(NOT process_save_media STREQUAL process_save_media_b)
+  message(FATAL_ERROR
+    "hash trails with the same save image differ between processes. Compare "
+    "${WORK_DIR}/process_save_media.trail.txt with ${WORK_DIR}/process_save_media_b.trail.txt.")
+endif()
+string(REGEX MATCHALL "[0-9]+ [0-9a-f]+\n" save_media_checkpoints "${process_save_media}")
+if(checkpoints STREQUAL save_media_checkpoints)
+  message(FATAL_ERROR "a different initial save image gave the same trail, so the trail does not cover it")
+endif()
+
+message(STATUS "cross-process determinism: ${count} checkpoints identical in two processes, "
+  "with blank and with supplied save media")

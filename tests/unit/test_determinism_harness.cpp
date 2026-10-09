@@ -27,8 +27,8 @@ test::TrailSpec spec_with_seed(std::uint64_t seed) {
 
 std::unique_ptr<ITitleRuntime> make_fake() { return std::make_unique<test::FakeRuntime>(); }
 
-// Forwards everything to a FakeRuntime so tests can change one behaviour.
-// Contract v1: the v1 methods forward too (P1-03 hand-off compile fix).
+// Forwards every ITitleRuntime method (contract v1) to a FakeRuntime, so tests can
+// change one behaviour.
 class DelegatingRuntime : public ITitleRuntime {
  public:
   TitleId id() const override { return inner_.id(); }
