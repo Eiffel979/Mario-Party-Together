@@ -31,6 +31,12 @@ Cross-platform identity is a **Phase 1 exit requirement** (D5): the same replay 
 
 4. **One compiler for game code.** The game module and the SDK layer are built with **Clang on every platform** (clang-cl on Windows). Strict IEEE: `-ffp-contract=off`, no fast-math, SSE2 on x86-64, no x87, and the same flags on ARM64.
 5. **Our math library, not the platform's.** Game code calls the MSL math from the pinned game source (ADR 0009), or a pinned portable libm, compiled with the flags above, never the host CRT or glibc. This matters for MP4's roughly 3,300 double-precision trig calls. `sqrt` and `fmod` are exactly specified by IEEE, so host versions are allowed. Paired-single matrix and vector functions are plain C (ADR 0007 §4). The console's fast float-to-int casts (`OSf32tos16` and similar) are C functions with the console's **saturating** semantics. Golden tests pin outputs (P1-13, P1-21).
+   - **Explicit `fma`/`fmaf` calls are allowed; contraction is not.** `-ffp-contract=off` forbids the *compiler* from fusing `a * b + c`, because whether it does so depends on the compiler, flags and target. An `fmaf` written in the source is a different thing: one IEEE 754 fusedMultiplyAdd, correctly rounded, with one specified result. aurora's `PSVEC*` reciprocal-square-root emulation (a bit-exact `frsqrte` table plus an explicit `fmaf`) is therefore acceptable, on three conditions:
+     1. Every `fma`/`fmaf` in code linked into the game module resolves to **one pinned, correctly rounded software implementation in our math library**. It never resolves to the host CRT (whose `fmaf` quality varies), and never to a hardware FMA instruction selected per machine (our x86-64 baseline is SSE2, so FMA3 is not assumed).
+     2. Golden tests cover hard rounding cases (including results near halfway points, subnormals and signed zeros) and pin the outputs of the three `PSVEC*` functions.
+     3. A source grep in P1-22 lists every explicit `fma`/`fmaf` in the game module, so new uses are reviewed.
+
+     If condition 1 cannot be met by P1-13, those three functions use our plain-C versions instead.
    - **Float-to-int overflow.** Out-of-range float-to-int casts are undefined behaviour in C, and x86-64 and ARM64 give different results. The dump lane includes a **UBSan `float-cast-overflow` run** of the full-party replay, and every hit is fixed in game code (through a shim or patch) or shown to be unreachable. This is not a Windows/Linux issue today (both are x86-64), but it is a prerequisite for any ARM64 target.
 6. **Fixed-width types.** No `long` or `unsigned long` in game-state structs or disc-data structs. Disc data is byte-swapped and converted to host structs **at load time**. 32-bit on-disc offsets become host pointers only in loader code.
 
@@ -87,4 +93,5 @@ MP4's heap setup (`mp4.md` §11), thread and process inventory (§6), RNGs and t
   - fixed hardware answers;
   - saturating fast casts;
   - the UBSan float-cast-overflow run;
+  - explicit `fmaf` allowed under three conditions (§5, ruling requested by spike S1);
   - fixed module and arena bases for fresh-process save states (§11), with the E5 narrowing rule.
