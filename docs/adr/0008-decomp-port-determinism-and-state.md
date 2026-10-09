@@ -95,3 +95,38 @@ MP4's heap setup (`mp4.md` §11), thread and process inventory (§6), RNGs and t
   - the UBSan float-cast-overflow run;
   - explicit `fmaf` allowed under three conditions (§5, ruling requested by spike S1);
   - fixed module and arena bases for fresh-process save states (§11), with the E5 narrowing rule.
+
+## Amendment after P1-13 (architect, 2026-10-09)
+These decisions come from the SDK core branch (`p1-13-sdk-core`) and qa-reviewer's review of it. They refine §1–§3 and §5. No core contract changes, so the ADR stays Accepted.
+
+1. **Coroutines (§1): our own context switch is accepted** in place of libco or minicoro.
+   - **Why:** §1 asks for caller-provided arena stacks and the same behaviour on Windows and Linux, and the switch meets both. Neither library is in vcpkg, so either one would need a new fetch path and a pin. The switch is about 40 instructions per ABI, written out and reviewable.
+   - **Conditions** (runtime-gc-wii; qa-reviewer checks them at merge):
+     - Tests check that every callee-saved register survives a switch: Win64 `rbx rbp rdi rsi r12–r15 xmm6–xmm15`, MXCSR, the x87 control word and the TIB stack fields; SysV `rbx rbp r12–r15`, MXCSR and the x87 control word. These run on both CI OSes.
+     - No C++ exception, `longjmp` or SEH unwind ever crosses a switch. Game code is C, and SDK entry points that can fail return error codes.
+     - Unsupported targets fail at compile time (the existing `#error`). ARM64 is a later item.
+     - The assembly lives in one file, owned by runtime-gc-wii, with a header comment giving the frame layout.
+   - **Fallback:** if a defect turns up that the tests cannot pin down, switch to libco with caller-provided memory, pinned in the source lock (ADR 0009 §1). libco was already the alternative this section named.
+   - Register contexts are part of `SaveState` and never part of the hash, as before.
+2. **Virtual time (§2): the field clock is a floor.** At the start of frame `n`, `now = max(now, R_n)`, where `R_n = epoch + n × field` is computed exactly (NTSC field = 675,675 ticks at 40.5 MHz).
+   - Each time query then adds the fixed quantum (405 ticks).
+   - The VI retrace fires exactly once, at the start of each frame `n ≥ 1`, driven by the frame. It never fires because a busy-wait passed `R_n`. One `stepFrame` therefore stays one main-loop iteration, which is the point of §1.
+   - This is how §2's "advances by exactly one field period" is to be read. Over time, virtual time follows the field rate. Time spent in queries within a frame is never taken back, and time never runs backwards.
+   - When every thread is blocked, the scheduler may jump `now` to the next interrupt deadline before `R_{n+1}`.
+   - A frame that spends more than 60 virtual seconds in time queries faults instead of hanging.
+   - These constants feed every golden trail. Changing one is an amendment to this ADR.
+3. **I/O completion callbacks (§3).**
+   - By default, callbacks run at the **next SDK call boundary**. This satisfies §3 and still works for code that sets its "busy" flag after issuing the call.
+   - `SdkConfig::io_callbacks_before_return` runs them before the call returns instead.
+   - The mode is a **per-title constant** chosen by the runtime and recorded in `docs/titles/<id>.md`. It is never a user option, and it is part of the build fingerprint (§10).
+   - P1-16 chooses MP4's mode by auditing every completion-wait loop.
+4. **One MTX implementation (§5), owned by the aurora MTX target.** P1-13's plain-C `mtx.cpp` computes the `PSVEC*` reciprocal square root as `1 / mpt_sqrtf`. aurora computes it with a bit-exact `frsqrte` table and an explicit `fmaf`. The two give different numbers, and linking both would make the `PS*`/`C_*` symbols collide.
+   - **Decision:** aurora's MTX sources at the pin (with patch 2, ADR 0007 §6) are the only implementation of `PSMTX*`, `PSVEC*`, `PSQUAT*` and `C_*` linked into the game module.
+   - They are built by the P1-14 MTX target under these flags, with `fmaf` mapped to P1-13's correctly rounded `mpt_fmaf` and trig mapped to our math library.
+   - **Why aurora's:** §5 and ADR 0007 §6 already chose it. It is closest to the console, because the `frsqrte` table is bit-exact. Party Board's game code is exercised against it. P1-13's `mpt_fmaf` now meets condition 1 of §5.
+   - **What follows:**
+     - The SDK stops exporting `PS*`/`C_*` names. Its plain-C versions are deleted, or kept only as a test-only differential reference under non-colliding names.
+     - The MTX golden values move to P1-14 and are recorded against aurora's MTX. The trig and `mpt_fmaf` goldens stay with P1-13.
+     - `docs/titles/mp4.md` §14 (owned by runtime-gc-wii) is corrected to say so.
+     - The other two conditions of §5 stay open: the hard-case `PSVEC*` goldens (P1-14) and the explicit-`fmaf` source grep (P1-22).
+5. **Hash sentinels (§8).** For now, the SDK hashes every function pointer, and every pointer outside the arena, as one presence sentinel. Perturbation tests cannot tell a changed callback or target apart from an unchanged one. P1-16's registration table must replace the sentinel with stable function IDs, and make an out-of-arena pointer a fault or a registered ID. This is a P1-16 acceptance criterion for E4.
