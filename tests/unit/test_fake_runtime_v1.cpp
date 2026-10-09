@@ -198,7 +198,7 @@ TEST_CASE("save media and generation survive saveState and loadState") {
   step_range(first, inputs, 0, 20);
   const SaveState snapshot = first.saveState();
   CHECK(snapshot.format_version == FakeRuntime::kStateFormat);
-  CHECK(snapshot.format_version == 2);
+  CHECK(snapshot.format_version == 3);
 
   FakeRuntime resumed;
   REQUIRE(resumed.boot({}, config_with(0)).ok());  // different seed and blank media

@@ -7,10 +7,14 @@ add_executable(mpt_unit_tests
   unit/test_determinism.cpp
   unit/test_determinism_harness.cpp
   unit/test_gc_disc.cpp
+  unit/test_fake_adapter.cpp
   unit/test_fake_runtime_v1.cpp
+  unit/test_golden_trail.cpp
 )
 target_link_libraries(mpt_unit_tests PRIVATE mpt::core mpt::asset_import doctest::doctest)
-target_compile_definitions(mpt_unit_tests PRIVATE MPT_KNOWN_DUMPS_JSON="${MPT_KNOWN_DUMPS_JSON}")
+target_compile_definitions(mpt_unit_tests PRIVATE
+  MPT_KNOWN_DUMPS_JSON="${MPT_KNOWN_DUMPS_JSON}"
+  MPT_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
 mpt_set_warnings(mpt_unit_tests)
 
 add_test(NAME unit COMMAND mpt_unit_tests)
