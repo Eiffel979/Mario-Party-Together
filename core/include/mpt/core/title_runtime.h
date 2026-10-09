@@ -47,7 +47,7 @@ struct RuntimeConfig {
   // Initial persistent save image. nullopt = blank media (a fresh, formatted card).
   // Determinism input (ADR 0004 rule 3). Replays and tests use blank media unless the
   // replay says otherwise (ADR 0006).
-  std::optional<SaveMedia> save_media;
+  std::optional<SaveMedia> save_media{};
 };
 
 // Runs one title's game code. However the title is implemented (static recomp,

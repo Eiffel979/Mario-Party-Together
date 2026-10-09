@@ -25,7 +25,7 @@ enum class PartyPhase : std::uint8_t {
 // Canonical party state, owned by the Party Director. Adapters mirror their
 // title's in-memory state into this and write Director decisions back.
 struct PlayerState {
-  std::optional<CharacterId> character;
+  std::optional<CharacterId> character{};
   bool is_cpu = false;
   std::int32_t coins = 0;
   std::int32_t stars = 0;
@@ -35,13 +35,13 @@ struct PlayerState {
 };
 
 struct PartySnapshot {
-  std::optional<BoardId> board;
+  std::optional<BoardId> board{};
   std::int32_t turn = 0;        // 1-based current turn, 0 before the party starts
   std::int32_t max_turns = 0;
   std::array<PlayerState, kMaxPlayers> players{};
   PartyPhase phase = PartyPhase::none;
   // Set exactly when phase == minigame, nullopt in every other phase (ADR 0005).
-  std::optional<MinigameId> current_minigame;
+  std::optional<MinigameId> current_minigame{};
 
   friend bool operator==(const PartySnapshot&, const PartySnapshot&) = default;
 };
@@ -49,7 +49,7 @@ struct PartySnapshot {
 struct MinigameSetup {
   std::array<std::optional<CharacterId>, kMaxPlayers> characters{};
   std::array<std::uint8_t, kMaxPlayers> teams{};  // team index per player (e.g. 1v3, 2v2)
-  std::optional<std::uint32_t> time_limit_frames;
+  std::optional<std::uint32_t> time_limit_frames{};
   std::uint64_t seed = 0;
 };
 

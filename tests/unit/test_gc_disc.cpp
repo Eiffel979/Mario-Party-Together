@@ -438,7 +438,9 @@ TEST_CASE("extraction refuses output paths over the length limit") {
   const TempDir tmp;
 
   fs::path out = tmp.path();
-  while (out.native().size() + 220 <= kGcMaxOutputPathLength) out /= "deeper_folder";
+  // The disc file adds about 216 characters ("/disc/files/" plus a 204-character name), so
+  // stopping within 200 of the limit guarantees the full output path is over it on every OS.
+  while (out.native().size() + 200 <= kGcMaxOutputPathLength) out /= "deeper_folder";
   const Result result = extract_gc_disc(source, *disc, out / "disc");
   CHECK_FALSE(result.ok());
   CHECK(result.error().find("too deep") != std::string::npos);
