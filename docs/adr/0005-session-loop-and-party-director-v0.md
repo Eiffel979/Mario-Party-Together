@@ -24,10 +24,10 @@ enum class PartyPhase : std::uint8_t {
 struct PartySnapshot {
   ...existing fields...
   PartyPhase phase = PartyPhase::none;
-  std::optional<MinigameId> current_minigame;  // set while phase == minigame
+  std::optional<MinigameId> current_minigame;  // set while phase == minigame, else nullopt
 };
 ```
-Adapters fill `phase` as well as the title allows. A title that cannot tell `results` from `finished` must report `finished` only once the results are final.
+Adapters fill `phase` as well as the title allows. `current_minigame` is set exactly when `phase == minigame`, and is `nullopt` in every other phase. A title that cannot tell `results` from `finished` must report `finished` only once the results are final.
 
 ### `Session` (`session.h`)
 ```cpp
@@ -90,3 +90,6 @@ class PartyDirector {
 - The minimal launcher UI chosen for Phase 1 (plan decision D6) reads phase and standings only through `Session::director()`.
 - `PartyPhase::finished` is what exit criterion E1 checks, so `Mp4Adapter` (P1-17) must report it only once results are final.
 - v0 stays read-only. Rule enforcement (Phase 2) and suspend/launch/resume (Phase 5) each need their own ADR.
+- **Amended in P1-03** (qa-reviewer review of the v1 headers):
+  - The `current_minigame` rule is tightened to "set exactly when `phase == minigame`, `nullopt` otherwise", which matches `party.h`. The first draft only said when it is set, so the Director could not rely on it being cleared, and a stale ID would make `minigame_ended` events ambiguous. The adapters enforce the rule (`FakeAdapter` in P1-20b2, `Mp4Adapter` in P1-17). The P1-20c conformance suite checks it on every `readParty()` when it is given an adapter factory.
+  - `PlayerState` and `PartySnapshot` gained defaulted `operator==` (ADR 0002, amendment 13). The Director's snapshot diff uses it.
