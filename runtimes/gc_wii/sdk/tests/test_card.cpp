@@ -19,7 +19,7 @@ SdkConfig cardConfig(std::optional<std::vector<std::byte>> image = std::nullopt)
   SdkConfig cfg;
   cfg.card.game_code = {'T', 'E', 'S', 'T'};
   cfg.card.maker_code = {'9', '9'};
-  cfg.card.image = std::move(image);
+  if (image) cfg.card.image = SaveMedia{Sdk::card_image_format_version(), std::move(*image)};
   return cfg;
 }
 
@@ -78,7 +78,7 @@ TEST_CASE("CARD round trip through the save image, with stable serial and genera
     auto sdk = boot(g, cardConfig());
     CHECK(step(*sdk) == StepStatus::halted);
     CHECK(sdk->saveMediaGeneration() == 3);  // create, write, set status
-    image = sdk->cardImage();
+    image = sdk->saveMedia().data;
   }
   CHECK(saved_time == static_cast<std::uint32_t>(now_at_create / kTimerClockHz));
   CHECK(image.size() == 8 + 4 + 2 + 2 + 8 + 4 + (4 + 4 + 2 + 2 + 32 + 4 + 4 + 2 + 2 + 4 + 2) + 2 * kSector);
@@ -111,7 +111,7 @@ TEST_CASE("CARD round trip through the save image, with stable serial and genera
   CHECK(stat.offsetIcon[1] == 0xFFFFFFFFu);
   CHECK(stat.offsetData == 96 * 32 + 512 + 32 * 32 * 2);
   CHECK(sdk2->saveMediaGeneration() == 0);  // reads do not commit
-  CHECK(sdk2->cardImage() == image);        // the image survives unchanged
+  CHECK(sdk2->saveMedia().data == image);        // the image survives unchanged
 }
 
 TEST_CASE("the same card operations give byte-identical images") {
@@ -127,7 +127,7 @@ TEST_CASE("the same card operations give byte-identical images") {
     }};
     auto sdk = boot(g, cardConfig());
     CHECK(step(*sdk) == StepStatus::halted);
-    return sdk->cardImage();
+    return sdk->saveMedia().data;
   };
   CHECK(run() == run());
 }
@@ -243,7 +243,7 @@ TEST_CASE("malformed card images are rejected at boot") {
     }};
     auto sdk = boot(make, cardConfig());
     CHECK(step(*sdk) == StepStatus::halted);
-    good = sdk->cardImage();
+    good = sdk->saveMedia().data;
   }
   auto tryImage = [&](std::vector<std::byte> img) {
     std::unique_ptr<Sdk> sdk;
@@ -263,4 +263,9 @@ TEST_CASE("malformed card images are rejected at boot") {
   bad[8] = std::byte{2};  // format version
   CHECK_FALSE(tryImage(bad));
   CHECK_FALSE(tryImage({}));
+  // The SaveMedia format version is checked too.
+  SdkConfig cfg = cardConfig(good);
+  cfg.card.image->format_version = 2;
+  std::unique_ptr<Sdk> sdk;
+  CHECK_FALSE(Sdk::create(cfg, &gameMain, &g, sdk).ok());
 }

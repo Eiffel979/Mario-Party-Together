@@ -225,7 +225,8 @@ Result cardBoot(Sdk::Impl& I) {
     c.serial = kStableCardSerial;
     return Result::success();
   }
-  Reader r{*cfg.image};
+  if (cfg.image->format_version != kImageVersion) return Result::failure("card image: unsupported format version");
+  Reader r{cfg.image->data};
   char magic[8] = {};
   r.bytes(magic, 8);
   if (!r.ok || std::memcmp(magic, kMagic, 8) != 0) return Result::failure("card image: bad magic");
@@ -263,7 +264,7 @@ Result cardBoot(Sdk::Impl& I) {
       return Result::failure("card image: truncated file data");
     next_block = static_cast<std::uint16_t>(next_block + d.block_count);
   }
-  if (r.pos != cfg.image->size()) return Result::failure("card image: trailing bytes");
+  if (r.pos != cfg.image->data.size()) return Result::failure("card image: trailing bytes");
   return Result::success();
 }
 

@@ -148,7 +148,7 @@ TEST_CASE("save state, run, load, run again: identical trail and outputs") {
   const std::uint64_t h_at_save = sdk->stateHash();
   const std::uint64_t gen_at_save = sdk->saveMediaGeneration();
   const auto first = trail(*sdk, 50);
-  const auto image_first = sdk->cardImage();
+  const auto image_first = sdk->saveMedia().data;
   CHECK(sdk->saveMediaGeneration() > gen_at_save);
 
   REQUIRE(sdk->loadState(state).ok());
@@ -157,7 +157,7 @@ TEST_CASE("save state, run, load, run again: identical trail and outputs") {
   CHECK(sdk->saveMediaGeneration() == gen_at_save);  // ADR 0004: loading restores image and generation
   const auto second = trail(*sdk, 50);
   CHECK(first == second);
-  CHECK(sdk->cardImage() == image_first);
+  CHECK(sdk->saveMedia().data == image_first);
 }
 
 TEST_CASE("loadState rejects foreign or damaged states") {
@@ -189,7 +189,7 @@ TEST_CASE("presentation-only outputs do not affect the hash") {
     sdk->setReportSink([](const char*) {});
     trail(*sdk, 10);
     (void)sdk->saveState();  // taking a snapshot is not a game event
-    (void)sdk->cardImage();
+    (void)sdk->saveMedia().data;
     h2 = sdk->stateHash();
   }
   CHECK(h1 == h2);

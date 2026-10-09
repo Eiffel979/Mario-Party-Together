@@ -5,10 +5,9 @@
 // All game-visible state lives in one arena; saveState() is that arena, and
 // stateHash() hashes the SDK's part of the hash manifest by value.
 //
-// Contract dependencies on core/ (v0 headers): InputFrame/PadState (input.h),
-// DeterministicRng (rng.h), StateHasher (state.h), Result (result.h). At core
-// contract v1 (P1-03) the card image maps onto mpt::SaveMedia and the field
-// rate onto FrameRate; see card_image_format_version() and field_rate().
+// Uses core contract v1 types: InputFrame/PadState (input.h), SaveMedia
+// (save_media.h), FrameRate (title_runtime.h), DeterministicRng, StateHasher and
+// Result. All header-only: the SDK links nothing from core/.
 #pragma once
 
 #include <array>
@@ -23,7 +22,9 @@
 
 #include "mpt/core/input.h"
 #include "mpt/core/result.h"
+#include "mpt/core/save_media.h"
 #include "mpt/core/state.h"
+#include "mpt/core/title_runtime.h"
 #include "mpt/gc/file_source.h"
 
 namespace mpt::gc {
@@ -35,9 +36,10 @@ enum class VideoStandard : std::uint8_t {
 
 struct CardConfig {
   bool inserted = true;  // slot A; slot B is always empty
-  // Initial image (our format, see card_image_format_version()). nullopt = a
-  // blank, freshly formatted card with the stable serial (ADR 0004 rules 3, 7).
-  std::optional<std::vector<std::byte>> image;
+  // Initial image (RuntimeConfig::save_media; our format, SaveMedia::format_version
+  // == card_image_format_version()). nullopt = a blank, freshly formatted card with
+  // the stable serial (ADR 0004 rules 3, 7).
+  std::optional<SaveMedia> image;
   std::uint16_t size_mbits = 16;  // 4 (59 blocks), 8, 16 (251 blocks); blank cards only
   std::array<char, 4> game_code{{'G', 'A', 'M', 'E'}};  // the disc ID's game code
   std::array<char, 2> maker_code{{'0', '1'}};
@@ -99,13 +101,15 @@ class Sdk {
   std::vector<std::byte> saveState() const;
   Result loadState(std::span<const std::byte> state);
 
-  // Save media (ADR 0004). The generation counts committed card writes.
+  // Save media (ADR 0004). The generation counts committed card writes; both the
+  // image and the generation are in the save state, so loadState restores them
+  // (rule 9). Card writes complete inside the call (zero-frame latency, rule 4).
   std::uint64_t saveMediaGeneration() const;
-  std::vector<std::byte> cardImage() const;
+  SaveMedia saveMedia() const;
   static std::uint32_t card_image_format_version();
 
-  // Field rate as num/den Hz (60000/1001 or 50/1).
-  std::pair<std::uint32_t, std::uint32_t> field_rate() const;
+  // The field rate (60000/1001 or 50/1), for ITitleRuntime::frameRate() (ADR 0003).
+  FrameRate frameRate() const;
 
   // Host-visible outputs (presentation only, never game input).
   std::array<std::uint32_t, 4> rumble() const;  // PADControlMotor state per port

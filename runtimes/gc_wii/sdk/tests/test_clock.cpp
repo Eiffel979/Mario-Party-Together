@@ -70,7 +70,7 @@ TEST_CASE("fields are frame-driven at 60000/1001 Hz") {
   }
   // 60000 fields = 1001 seconds exactly.
   CHECK(sdk->now() == epoch + 1001ll * kTimerClockHz);
-  CHECK(sdk->field_rate() == std::pair<std::uint32_t, std::uint32_t>{60000, 1001});
+  CHECK(sdk->frameRate() == FrameRate{60000, 1001});
 }
 
 TEST_CASE("PAL fields are 50 Hz") {
@@ -82,7 +82,7 @@ TEST_CASE("PAL fields are 50 Hz") {
   auto sdk = boot(g, cfg);
   stepN(*sdk, 51);
   CHECK(sdk->now() == sdk->epoch() + kTimerClockHz);
-  CHECK(sdk->field_rate() == std::pair<std::uint32_t, std::uint32_t>{50, 1});
+  CHECK(sdk->frameRate() == FrameRate{50, 1});
 }
 
 TEST_CASE("the field clock is a floor: time spent in queries is kept") {

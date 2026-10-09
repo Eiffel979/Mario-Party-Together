@@ -592,11 +592,10 @@ std::span<std::byte> Sdk::mainRam() const { return {impl_->mainRam(), kMainRamBy
 std::span<std::byte> Sdk::aram() const { return {impl_->aramBase(), kAramBytes}; }
 void Sdk::setReportSink(std::function<void(const char*)> sink) { impl_->report_sink = std::move(sink); }
 std::uint64_t Sdk::saveMediaGeneration() const { return impl_->st->card.generation; }
-std::vector<std::byte> Sdk::cardImage() const { return cardSerialize(); }
+SaveMedia Sdk::saveMedia() const { return SaveMedia{card_image_format_version(), cardSerialize()}; }
 
-std::pair<std::uint32_t, std::uint32_t> Sdk::field_rate() const {
-  return impl_->config.video == VideoStandard::ntsc ? std::pair<std::uint32_t, std::uint32_t>{60000, 1001}
-                                                    : std::pair<std::uint32_t, std::uint32_t>{50, 1};
+FrameRate Sdk::frameRate() const {
+  return impl_->config.video == VideoStandard::ntsc ? FrameRate{60000, 1001} : FrameRate{50, 1};
 }
 
 std::array<std::uint32_t, 4> Sdk::rumble() const {
