@@ -60,6 +60,13 @@ class FakeRuntime final : public ITitleRuntime {
     return hasher.digest();
   }
 
+  // Contract v1 compile stubs (P1-03 hand-off). P1-20a replaces these with the real
+  // v1 behaviour: a counter save image that is part of State and stateHash(), and
+  // generation tracking (ADR 0004 Consequences).
+  FrameRate frameRate() const override { return FrameRate{60, 1}; }
+  std::uint64_t saveMediaGeneration() const override { return 0; }
+  SaveMedia saveMedia() const override { return SaveMedia{}; }
+
  private:
   static constexpr std::uint32_t kWidth = 8;
   static constexpr std::uint32_t kHeight = 8;
