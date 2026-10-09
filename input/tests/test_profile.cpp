@@ -81,6 +81,17 @@ TEST_CASE("profile JSON round-trips") {
   CHECK(to_json(again) == to_json(p));  // canonical output is stable
 }
 
+TEST_CASE("a profile with an unnamed key code round-trips") {
+  Profile p;
+  p.name = "unnamed key";
+  p.base.bindings[at(Control::a)] = {Source{Source::Kind::key, 100}};  // HID 0x64 has no name
+  const std::string text = to_json(p);
+  CHECK(text.find("\"key:#100\"") != std::string::npos);
+  Profile again;
+  REQUIRE(parse_profile(text, again));
+  CHECK(again == p);
+}
+
 TEST_CASE("the built-in default profile is valid and round-trips") {
   const Profile& p = builtin_default_profile();
   CHECK_FALSE(p.title.has_value());

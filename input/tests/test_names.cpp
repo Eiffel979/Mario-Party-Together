@@ -82,9 +82,21 @@ TEST_CASE("source strings parse and print canonically") {
     CHECK(s->code == c.code);
     CHECK(source_to_string(*s) == c.canonical);
   }
-  for (const char* bad : {"", "w", "key:", "key:W", "button:a", "axis:left_x", "axis:left_trigger-", "mouse:left",
+  for (const char* bad : {"", "w", "key:", "key:W", "key:#", "key:#512", "key:#-1", "key:#4x", "key:# 4", "button:a", "axis:left_x", "axis:left_trigger-", "mouse:left",
                           "axis:left_z+"}) {
     CAPTURE(bad);
     CHECK_FALSE(source_from_string(bad).has_value());
+  }
+}
+
+TEST_CASE("every key code round-trips through its source string, named or not") {
+  CHECK(source_to_string(Source{Source::Kind::key, 100}) == "key:#100");  // HID 0x64, no name
+  CHECK(source_from_string("key:#4") == Source{Source::Kind::key, 4});      // numeric form of a named key
+  CHECK(source_to_string(Source{Source::Kind::key, 4}) == "key:a");
+  for (std::uint16_t code = 0; code < kKeyCount; ++code) {
+    const Source s{Source::Kind::key, code};
+    const std::string text = source_to_string(s);
+    CAPTURE(text);
+    CHECK(source_from_string(text) == s);
   }
 }

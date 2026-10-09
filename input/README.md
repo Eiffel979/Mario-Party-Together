@@ -102,7 +102,8 @@ c_stick_left c_stick_right` (GameCube C-stick / right stick), `trigger_l trigger
   semicolon apostrophe grave comma period slash caps_lock print_screen scroll_lock
   pause insert home page_up delete end page_down up down left right num_lock`,
   `kp_0`–`kp_9 kp_divide kp_multiply kp_minus kp_plus kp_enter kp_period`,
-  `lctrl lshift lalt lgui rctrl rshift ralt rgui`.
+  `lctrl lshift lalt lgui rctrl rshift ralt rgui`. A key without a name is written
+  `key:#<code>` with its decimal HID usage (0–511), for example `key:#100`.
 - `button:<name>`: a gamepad button by position: `south east west north back guide
   start left_stick right_stick left_shoulder right_shoulder dpad_up dpad_down
   dpad_left dpad_right misc1 left_paddle1 right_paddle1 left_paddle2 right_paddle2

@@ -185,6 +185,15 @@ std::optional<Source> source_from_string(std::string_view text) {
 
   if (kind == "key") {
     if (const auto key = key_from_name(name)) return Source{Source::Kind::key, *key};
+    // Keys without a name: "key:#<HID usage>", decimal, below kKeyCount.
+    if (name.size() >= 2 && name.front() == '#') {
+      const std::string_view digits = name.substr(1);
+      unsigned code = 0;
+      const auto [end, ec] = std::from_chars(digits.data(), digits.data() + digits.size(), code);
+      if (ec == std::errc{} && end == digits.data() + digits.size() && code < kKeyCount) {
+        return Source{Source::Kind::key, static_cast<std::uint16_t>(code)};
+      }
+    }
     return std::nullopt;
   }
   if (kind == "button") {
@@ -212,8 +221,10 @@ std::optional<Source> source_from_string(std::string_view text) {
 
 std::string source_to_string(const Source& source) {
   switch (source.kind) {
-    case Source::Kind::key:
-      return "key:" + std::string(key_name(source.code));
+    case Source::Kind::key: {
+      const std::string_view name = key_name(source.code);
+      return name.empty() ? "key:#" + std::to_string(source.code) : "key:" + std::string(name);
+    }
     case Source::Kind::pad_button:
       return "button:" + std::string(pad_button_name(static_cast<PadButton>(source.code)));
     case Source::Kind::pad_axis_positive:
