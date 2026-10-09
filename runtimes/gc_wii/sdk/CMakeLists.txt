@@ -16,11 +16,11 @@ add_library(mpt::gc_sdk ALIAS mpt_gc_sdk)
 target_include_directories(mpt_gc_sdk PUBLIC include "${MPT_CORE_INCLUDE_DIR}")
 target_compile_features(mpt_gc_sdk PUBLIC cxx_std_20)
 
-# Strict IEEE, no contraction, no fast-math, SSE2 baseline (no FMA3 assumed), ADR 0008 §4.
+# Strict IEEE, no contraction, no fast-math, SSE2 baseline (no FMA3 assumed), ADR 0008 ??4.
 # Applied PUBLIC so everything linked with the SDK (tests now, the game module later)
 # uses the same floating-point model.
 if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-  set(MPT_GC_FP_FLAGS /fp:precise /clang:-ffp-contract=off /clang:-fno-fast-math /clang:-fno-unsafe-math-optimizations)
+  set(MPT_GC_FP_FLAGS /clang:-ffp-contract=off /clang:-fno-fast-math /clang:-fno-unsafe-math-optimizations)
   set(MPT_GC_WARN_FLAGS /W4 /permissive- /utf-8 -Wno-gnu-zero-variadic-macro-arguments)
   if(MPT_WARNINGS_AS_ERRORS)
     list(APPEND MPT_GC_WARN_FLAGS /WX)

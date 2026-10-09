@@ -75,7 +75,7 @@ void compact() {
     d.start_block = next;
     next = static_cast<std::uint16_t>(next + d.block_count);
   }
-  std::memset(blockData(next), 0, std::size_t{c.user_blocks - next} * kCardSectorSize);
+  std::memset(blockData(next), 0, static_cast<std::size_t>(c.user_blocks - next) * kCardSectorSize);
 }
 
 // First-fit contiguous run; compacts once if the free space is fragmented.

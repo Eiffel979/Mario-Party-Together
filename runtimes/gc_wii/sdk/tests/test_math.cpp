@@ -235,8 +235,7 @@ TEST_CASE("golden: trig outputs") {
   }
   hashF(h, mpt_sinf(1e6f));  // far outside the accurate range: still a fixed value
   hashF(h, mpt_cosf(-3e7f));
-  MESSAGE("trig golden = " << h.digest());
-  CHECK(h.digest() == 0x0ull);
+  CHECK(h.digest() == 13900187656750823100ull);  // golden: identical on every platform
 }
 
 TEST_CASE("golden: MTX/VEC/QUAT outputs") {
@@ -296,8 +295,7 @@ TEST_CASE("golden: MTX/VEC/QUAT outputs") {
     C_MTXLightPerspective(t, 45.0f, 1.0f, 0.5f, -0.5f, 0.5f, 0.5f);
     hashMtx(h, t);
   }
-  MESSAGE("mtx golden = " << h.digest());
-  CHECK(h.digest() == 0x0ull);
+  CHECK(h.digest() == 17867528129688769321ull);  // golden: identical on every platform
 }
 
 TEST_CASE("MTX sanity: inverse, normalize, quaternion round trip") {

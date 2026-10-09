@@ -100,7 +100,13 @@ std::vector<std::uint64_t> trail(Sdk& sdk, std::uint64_t frames, std::uint64_t f
     if (sdk.frame() == flip_frame) in.pads[0].buttons ^= kButtonB;
     in.frame = sdk.frame();
     REQUIRE(sdk.stepFrame(in) == StepStatus::running);
-    out.push_back(sdk.stateHash());
+    // The SDK's manifest plus the synthetic game's own state (a title's manifest
+    // covers its game memory, ADR 0008 §8; here that is the checksum).
+    StateHasher h;
+    sdk.hashState(h);
+    h.update_u64(*g_world->sum);
+    h.update_u64(static_cast<std::uint64_t>(g_world->ticks));
+    out.push_back(h.digest());
   }
   return out;
 }
@@ -118,8 +124,7 @@ TEST_CASE("the hash trail is a pure function of seed and inputs") {
     b = trail(*sdk, 120);
   }
   CHECK(a == b);
-  MESSAGE("world golden = " << a.back());
-  CHECK(a.back() == 0x0ull);  // golden: must match on every platform
+  CHECK(a.back() == 10634581663457232457ull);  // golden: must match on every platform
 }
 
 TEST_CASE("the seed and a single input bit both change the trail") {
@@ -172,7 +177,7 @@ TEST_CASE("loadState rejects foreign or damaged states") {
   bad.pop_back();
   CHECK_FALSE(sdk->loadState(bad).ok());
   bad = state;
-  bad[24] = std::byte{static_cast<unsigned char>(bad[24]) ^ 0x10};  // arena base differs
+  bad[24] ^= std::byte{0x10};  // arena base differs
   CHECK_FALSE(sdk->loadState(bad).ok());
   CHECK(sdk->loadState(state).ok());
 }

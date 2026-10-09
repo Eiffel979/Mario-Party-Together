@@ -27,7 +27,7 @@ static_assert(sizeof(BlockHeader) == kHeader);
 std::uint32_t roundUp(std::uint32_t v, std::uint32_t a) { return (v + a - 1) & ~(a - 1); }
 std::uint32_t roundDown(std::uint32_t v, std::uint32_t a) { return v & ~(a - 1); }
 
-BlockHeader* block(std::uint32_t off) { return reinterpret_cast<BlockHeader*>(impl().arena + off); }
+BlockHeader* hdr(std::uint32_t off) { return reinterpret_cast<BlockHeader*>(impl().arena + off); }
 
 std::uint32_t arenaOffset(const void* p, const char* what) {
   if (!impl().inArena(p)) fatal(std::string(what) + ": address outside the SDK arena");
@@ -41,18 +41,18 @@ HeapSlot& heapFor(OSHeapHandle h) {
 }
 
 void unlink(std::uint32_t& head, std::uint32_t off) {
-  BlockHeader* b = block(off);
-  if (b->prev) block(b->prev)->next = b->next;
+  BlockHeader* b = hdr(off);
+  if (b->prev) hdr(b->prev)->next = b->next;
   else head = b->next;
-  if (b->next) block(b->next)->prev = b->prev;
+  if (b->next) hdr(b->next)->prev = b->prev;
   b->prev = b->next = 0;
 }
 
 void pushFront(std::uint32_t& head, std::uint32_t off) {
-  BlockHeader* b = block(off);
+  BlockHeader* b = hdr(off);
   b->prev = 0;
   b->next = head;
-  if (head) block(head)->prev = off;
+  if (head) hdr(head)->prev = off;
   head = off;
 }
 
@@ -61,35 +61,35 @@ void insertFree(HeapSlot& heap, std::uint32_t off) {
   std::uint32_t prev = 0, cur = heap.free_head;
   while (cur && cur < off) {
     prev = cur;
-    cur = block(cur)->next;
+    cur = hdr(cur)->next;
   }
-  BlockHeader* b = block(off);
+  BlockHeader* b = hdr(off);
   b->prev = prev;
   b->next = cur;
-  if (prev) block(prev)->next = off;
+  if (prev) hdr(prev)->next = off;
   else heap.free_head = off;
-  if (cur) block(cur)->prev = off;
+  if (cur) hdr(cur)->prev = off;
   if (cur && off + b->size == cur) {
-    b->size += block(cur)->size;
+    b->size += hdr(cur)->size;
     unlink(heap.free_head, cur);
-    b->next = block(off)->next;
+    b->next = hdr(off)->next;
   }
-  if (prev && prev + block(prev)->size == off) {
-    block(prev)->size += b->size;
+  if (prev && prev + hdr(prev)->size == off) {
+    hdr(prev)->size += b->size;
     unlink(heap.free_head, off);
   }
 }
 
 // Removes [lo, hi) from a free block, keeping the pieces on either side.
 void carveFree(HeapSlot& heap, std::uint32_t off, std::uint32_t lo, std::uint32_t hi) {
-  const std::uint32_t end = off + block(off)->size;
+  const std::uint32_t end = off + hdr(off)->size;
   unlink(heap.free_head, off);
   if (lo > off && lo - off >= kHeader + kAlign) {
-    block(off)->size = lo - off;
+    hdr(off)->size = lo - off;
     insertFree(heap, off);
   }
   if (end > hi && end - hi >= kHeader + kAlign) {
-    BlockHeader* tail = block(hi);
+    BlockHeader* tail = hdr(hi);
     std::memset(tail, 0, sizeof *tail);
     tail->size = end - hi;
     insertFree(heap, hi);
@@ -111,14 +111,14 @@ void heapHash(StateHasher& h) {
     if (!heap.active) continue;
     h.update_u64(heap.start);
     h.update_u64(heap.end);
-    for (std::uint32_t off = heap.free_head; off; off = block(off)->next) {
+    for (std::uint32_t off = heap.free_head; off; off = hdr(off)->next) {
       h.update_u64(off);
-      h.update_u64(block(off)->size);
+      h.update_u64(hdr(off)->size);
     }
     h.update_u64(0xF7EEull);
-    for (std::uint32_t off = heap.alloc_head; off; off = block(off)->next) {
+    for (std::uint32_t off = heap.alloc_head; off; off = hdr(off)->next) {
       h.update_u64(off);
-      h.update_u64(block(off)->size);
+      h.update_u64(hdr(off)->size);
     }
   }
 }
@@ -196,7 +196,7 @@ OSHeapHandle OSCreateHeap(void* start, void* end) {
     HeapSlot& h = s.heaps[i];
     if (h.active) continue;
     h = HeapSlot{1, lo, hi, lo, 0};
-    BlockHeader* b = block(lo);
+    BlockHeader* b = hdr(lo);
     std::memset(b, 0, sizeof *b);
     b->size = hi - lo;
     return i;
@@ -222,12 +222,12 @@ void* OSAllocFromHeap(OSHeapHandle heap, u32 size) {
   boundary();
   HeapSlot& h = heapFor(heap);
   const std::uint32_t need = roundUp(size, kAlign) + kHeader;
-  for (std::uint32_t off = h.free_head; off; off = block(off)->next) {
-    BlockHeader* b = block(off);
+  for (std::uint32_t off = h.free_head; off; off = hdr(off)->next) {
+    BlockHeader* b = hdr(off);
     if (b->size < need) continue;
     if (b->size - need >= kHeader + kAlign) {
       const std::uint32_t rest = off + need;
-      BlockHeader* r = block(rest);
+      BlockHeader* r = hdr(rest);
       std::memset(r, 0, sizeof *r);
       r->size = b->size - need;
       b->size = need;
@@ -248,7 +248,7 @@ void OSFreeToHeap(OSHeapHandle heap, void* ptr) {
   HeapSlot& h = heapFor(heap);
   const std::uint32_t off = arenaOffset(ptr, "OSFreeToHeap") - kHeader;
   bool found = false;
-  for (std::uint32_t a = h.alloc_head; a; a = block(a)->next) {
+  for (std::uint32_t a = h.alloc_head; a; a = hdr(a)->next) {
     if (a == off) {
       found = true;
       break;
@@ -269,16 +269,16 @@ void* OSAllocFixed(void** rstart, void** rend) {
   for (std::int32_t i = 0; i < s.heap_count; ++i) {
     const HeapSlot& h = s.heaps[i];
     if (!h.active) continue;
-    for (std::uint32_t a = h.alloc_head; a; a = block(a)->next)
-      if (a < hi && a + block(a)->size > lo) return nullptr;
+    for (std::uint32_t a = h.alloc_head; a; a = hdr(a)->next)
+      if (a < hi && a + hdr(a)->size > lo) return nullptr;
   }
   for (std::int32_t i = 0; i < s.heap_count; ++i) {
     HeapSlot& h = s.heaps[i];
     if (!h.active) continue;
     std::uint32_t off = h.free_head;
     while (off) {
-      const std::uint32_t next = block(off)->next;
-      if (off < hi && off + block(off)->size > lo) carveFree(h, off, lo, hi);
+      const std::uint32_t next = hdr(off)->next;
+      if (off < hi && off + hdr(off)->size > lo) carveFree(h, off, lo, hi);
       off = next;
     }
   }
@@ -291,7 +291,7 @@ s32 OSCheckHeap(OSHeapHandle heap) {
   boundary();
   HeapSlot& h = heapFor(heap);
   s32 free_bytes = 0;
-  for (std::uint32_t off = h.free_head; off; off = block(off)->next) free_bytes += static_cast<s32>(block(off)->size);
+  for (std::uint32_t off = h.free_head; off; off = hdr(off)->next) free_bytes += static_cast<s32>(hdr(off)->size);
   return free_bytes;
 }
 

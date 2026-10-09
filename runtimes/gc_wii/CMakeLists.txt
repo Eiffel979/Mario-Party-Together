@@ -72,6 +72,7 @@ ExternalProject_Add(mpt_gc_wii_clang
   USES_TERMINAL_BUILD ON)
 
 if(MPT_BUILD_TESTS)
+  enable_testing()  # the root enables testing after its subdirectories
   add_test(NAME gc_wii_sdk
     COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${_mpt_gc_bin}" --output-on-failure --no-tests=error)
 endif()

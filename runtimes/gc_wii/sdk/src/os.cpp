@@ -91,6 +91,17 @@ void alarmFire(const Event& e) {
 
 }  // namespace mpt::gc::detail
 
+namespace {
+template <typename T>
+T saturate(f32 v, f32 lo, f32 hi) {
+  if (std::isnan(v)) return 0;
+  const f32 t = std::trunc(v);
+  if (t <= lo) return static_cast<T>(lo);
+  if (t >= hi) return static_cast<T>(hi);
+  return static_cast<T>(t);
+}
+}  // namespace
+
 extern "C" {
 
 // ---- Time ---------------------------------------------------------------------------
@@ -637,17 +648,6 @@ void OSPanic(const char* file, int line, const char* fmt, ...) {
 }
 
 // ---- Fast casts -------------------------------------------------------------------------------------
-
-namespace {
-template <typename T>
-T saturate(f32 v, f32 lo, f32 hi) {
-  if (std::isnan(v)) return 0;
-  const f32 t = std::trunc(v);
-  if (t <= lo) return static_cast<T>(lo);
-  if (t >= hi) return static_cast<T>(hi);
-  return static_cast<T>(t);
-}
-}  // namespace
 
 void OSf32tos8(const f32* in, s8* out) { *out = saturate<s8>(*in, -128.0f, 127.0f); }
 void OSf32tou8(const f32* in, u8* out) { *out = saturate<u8>(*in, 0.0f, 255.0f); }

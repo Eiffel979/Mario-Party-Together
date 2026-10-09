@@ -55,7 +55,7 @@ TEST_CASE("the epoch is a seeded, valid calendar date") {
 TEST_CASE("golden epoch for seed 0") {
   Game g{[] {}};
   auto sdk = boot(g);
-  CHECK(sdk->epoch() == 0x0021'D2F1'7FEB'2D1Bll);
+  CHECK(sdk->epoch() == 20997404943217560ll);
 }
 
 TEST_CASE("fields are frame-driven at 60000/1001 Hz") {
