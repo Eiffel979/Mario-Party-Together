@@ -126,8 +126,10 @@ class GcDisc {
 // Extracts a validated disc into `dest` in the layout Dolphin uses:
 //   sys/boot.bin, sys/bi2.bin, sys/apploader.img, sys/main.dol, sys/fst.bin
 //   files/<FST paths>
-// `dest` must not exist or must be an empty directory. On failure, anything this
-// call created is removed again. The output stays on the user's machine: callers
+// `dest` must not exist or must be an empty directory. Every output path must fit
+// in kGcMaxOutputPathLength; this is checked before anything is written. On
+// failure, anything this call created is removed again, including parent folders
+// of `dest` that it had to create. The output stays on the user's machine: callers
 // put it in the local cache (build_dir) and nowhere else.
 Result extract_gc_disc(const ByteSource& source, const GcDisc& disc, const std::filesystem::path& dest);
 

@@ -319,15 +319,41 @@ Result extract_gc_disc(const ByteSource& source, const GcDisc& disc, const std::
   if (source.size() != disc.image_size()) {
     return Result::failure("The image changed size after it was read.");
   }
-  const bool created = fs::create_directories(dest, ec);
-  if (ec) return Result::failure("Could not create " + dest.string() + ": " + ec.message());
+
+  // Check every output path length before writing anything, counting the full
+  // destination path, so a deep cache folder fails early with a clear message.
+  const fs::path absolute_dest = fs::absolute(dest, ec);
+  if (ec) return Result::failure("Could not resolve " + path_for_message(dest) + ": " + ec.message());
+  std::size_t longest = (absolute_dest / "sys" / "apploader.img").native().size();
+  for (const std::string& dir : disc.directories()) {
+    longest = std::max(longest, (absolute_dest / "files" / fs::path(dir)).native().size());
+  }
+  for (const GcFile& file : disc.files()) {
+    longest = std::max(longest, (absolute_dest / "files" / fs::path(file.path)).native().size());
+  }
+  if (longest > kGcMaxOutputPathLength) {
+    return Result::failure("The extraction folder " + path_for_message(absolute_dest) + " is too deep: a file inside " +
+                           "it would need a " + std::to_string(longest) + "-character path, and the limit is " +
+                           std::to_string(kGcMaxOutputPathLength) + ". Choose a shorter cache folder.");
+  }
+
+  // Remember which folders on the way to `dest` do not exist yet, so a failed
+  // extraction removes exactly what it created and nothing else.
+  std::vector<fs::path> created_parents;  // deepest first
+  for (fs::path p = absolute_dest.parent_path(); !p.empty() && !fs::exists(p, ec); p = p.parent_path()) {
+    created_parents.push_back(p);
+    if (p == p.parent_path()) break;
+  }
+  const bool created = fs::create_directories(absolute_dest, ec);
+  if (ec) return Result::failure("Could not create " + path_for_message(dest) + ": " + ec.message());
 
   auto cleanup_and_fail = [&](std::string message) {
     std::error_code ignored;
     if (created) {
-      fs::remove_all(dest, ignored);
+      fs::remove_all(absolute_dest, ignored);
+      for (const fs::path& parent : created_parents) fs::remove(parent, ignored);  // only removes empty folders
     } else {
-      for (const auto& child : fs::directory_iterator(dest, ignored)) fs::remove_all(child.path(), ignored);
+      for (const auto& child : fs::directory_iterator(absolute_dest, ignored)) fs::remove_all(child.path(), ignored);
     }
     return Result::failure(std::move(message));
   };
@@ -342,20 +368,20 @@ Result extract_gc_disc(const ByteSource& source, const GcDisc& disc, const std::
       const std::span<std::byte> chunk = std::span(buffer).first(n);
       if (!source.read(offset, chunk)) return Result::failure("Could not read the disc image.");
       out.write(reinterpret_cast<const char*>(chunk.data()), static_cast<std::streamsize>(n));
-      if (!out) return Result::failure("Could not write " + out_path.string());
+      if (!out) return Result::failure("Could not write " + path_for_message(out_path));
       offset += n;
       size -= n;
     }
     out.close();
-    if (!out) return Result::failure("Could not write " + out_path.string());
+    if (!out) return Result::failure("Could not write " + path_for_message(out_path));
     return Result::success();
   };
 
-  const fs::path sys = dest / "sys";
-  const fs::path files = dest / "files";
+  const fs::path sys = absolute_dest / "sys";
+  const fs::path files = absolute_dest / "files";
   fs::create_directories(sys, ec);
   if (!ec) fs::create_directories(files, ec);
-  if (ec) return cleanup_and_fail("Could not create folders in " + dest.string() + ": " + ec.message());
+  if (ec) return cleanup_and_fail("Could not create folders in " + path_for_message(dest) + ": " + ec.message());
 
   const GcDiscHeader& h = disc.header();
   struct SystemFile {

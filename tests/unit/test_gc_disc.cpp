@@ -9,6 +9,12 @@
 #include <optional>
 #include <random>
 #include <span>
+
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 #include <string>
 #include <vector>
 
@@ -223,11 +229,35 @@ class OversizeSource final : public ByteSource {
   std::uint64_t size_;
 };
 
+long long current_pid() {
+#ifdef _WIN32
+  return static_cast<long long>(_getpid());
+#else
+  return static_cast<long long>(getpid());
+#endif
+}
+
+// Reads normally up to `fail_from`, then fails, to break an extraction halfway.
+class FailingSource final : public ByteSource {
+ public:
+  FailingSource(std::span<const std::byte> data, std::uint64_t fail_from) : inner_(data), fail_from_(fail_from) {}
+  std::uint64_t size() const override { return inner_.size(); }
+  bool read(std::uint64_t offset, std::span<std::byte> out) const override {
+    return offset + out.size() <= fail_from_ && inner_.read(offset, out);
+  }
+
+ private:
+  MemorySource inner_;
+  std::uint64_t fail_from_;
+};
+
 class TempDir {
  public:
   TempDir() {
     static int counter = 0;
-    path_ = fs::temp_directory_path() / ("mpt_gc_test_" + std::to_string(reinterpret_cast<std::uintptr_t>(this)) + "_" +
+    // The process ID keeps parallel test runs (ctest -j, two build trees) apart.
+    path_ = fs::temp_directory_path() / ("mpt_gc_test_" + std::to_string(current_pid()) + "_" +
+                                         std::to_string(reinterpret_cast<std::uintptr_t>(this)) + "_" +
                                          std::to_string(counter++));
     fs::remove_all(path_);
     fs::create_directories(path_);
@@ -373,6 +403,65 @@ TEST_CASE("a synthetic disc extracts into the Dolphin layout") {
   // An existing empty directory is fine.
   fs::create_directories(tmp.path() / "empty_dest");
   CHECK(extract_gc_disc(source, *disc, tmp.path() / "empty_dest").ok());
+}
+
+TEST_CASE("a failed extraction removes the folders it created, and only those") {
+  const BuiltDisc built = build_disc(default_spec());
+  std::string error;
+  const auto disc = open_image(built.image, error);
+  REQUIRE_MESSAGE(disc.has_value(), error);
+  const TempDir tmp;
+
+  // Reads fail inside the last file, after the system files and folders are written.
+  const FailingSource failing(built.image, built.image.size() - 0x10);
+  const fs::path out = tmp.path() / "new_parent" / "nested" / "disc";
+  const Result result = extract_gc_disc(failing, *disc, out);
+  CHECK_FALSE(result.ok());
+  CHECK_FALSE(fs::exists(tmp.path() / "new_parent"));
+  CHECK(fs::exists(tmp.path()));
+
+  // An existing empty destination is emptied again, but kept.
+  fs::create_directories(tmp.path() / "kept");
+  CHECK_FALSE(extract_gc_disc(failing, *disc, tmp.path() / "kept").ok());
+  CHECK(fs::is_directory(tmp.path() / "kept"));
+  CHECK(fs::is_empty(tmp.path() / "kept"));
+}
+
+TEST_CASE("extraction refuses output paths over the length limit") {
+  DiscSpec spec = default_spec();
+  spec.files[std::string(200, 'n') + ".bin"] = "long name";
+  const BuiltDisc built = build_disc(spec);
+  std::string error;
+  const auto disc = open_image(built.image, error);
+  REQUIRE_MESSAGE(disc.has_value(), error);
+  const MemorySource source(built.image);
+  const TempDir tmp;
+
+  fs::path out = tmp.path();
+  while (out.native().size() + 220 <= kGcMaxOutputPathLength) out /= "deeper_folder";
+  const Result result = extract_gc_disc(source, *disc, out / "disc");
+  CHECK_FALSE(result.ok());
+  CHECK(result.error().find("too deep") != std::string::npos);
+  CHECK(fs::is_empty(tmp.path()));  // nothing was created
+}
+
+TEST_CASE("messages with non-ANSI paths do not throw") {
+  const BuiltDisc built = build_disc(default_spec());
+  const MemorySource source(built.image);
+  std::string error;
+  const auto disc = GcDisc::open(source, error);
+  REQUIRE_MESSAGE(disc.has_value(), error);
+  const TempDir tmp;
+
+  const fs::path unicode = tmp.path() / fs::path(u8"日本_ü_\U0001F3B2");
+  fs::create_directories(unicode / "occupied");
+  Result result = Result::success();
+  CHECK_NOTHROW(result = extract_gc_disc(source, *disc, unicode));
+  CHECK_FALSE(result.ok());
+  CHECK(result.error().find("\xE6\x97\xA5\xE6\x9C\xAC") != std::string::npos);  // the folder name, as UTF-8
+
+  CHECK_NOTHROW((void)FileSource::open(unicode / "missing.iso", error));
+  CHECK(error.find("\xE6\x97\xA5\xE6\x9C\xAC") != std::string::npos);
 }
 
 TEST_CASE("non-GameCube and unsupported images are rejected by name") {
