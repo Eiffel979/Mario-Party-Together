@@ -342,3 +342,33 @@ TEST_CASE("only one SDK instance at a time") {
   first.reset();
   CHECK(Sdk::create({}, &gameMain, &g, second).ok());
 }
+
+namespace {
+// Recursion with large frames, each written in full (a volatile buffer), so the
+// overflow runs through the canary rather than skipping over it.
+int deep(int n) {
+  volatile char frame[4096];
+  for (int i = 0; i < 4096; ++i) frame[i] = static_cast<char>(n + i);
+  if (n == 0) return frame[0];
+  return deep(n - 1) + frame[4095];
+}
+int g_sink = 0;
+void* overflowingThread(void*) {
+  g_sink = deep(24);  // about 100 KiB on a 64 KiB stack
+  return nullptr;
+}
+}  // namespace
+
+TEST_CASE("a coroutine stack overflow is a deterministic fault") {
+  Game g{[] {
+    static OSThread t;
+    OSCreateThread(&t, &overflowingThread, nullptr, nullptr, 0, 8, 0);
+    OSResumeThread(&t);
+    for (;;) VIWaitForRetrace();
+  }};
+  SdkConfig cfg;
+  cfg.thread_stack_bytes = 64 * 1024;
+  auto sdk = boot(g, cfg);
+  CHECK(step(*sdk) == StepStatus::faulted);
+  CHECK(sdk->fault().find("stack overflow in SDK thread slot 1") != std::string::npos);
+}

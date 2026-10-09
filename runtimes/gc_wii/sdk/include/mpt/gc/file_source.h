@@ -9,6 +9,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -51,17 +53,32 @@ class MemoryFileSource final : public IFileSource {
   std::vector<std::vector<std::byte>> data_;  // indexed like entries_
 };
 
-// Files under a host directory (the extracted disc in build_dir). `entries` is
-// the FST listing in disc order, normally written by asset-import's extractor.
+// Parses a GameCube FST (the big-endian table asset-import extracts to
+// sys/fst.bin) into FST-order entries. Rejects malformed tables and unsafe names
+// ("", ".", "..", or containing '/', '\' or control bytes). On failure returns
+// nullopt and sets `error`.
+std::optional<std::vector<FileSourceEntry>> parse_fst(std::span<const std::byte> fst, std::string& error);
+
+// An extracted disc in asset-import's layout (P1-09): sys/fst.bin plus
+// files/<FST paths>, inside VerifiedDump::build_dir. Entry order and sizes come
+// from sys/fst.bin, never from directory iteration. Each file must exist with the
+// size the FST gives. Recently used files stay open between reads.
 class DirectoryFileSource final : public IFileSource {
  public:
-  DirectoryFileSource(std::filesystem::path root, std::vector<FileSourceEntry> entries);
+  static std::unique_ptr<DirectoryFileSource> open(const std::filesystem::path& root, std::string& error);
+  ~DirectoryFileSource() override;
   std::span<const FileSourceEntry> entries() const override { return entries_; }
   bool read(std::uint32_t entry, std::uint64_t offset, std::span<std::byte> dst) const override;
 
  private:
-  std::filesystem::path root_;
+  DirectoryFileSource(std::filesystem::path files_dir, std::vector<FileSourceEntry> entries);
+  std::filesystem::path pathOf(std::uint32_t entry) const;
+
+  struct Handle;
+  static constexpr std::size_t kMaxOpenFiles = 16;
+  std::filesystem::path files_dir_;
   std::vector<FileSourceEntry> entries_;
+  mutable std::vector<std::unique_ptr<Handle>> open_;  // most recently used last
 };
 
 }  // namespace mpt::gc

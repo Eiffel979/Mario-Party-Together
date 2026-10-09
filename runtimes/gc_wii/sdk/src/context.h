@@ -6,8 +6,16 @@
 // SDK stacks come from the arena, which puts every suspended context inside the
 // save state.
 //
-// Implemented for x86-64 Windows (Win64 ABI) and x86-64 SysV (Linux) with Clang.
-// ARM64 is not supported yet.
+// Implemented for x86-64 Windows (Win64 ABI) and x86-64 SysV (Linux) with Clang,
+// all in context.cpp with the frame layouts documented there. Other targets are an
+// #error. ARM64 is not supported yet; libco is the named fallback (ADR 0008 §1).
+//
+// Rules for code running on these contexts:
+// - No C++ exception, longjmp or SEH unwind may cross a switch: a coroutine's
+//   first frame (the trampoline) has no unwind information, and the host's frames
+//   are on another stack. Game code uses neither; SDK code reports errors by
+//   faulting the runtime instead.
+// - The process must not use CET user shadow stacks (Sdk::create checks).
 #pragma once
 
 #include <cstddef>

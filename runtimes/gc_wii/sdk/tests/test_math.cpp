@@ -1,7 +1,8 @@
 // Math goldens (E10, ADR 0008 §5): software fmaf (hard rounding cases and a
 // comparison against hardware FMA where the CPU has it), no FMA contraction,
-// saturating fast casts, trig accuracy, and golden hashes of MTX/VEC/QUAT and
-// trig outputs that must be identical on every platform.
+// saturating fast casts, trig accuracy, and a golden hash of trig and fmaf
+// outputs that must be identical on every platform. MTX/VEC/QUAT goldens belong
+// to P1-14 (aurora's MTX is the only implementation, ADR 0007 §6).
 #include <bit>
 #include <cmath>
 #include <cstring>
@@ -10,7 +11,6 @@
 #include "mpt/core/rng.h"
 #include "mpt/core/state.h"
 #include "mpt_gc/gc_math.h"
-#include "mpt_gc/mtx.h"
 #include "mpt_gc/os.h"
 
 #if defined(_MSC_VER)
@@ -27,16 +27,24 @@ namespace {
 f32 F(std::uint32_t bits) { return std::bit_cast<f32>(bits); }
 std::uint32_t B(f32 f) { return std::bit_cast<std::uint32_t>(f); }
 
+// FMA3 is usable only if the CPU has it (CPUID.1:ECX.FMA[12]) and the OS saves
+// the YMM state (CPUID.1:ECX.OSXSAVE[27], then XCR0 bits 1 and 2 via xgetbv).
+__attribute__((target("xsave"))) std::uint64_t readXcr0() { return _xgetbv(0); }
+
 bool cpuHasFma() {
+  unsigned c = 0;
 #if defined(_MSC_VER)
   int info[4];
   __cpuid(info, 1);
-  return (info[2] & (1 << 12)) != 0;
+  c = static_cast<unsigned>(info[2]);
 #else
-  unsigned a, b, c, d;
+  unsigned a, b, d;
   if (!__get_cpuid(1, &a, &b, &c, &d)) return false;
-  return (c & (1u << 12)) != 0;
 #endif
+  const bool fma = (c & (1u << 12)) != 0;
+  const bool osxsave = (c & (1u << 27)) != 0;
+  if (!fma || !osxsave) return false;
+  return (readXcr0() & 0x6) == 0x6;  // XMM and YMM state enabled
 }
 
 __attribute__((target("fma"))) f32 hardwareFma(f32 a, f32 b, f32 c) {
@@ -44,15 +52,6 @@ __attribute__((target("fma"))) f32 hardwareFma(f32 a, f32 b, f32 c) {
 }
 
 void hashF(StateHasher& h, f32 v) { h.update_u64(B(v)); }
-void hashVec(StateHasher& h, const Vec& v) {
-  hashF(h, v.x);
-  hashF(h, v.y);
-  hashF(h, v.z);
-}
-void hashMtx(StateHasher& h, const Mtx m) {
-  for (int i = 0; i < 3; ++i)
-    for (int j = 0; j < 4; ++j) hashF(h, m[i][j]);
-}
 
 // Reads a value the compiler cannot constant-fold.
 template <typename T>
@@ -141,6 +140,16 @@ TEST_CASE("fmaf matches hardware FMA on random and adversarial inputs") {
       MESSAGE("fmaf(" << B(a) << ", " << B(b) << ", " << B(c) << "): sw " << B(sw) << " hw " << B(hw));
   }
   CHECK(mismatches == 0);
+}
+
+extern "C" float mpt_gc_redirect_probe_c(float a, float b, float c);
+extern "C" float mpt_gc_redirect_probe_std(float a, float b, float c);
+
+TEST_CASE("fmaf and std::fmaf go through the redirect to mpt_fmaf") {
+  // The double-rounding case: only a correctly rounded fma gives 0x3F801001.
+  const f32 a = opaque(F(0x3F800800)), c = opaque(F(0x21800000));
+  CHECK(B(mpt_gc_redirect_probe_c(a, a, c)) == 0x3F801001u);
+  CHECK(B(mpt_gc_redirect_probe_std(a, a, c)) == 0x3F801001u);
 }
 
 TEST_CASE("the compiler does not contract a*b+c into an FMA") {
@@ -236,87 +245,4 @@ TEST_CASE("golden: trig outputs") {
   hashF(h, mpt_sinf(1e6f));  // far outside the accurate range: still a fixed value
   hashF(h, mpt_cosf(-3e7f));
   CHECK(h.digest() == 13900187656750823100ull);  // golden: identical on every platform
-}
-
-TEST_CASE("golden: MTX/VEC/QUAT outputs") {
-  StateHasher h;
-  DeterministicRng rng(7);
-  auto rf = [&] { return static_cast<f32>(static_cast<std::int64_t>(rng.below(20001)) - 10000) / 997.0f; };
-  for (int n = 0; n < 500; ++n) {
-    Mtx a, b, ab, inv, t;
-    Vec v{rf(), rf(), rf()}, w{rf(), rf(), rf()}, r;
-    PSMTXRotRad(a, "xyz"[n % 3], rf());
-    PSMTXTransApply(a, a, rf(), rf(), rf());
-    C_MTXRotAxisRad(b, &v, rf());
-    PSMTXScaleApply(b, b, rf(), rf(), rf());
-    PSMTXConcat(a, b, ab);
-    hashMtx(h, ab);
-    h.update_u64(PSMTXInverse(ab, inv));
-    hashMtx(h, inv);
-    PSMTXMultVec(ab, &v, &r);
-    hashVec(h, r);
-    PSMTXMultVecSR(ab, &w, &r);
-    hashVec(h, r);
-    C_MTXLookAt(t, &v, &w, &r);
-    hashMtx(h, t);
-    PSVECNormalize(&v, &r);
-    hashVec(h, r);
-    PSVECCrossProduct(&v, &w, &r);
-    hashVec(h, r);
-    hashF(h, PSVECMag(&v));
-    hashF(h, PSVECDotProduct(&v, &w));
-    hashF(h, PSVECDistance(&v, &w));
-    C_VECHalfAngle(&v, &w, &r);
-    hashVec(h, r);
-    C_VECReflect(&v, &w, &r);
-    hashVec(h, r);
-    Quaternion p{rf(), rf(), rf(), rf()}, q, pq, s;
-    C_QUATRotAxisRad(&q, &w, rf());
-    PSQUATMultiply(&p, &q, &pq);
-    PSQUATNormalize(&pq, &pq);
-    C_QUATSlerp(&pq, &q, &s, static_cast<f32>(n) / 500.0f);
-    hashF(h, s.x);
-    hashF(h, s.y);
-    hashF(h, s.z);
-    hashF(h, s.w);
-    PSMTXQuat(t, &s);
-    hashMtx(h, t);
-    C_QUATMtx(&q, t);
-    hashF(h, q.x);
-    hashF(h, q.w);
-    Mtx44 proj, pinv;
-    C_MTXPerspective(proj, 30.0f + static_cast<f32>(n % 60), 4.0f / 3.0f, 1.0f, 1000.0f + rf());
-    h.update_u64(PSMTX44Inverse(proj, pinv));
-    for (int i = 0; i < 4; ++i)
-      for (int j = 0; j < 4; ++j) hashF(h, pinv[i][j]);
-    C_MTXOrtho(proj, rf(), rf() - 30.0f, rf() - 30.0f, rf(), 0.0f, 100.0f);
-    PSMTX44MultVec(proj, &v, &r);
-    hashVec(h, r);
-    C_MTXLightPerspective(t, 45.0f, 1.0f, 0.5f, -0.5f, 0.5f, 0.5f);
-    hashMtx(h, t);
-  }
-  CHECK(h.digest() == 17867528129688769321ull);  // golden: identical on every platform
-}
-
-TEST_CASE("MTX sanity: inverse, normalize, quaternion round trip") {
-  Mtx a, inv, id;
-  const Vec axis{1.0f, 2.0f, 3.0f};
-  C_MTXRotAxisRad(a, &axis, 0.7f);
-  C_MTXTransApply(a, a, 5.0f, -2.0f, 1.0f);
-  REQUIRE(C_MTXInverse(a, inv) == 1);
-  C_MTXConcat(a, inv, id);
-  for (int i = 0; i < 3; ++i)
-    for (int j = 0; j < 4; ++j) CHECK(std::fabs(id[i][j] - (i == j ? 1.0f : 0.0f)) < 1e-5f);
-  Vec n;
-  C_VECNormalize(&axis, &n);
-  CHECK(std::fabs(C_VECMag(&n) - 1.0f) < 1e-6f);
-  Quaternion q, back;
-  C_QUATRotAxisRad(&q, &axis, 0.7f);
-  Mtx qm;
-  C_MTXQuat(qm, &q);
-  C_QUATMtx(&back, qm);
-  CHECK(std::fabs(back.x - q.x) < 1e-6f);
-  CHECK(std::fabs(back.w - q.w) < 1e-6f);
-  Mtx zero = {};
-  CHECK(C_MTXInverse(zero, inv) == 0);
 }

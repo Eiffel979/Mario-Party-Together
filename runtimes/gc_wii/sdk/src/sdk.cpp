@@ -22,7 +22,10 @@
 #include <windows.h>
 #else
 #include <sys/mman.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 #endif
+#include <stdexcept>
 
 namespace mpt::gc {
 
@@ -42,6 +45,44 @@ std::int64_t g_earliest = std::numeric_limits<std::int64_t>::max();  // cache of
 std::uint64_t g_resumes = 0;
 
 std::size_t alignUp(std::size_t v, std::size_t a) { return (v + a - 1) & ~(a - 1); }
+
+// Stack canary: the lowest bytes of every coroutine stack hold a fixed pattern.
+// Stacks grow down, so an overflow overwrites it before anything else, and the
+// check after every switch turns the overflow into a deterministic fault.
+constexpr std::size_t kCanaryBytes = 256;
+constexpr std::uint64_t kCanaryWord = 0x4D50'5443'414E'4152ull;  // "MPTCANAR"
+
+void writeStackCanary(Sdk::Impl& I, std::uint32_t slot) {
+  std::byte* lo = I.arena + I.st->threads[slot].stack_offset;
+  for (std::size_t i = 0; i < kCanaryBytes; i += 8) std::memcpy(lo + i, &kCanaryWord, 8);
+}
+
+bool stackCanaryIntact(const Sdk::Impl& I, std::uint32_t slot) {
+  const std::byte* lo = I.arena + I.st->threads[slot].stack_offset;
+  for (std::size_t i = 0; i < kCanaryBytes; i += 8) {
+    std::uint64_t w;
+    std::memcpy(&w, lo + i, 8);
+    if (w != kCanaryWord) return false;
+  }
+  return true;
+}
+
+// The context switch returns into other stacks, which CET shadow stacks reject.
+bool userShadowStacksEnabled() {
+#if defined(_WIN32)
+  PROCESS_MITIGATION_USER_SHADOW_STACK_POLICY policy{};
+  if (!GetProcessMitigationPolicy(GetCurrentProcess(), ProcessUserShadowStackPolicy, &policy, sizeof policy))
+    return false;  // older Windows: no user shadow stacks
+  return policy.EnableUserShadowStack != 0;
+#elif defined(__linux__) && defined(SYS_arch_prctl)
+  constexpr int kArchShstkStatus = 0x5005;  // ARCH_SHSTK_STATUS
+  unsigned long features = 0;
+  if (syscall(SYS_arch_prctl, kArchShstkStatus, &features) != 0) return false;  // kernel without shadow stacks
+  return (features & 1ul) != 0;                                                  // ARCH_SHSTK_SHSTK
+#else
+  return false;
+#endif
+}
 
 std::byte* allocateArena(std::size_t size, std::uintptr_t base) {
 #if defined(_WIN32)
@@ -163,6 +204,13 @@ void resumeSlot(std::int32_t slot) {
   ++g_resumes;
   mpt_gc_switch_context(&I.host_sp, t.ctx_sp);
   s.current = -1;
+  // Every switch comes back here, so this checks the stack that just ran.
+  if (!stackCanaryIntact(I, static_cast<std::uint32_t>(slot)) && !s.faulted) {
+    s.faulted = 1;
+    I.fault = "stack overflow in SDK thread slot " + std::to_string(slot) + " (its " +
+              std::to_string(I.config.thread_stack_bytes / 1024) +
+              " KiB arena stack; raise SdkConfig::thread_stack_bytes)";
+  }
 }
 
 void runUntilIdle() {
@@ -196,6 +244,7 @@ void initSlotContext(Sdk::Impl& I, std::uint32_t slot, ContextEntry entry) {
   ThreadSlot& t = I.st->threads[slot];
   t.stack_size = I.config.thread_stack_bytes;
   t.stack_offset = static_cast<std::uint32_t>(I.stacks_offset + std::size_t{slot} * I.config.thread_stack_bytes);
+  writeStackCanary(I, slot);
   t.ctx_sp = make_context(I.arena + t.stack_offset, t.stack_size, entry,
                           reinterpret_cast<void*>(static_cast<std::uintptr_t>(slot)));
 }
@@ -214,10 +263,7 @@ void hashEvent(StateHasher& h, const Event& e) {
 }  // namespace
 
 Sdk::Impl& impl() {
-  if (!g_impl) {
-    std::fputs("mpt gc sdk: SDK call with no live Sdk\n", stderr);
-    std::abort();
-  }
+  if (!g_impl) throw std::logic_error("GameCube SDK call with no live Sdk");
   return *g_impl;
 }
 
@@ -361,15 +407,19 @@ void exitCurrent(void* val) {
   fatal("a terminated thread was resumed");
 }
 
-void schedule(std::int64_t deadline, Source source, EventKind kind, void* a, void* b, std::int64_t c) {
+static bool insertEvent(std::int64_t deadline, Source source, EventKind kind, void* a, void* b, std::int64_t c) {
   auto& s = st();
   for (Event& e : s.events) {
     if (e.used) continue;
     e = Event{deadline, ++s.seq, source, kind, 1, a, b, c};
     if (deadline < g_earliest) g_earliest = deadline;
-    return;
+    return true;
   }
-  fatal("virtual interrupt queue full (256 pending events)");
+  return false;
+}
+
+void schedule(std::int64_t deadline, Source source, EventKind kind, void* a, void* b, std::int64_t c) {
+  if (!insertEvent(deadline, source, kind, a, b, c)) fatal("virtual interrupt queue full (256 pending events)");
 }
 
 void cancelEvents(EventKind kind, const void* a) {
@@ -425,11 +475,15 @@ void fatal(const std::string& message) {
     if (!s.faulted) I.fault = message;
     s.faulted = 1;
     if (s.current >= 0) {
-      switchToHost();  // never resumed
+      switchToHost();     // a faulted runtime never resumes its threads
+      __builtin_trap();   // unreachable
     }
+    // Host context: only reachable by calling the C API from host code instead
+    // of game code, which is a programming error (the frame step itself never
+    // calls fatal). The fault is recorded; the exception reports the misuse.
+    throw std::logic_error("GameCube SDK C API called from host code: " + message);
   }
-  std::fprintf(stderr, "mpt gc sdk: fatal outside a thread: %s\n", message.c_str());
-  std::abort();
+  throw std::logic_error("GameCube SDK fault with no live Sdk: " + message);
 }
 
 void report(const char* text) {
@@ -457,6 +511,10 @@ Sdk::~Sdk() {
 Result Sdk::create(const SdkConfig& config, MainFn main, void* arg, std::unique_ptr<Sdk>& out) {
   if (g_impl) return Result::failure("only one GameCube SDK instance may exist at a time");
   if (!main) return Result::failure("no main function");
+  if (userShadowStacksEnabled())
+    return Result::failure(
+        "CET user shadow stacks are enabled for this process; the SDK's coroutine switch is incompatible with them. "
+        "Link the host executable with /CETCOMPAT:NO (Windows) or without shadow-stack marking (-fcf-protection=none).");
   if (config.thread_stack_bytes < 64 * 1024 || config.thread_stack_bytes % 4096 != 0)
     return Result::failure("thread_stack_bytes must be a multiple of 4096 and at least 64 KiB");
   if (config.card.size_mbits != 4 && config.card.size_mbits != 8 && config.card.size_mbits != 16)
@@ -565,6 +623,8 @@ StepStatus Sdk::stepFrame(const InputFrame& input) {
     return StepStatus::faulted;
   }
 
+  // Nothing on this host-side path calls fatal(): faults here are recorded and
+  // reported through the returned status, never by aborting.
   g_resumes = 0;
   padStage(input);
   if (s.frame == 0) {
@@ -575,7 +635,10 @@ StepStatus Sdk::stepFrame(const InputFrame& input) {
     s.next_field = s.field_start + s.field_whole + s.field_acc / s.field_den;
     s.field_acc %= s.field_den;
     if (s.now < s.field_start) s.now = s.field_start;  // the field clock is a floor
-    schedule(s.field_start, Source::vi, EventKind::retrace, nullptr, nullptr, 0);
+    if (!insertEvent(s.field_start, Source::vi, EventKind::retrace, nullptr, nullptr, 0)) {
+      s.faulted = 1;
+      impl_->fault = "virtual interrupt queue full (256 pending events) at the retrace";
+    }
   }
   runUntilIdle();
   ++s.frame;

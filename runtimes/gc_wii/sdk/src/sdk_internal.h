@@ -309,6 +309,11 @@ void cancelEvents(EventKind kind, const void* a);
 void completeIo(Source source, EventKind kind, void* a, void* b, std::int64_t c);
 void dispatch(const Event& e);
 
+// A fatal SDK error. In a game thread it records the fault and stops the runtime
+// (the thread is never resumed; stepFrame returns StepStatus::faulted). The frame
+// step's own host-side code never calls it. Reaching it from host code means the
+// C API was called outside game code, a programming error reported by throwing
+// std::logic_error. It never aborts the process.
 [[noreturn]] void fatal(const std::string& message);
 void report(const char* text);
 

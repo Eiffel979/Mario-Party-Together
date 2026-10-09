@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <map>
 
 namespace mpt::gc {
@@ -91,18 +92,154 @@ bool MemoryFileSource::read(std::uint32_t entry, std::uint64_t offset, std::span
   return true;
 }
 
-DirectoryFileSource::DirectoryFileSource(std::filesystem::path root, std::vector<FileSourceEntry> entries)
-    : root_(std::move(root)), entries_(std::move(entries)) {}
+namespace {
+
+std::uint32_t be32(std::span<const std::byte> b, std::size_t at) {
+  return (std::to_integer<std::uint32_t>(b[at]) << 24) | (std::to_integer<std::uint32_t>(b[at + 1]) << 16) |
+         (std::to_integer<std::uint32_t>(b[at + 2]) << 8) | std::to_integer<std::uint32_t>(b[at + 3]);
+}
+
+std::string nameProblem(const std::string& name) {
+  if (name.empty()) return "an empty name";
+  if (name.size() > 255) return "a name longer than 255 bytes";
+  if (name == "." || name == "..") return "the name \"" + name + "\"";
+  for (char c : name) {
+    const auto u = static_cast<unsigned char>(c);
+    if (c == '/' || c == '\\') return "a path separator in \"" + name + "\"";
+    if (u < 0x20 || u == 0x7F) return "a control character in a name";
+  }
+  return {};
+}
+
+}  // namespace
+
+std::optional<std::vector<FileSourceEntry>> parse_fst(std::span<const std::byte> fst, std::string& error) {
+  constexpr std::size_t kEntry = 12;
+  if (fst.size() < kEntry) {
+    error = "FST too small";
+    return std::nullopt;
+  }
+  if (std::to_integer<std::uint8_t>(fst[0]) != 1) {
+    error = "FST root is not a directory";
+    return std::nullopt;
+  }
+  const std::uint32_t count = be32(fst, 8);
+  if (count == 0 || std::uint64_t{count} * kEntry > fst.size()) {
+    error = "FST entry count does not fit the table";
+    return std::nullopt;
+  }
+  const std::size_t strings = std::size_t{count} * kEntry;
+  std::vector<FileSourceEntry> out;
+  out.reserve(count);
+  out.push_back({"", true, 0});
+  // Open directories: (one past their last entry, path).
+  std::vector<std::pair<std::uint32_t, std::string>> dirs{{count, ""}};
+  for (std::uint32_t i = 1; i < count; ++i) {
+    while (dirs.size() > 1 && i >= dirs.back().first) dirs.pop_back();
+    const std::size_t at = std::size_t{i} * kEntry;
+    const auto flags = std::to_integer<std::uint8_t>(fst[at]);
+    const std::uint32_t name_off = be32(fst, at) & 0x00FF'FFFFu;
+    const std::uint32_t next_or_size = be32(fst, at + 8);
+    if (flags > 1) {
+      error = "FST entry " + std::to_string(i) + " has unknown flags";
+      return std::nullopt;
+    }
+    if (strings + name_off >= fst.size()) {
+      error = "FST entry " + std::to_string(i) + " has a name outside the string table";
+      return std::nullopt;
+    }
+    std::string name;
+    for (std::size_t k = strings + name_off; k < fst.size() && fst[k] != std::byte{0} && name.size() <= 255; ++k)
+      name.push_back(static_cast<char>(std::to_integer<unsigned char>(fst[k])));
+    if (const std::string problem = nameProblem(name); !problem.empty()) {
+      error = "FST entry " + std::to_string(i) + " is unsafe: " + problem;
+      return std::nullopt;
+    }
+    const std::string path = dirs.back().second.empty() ? name : dirs.back().second + "/" + name;
+    if (flags == 1) {
+      if (next_or_size <= i || next_or_size > dirs.back().first) {
+        error = "FST directory " + std::to_string(i) + " has a bad extent";
+        return std::nullopt;
+      }
+      out.push_back({path, true, 0});
+      dirs.emplace_back(next_or_size, path);
+    } else {
+      out.push_back({path, false, next_or_size});
+    }
+  }
+  return out;
+}
+
+struct DirectoryFileSource::Handle {
+  std::uint32_t entry = 0;
+  std::ifstream stream;
+};
+
+DirectoryFileSource::DirectoryFileSource(std::filesystem::path files_dir, std::vector<FileSourceEntry> entries)
+    : files_dir_(std::move(files_dir)), entries_(std::move(entries)) {}
+
+DirectoryFileSource::~DirectoryFileSource() = default;
+
+std::filesystem::path DirectoryFileSource::pathOf(std::uint32_t entry) const {
+  const std::string& rel = entries_[entry].path;
+  return files_dir_ / std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(rel.data()), rel.size()));
+}
+
+std::unique_ptr<DirectoryFileSource> DirectoryFileSource::open(const std::filesystem::path& root, std::string& error) {
+  namespace fs = std::filesystem;
+  std::ifstream f(root / "sys" / "fst.bin", std::ios::binary);
+  if (!f) {
+    error = "no sys/fst.bin in the extracted disc";
+    return nullptr;
+  }
+  std::vector<char> raw((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+  std::vector<std::byte> fst(raw.size());
+  if (!raw.empty()) std::memcpy(fst.data(), raw.data(), raw.size());
+  auto entries = parse_fst(fst, error);
+  if (!entries) return nullptr;
+  std::unique_ptr<DirectoryFileSource> src(new DirectoryFileSource(root / "files", std::move(*entries)));
+  for (std::uint32_t i = 1; i < src->entries_.size(); ++i) {
+    const FileSourceEntry& e = src->entries_[i];
+    std::error_code ec;
+    const fs::path p = src->pathOf(i);
+    if (e.is_dir) {
+      if (!fs::is_directory(p, ec)) {
+        error = "missing directory files/" + e.path;
+        return nullptr;
+      }
+    } else if (!fs::is_regular_file(p, ec) || fs::file_size(p, ec) != e.size || ec) {
+      error = "missing file or wrong size: files/" + e.path;
+      return nullptr;
+    }
+  }
+  return src;
+}
 
 bool DirectoryFileSource::read(std::uint32_t entry, std::uint64_t offset, std::span<std::byte> dst) const {
   if (entry >= entries_.size() || entries_[entry].is_dir) return false;
-  const std::string& rel = entries_[entry].path;
-  const std::u8string rel8(reinterpret_cast<const char8_t*>(rel.data()), rel.size());
-  std::ifstream f(root_ / std::filesystem::path(rel8), std::ios::binary);
-  if (!f) return false;
-  f.seekg(static_cast<std::streamoff>(offset));
-  f.read(reinterpret_cast<char*>(dst.data()), static_cast<std::streamsize>(dst.size()));
-  return static_cast<std::size_t>(f.gcount()) == dst.size();
+  if (offset > entries_[entry].size || dst.size() > entries_[entry].size - offset) return false;
+  // Reuse an open handle if there is one; keep the most recently used last.
+  std::unique_ptr<Handle> h;
+  for (std::size_t i = 0; i < open_.size(); ++i) {
+    if (open_[i]->entry == entry) {
+      h = std::move(open_[i]);
+      open_.erase(open_.begin() + static_cast<std::ptrdiff_t>(i));
+      break;
+    }
+  }
+  if (!h) {
+    h = std::make_unique<Handle>();
+    h->entry = entry;
+    h->stream.open(pathOf(entry), std::ios::binary);
+    if (!h->stream) return false;
+    if (open_.size() >= kMaxOpenFiles) open_.erase(open_.begin());
+  }
+  h->stream.clear();
+  h->stream.seekg(static_cast<std::streamoff>(offset));
+  h->stream.read(reinterpret_cast<char*>(dst.data()), static_cast<std::streamsize>(dst.size()));
+  const bool ok = static_cast<std::size_t>(h->stream.gcount()) == dst.size();
+  open_.push_back(std::move(h));
+  return ok;
 }
 
 }  // namespace mpt::gc

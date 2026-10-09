@@ -5,10 +5,11 @@
  *   It uses only IEEE double add and multiply (round-to-odd on an exact
  *   two-sum), so it needs no FMA instruction and gives the same bits on every
  *   x86-64 and ARM64 host built with -ffp-contract=off.
- * - mpt_sinf/cosf/tanf/acosf/atan2f/sqrtf: the float trig our own C matrix
- *   library uses. They are plain C evaluated in double under strict FP, so
- *   their results are platform independent. They are not the MSL math the
- *   game calls (that comes from the pinned game source, ADR 0009 §2).
+ * - mpt_sinf/cosf/tanf/acosf/atan2f/sqrtf: deterministic float trig for SDK-layer
+ *   code. They are plain C evaluated in double under strict FP, so their
+ *   results are platform independent. They are not the MSL math the game calls
+ *   (that comes from the pinned game source, ADR 0009 §2), and MTX/VEC/QUAT come
+ *   from aurora's MTX at the pin (ADR 0007 §6), not from this library.
  *
  * gc_math_redirect.h maps fmaf onto mpt_fmaf for code compiled into the game
  * module (a forced include in P1-15).
