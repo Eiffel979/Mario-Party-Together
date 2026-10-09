@@ -105,10 +105,10 @@ MP4's game source is Party Board (ADR 0009). It builds on aurora for GX, GD, MTX
 - The MusyX sequencer and voice state, and THP playback state, are hash-manifest areas (ADR 0008 §8).
 - A GPU texture hand-off (instead of readback) needs its own ADR. It is written only if E7 performance fails, or when the presenter moves to the GPU. With (a) the renderer has its own Dawn device, so that ADR chooses between a WebGPU presenter for the GC/Wii path and native interop (D3D12 shared handles, Vulkan external memory).
 - **New build prerequisites for P1-14** (root files, landed by architect when P1-14 starts):
-  - vcpkg ports `abseil`, `xxhash`, `fmt`, `libpng`, `sqlite3`, `zstd` and `tracy`, plus `zlib` if it is not already pulled in;
+  - vcpkg ports `abseil`, `xxhash`, `fmt`, `libpng` (with `zlib`), `sqlite3` and `tracy` (headers only), in a `gc-wii` manifest feature. `zstd` was dropped after the P1-14 gate (see Review);
   - the Dawn source build in `external/`;
   - the `sdl3` `vulkan` feature, only under fallback (c).
-  - A Clang toolchain (clang-cl on Windows) is required by ADR 0008 §4, and is **not yet installed on the reference machine**.
+  - A Clang toolchain (clang-cl on Windows) is required by ADR 0008 §4. It is now installed on the reference machine (clang-cl 22.1.3, bundled with Visual Studio 18).
 - GPU output is not bit-identical across GPUs or drivers. Golden-image tests use tolerances or per-machine baselines. This never affects `stateHash()`.
 - MP8's Wii additions (WPAD, motion) extend this same layer in Phase 4.
 
@@ -129,3 +129,44 @@ MP4's game source is Party Board (ADR 0009). It builds on aurora for GX, GD, MTX
   - Determinism isolation is covered by patch 1 (overscan), the MTX trig redirect, the CPU-only getters checked by G-c, and the game-module/renderer link split.
   - The separate proposed-amendment file is deleted. Its text lives here and in ADR 0009 §1.
 - Nothing in this layer reads RVZ or other containers. Disc containers are asset-import's concern (Phase 1 plan D9, §12).
+- **Amended after the P1-14 opening gate** (2026-10-09, `docs/spikes/p1-14-gate.md`, PR #11).
+  - **Gate status.** G-a to G-e pass on Windows, and option (a) stands. G-d's two defects are patches 7 and 7b, which are not fallback triggers. The gate is **closed only when the Linux leg passes**. That runs as the **first P1-14 CI job**, on a GitHub-hosted runner, with these checks:
+    - G-a: the pinned Dawn and aurora build with Clang from a clean cache, with no unhashed download.
+    - G-b: rendering on **Mesa lavapipe** (Vulkan), plus Dawn's Null adapter for the device and pipeline path. The Null adapter alone does not pass G-b, because it does not rasterize.
+    - G-c and G-e: on Linux, null against real.
+    - The job logs the Mesa and Vulkan-loader versions.
+    - The remaining time-box (about 4 days) applies. If G-a or G-b cannot be made to pass on Linux within it, fallback (c) applies as written.
+    - Comparing GX stream hashes across OSes needs the fixed arena address (ADR 0008 §11). It is a P1-16/M1 check, not part of the gate.
+  - **vcpkg ports.** The ports are `abseil`, `xxhash`, `fmt`, `libpng` (which brings `zlib`), `sqlite3` and `tracy`. `tracy` is used **for its headers only**: `TRACY_ENABLE` is never defined, and `Tracy::TracyClient` is never linked into anything. **`zstd` is dropped** (only `AURORA_CACHE_USE_ZSTD` needs it, and that stays off).
+    - The ports go in a vcpkg manifest feature `gc-wii`, so builds of `core/`, `input/` and `asset-import` alone do not pay abseil's build time.
+    - The `ci-*` presets and every preset that builds `runtimes/gc_wii` enable the feature.
+    - Architect lands these ports in the first P1-14 PR.
+  - **CMake wiring** is accepted as the gate proposed:
+    - **Dawn is built outside our tree.** A developer recipe fetches it by commit, with `DEPS` pinned through the lock (ADR 0009, amendment after P1-14 gate). It sets `core.longpaths`, keeps vcpkg buildtrees on a short path, builds `webgpu_dawn` as a **shared** library, and installs it into a prefix under `external/` (gitignored, and rejected by the scanner).
+    - The root finds it with `find_package(Dawn CONFIG REQUIRED PATHS ${MPT_DAWN_PREFIX} NO_DEFAULT_PATH)` and adds `<prefix>/include` itself. Dawn is never brought in through `add_subdirectory` or FetchContent.
+    - aurora's `CMakeLists.txt` is never included. `runtimes/gc_wii/gx/CMakeLists.txt` lists the pin's sources explicitly, in three targets:
+      - front end plus MTX, into the game module, under ADR 0008 flags;
+      - the host-side renderer, linking Dawn, SDL3, sqlite3, libpng, abseil, xxhash and fmt;
+      - the null stubs, with no Dawn.
+    - A configure-time check fails if a listed source is missing at the pin, so a pin bump that moves files is caught.
+  - **Root options** (architect-owned, land with the ports):
+    - `MPT_GX_BACKEND`, `dawn` or `null`. The default is **`null`**, so contributors who never build Dawn can configure. Presets meant for playing MP4 and the Linux gate job set `dawn`.
+    - `MPT_DAWN_PREFIX`. With `MPT_GX_BACKEND=dawn` and no usable prefix, configure fails with the recipe's name.
+    - On Windows, `webgpu_dawn.dll` is copied next to the binaries with `$<TARGET_RUNTIME_DLLS:…>`.
+  - **`DAWN_FORCE_SYSTEM_COMPONENT_LOAD=ON` is required** in the Dawn recipe, so that `vulkan-1.dll` and `d3dcompiler_47.dll` load from System32. We never redistribute `d3dcompiler_47.dll` or `dxcompiler.dll`.
+  - **D3D12 shader compiler: FXC, on purpose, for Phase 1.**
+    - **Patch 9** turns off aurora's `use_dxc` toggle, and the shim logs which compiler Dawn used, so the choice can be checked.
+    - **Why:** FXC ships with every supported Windows. DXC would mean building DXC's LLVM tree (`DAWN_USE_BUILT_DXC`) or shipping its DLLs. TEV shaders need nothing beyond Shader Model 5.1.
+    - The `DEPS` entry for DirectXShaderCompiler is left out of the lock (ADR 0009 amendment).
+    - **Revisit** if FXC compile times cause visible hitches on first use, measured in E7, or if a later title needs SM6. Vulkan stays available on Windows either way.
+  - **Pipeline mode for normal play: synchronous** (patch 4 always on), plus aurora's persistent pipeline cache.
+    - In the asynchronous mode, draws are skipped while pipelines compile, which is wrong output and not just slow output. So that mode is not used, in play or in tests.
+    - The cache lives in the shell's user cache directory (`SDL_GetPrefPath`), never in the repo or the build cache. Its contents come from game TEV state, so it is user data like save images. The scanner rejects `pipeline_cache.db` and `dawn_cache.db` anywhere in the tree.
+    - If E7 shows first-use hitches, P1-14 adds pre-compiling every cached pipeline at boot (a warmed cache). It does not switch back to the asynchronous mode.
+    - Pipeline timing never reaches game-visible state (G-c showed this), so the choice affects only the picture.
+  - **Patch-set additions:**
+    - **8.** A `fifo::g_processObserver` hook that sees every buffer handed to the command processor. It is null unless a test sets it, and it never changes game-visible state. P1-21's null-against-real test uses it.
+    - **8b.** `comp_type_size` and `comp_cnt_count` move from the renderer's `lib/gx/gx.cpp` into the front end. They are pure CPU code that sizes vertices, so null and real share one copy, compiled under ADR 0008 flags.
+    - **9.** `use_dxc` off, as above.
+  - **Toolchain presets.** The default Windows presets stay MSVC, and they build `runtimes/gc_wii` as a separate Clang project (P1-13's ExternalProject). P1-14's first PR adds `windows-clang-debug` and `windows-clang-release` presets, which build the whole tree with clang-cl. They are runtime-gc-wii's day-to-day configuration and give one IDE build. They are not a second required CI leg in Phase 1.
+  - **For qa-reviewer (P1-20e/P1-21):** the scanner rejects `webgpu_dawn.dll` and the cache databases above anywhere in the tree, in addition to `external/`.
