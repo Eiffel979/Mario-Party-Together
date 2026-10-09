@@ -18,8 +18,9 @@
 //     builds/<recipe id>/.lock                held while a build of that recipe runs
 //
 // <key> is the first 32 hex characters (to keep paths short) of a SHA-256 over the
-// dump's SHA-256, the recipe ID and version, the runtime build version and every
-// source pin (or, for an unpinned override, a fingerprint of what was found). The
+// dump's SHA-256, the recipe ID and version, the runtime build version, the
+// toolchain (compiler ID, full version, target triple) and every source pin (or, for
+// an unpinned override, a fingerprint of what was found). The
 // manifest holds the full key. Changing any input gives a new key, so a dump is
 // built once and rebuilt only when one of them changes. A build directory without a
 // complete manifest carrying the full matching key is never used.
@@ -77,8 +78,15 @@ class BuildStep {
   virtual Result run(BuildContext& context) = 0;
 };
 
+// The compiler that builds this recipe's output. Part of the build key (ADR 0009,
+// amendment after P1-10): numerics are a function of the compiler (ADR 0008), so a
+// toolchain upgrade must give a new build. Never put a path in any field.
 struct ToolchainInfo {
-  std::string description;  // recorded in the manifest, e.g. "clang-cl 19.1.5"
+  std::string compiler;  // compiler ID, e.g. "clang"
+  std::string version;   // its full version string, e.g. "22.1.3"
+  std::string target;    // target triple, e.g. "x86_64-pc-windows-msvc"
+
+  std::string description() const;  // "clang 22.1.3 (x86_64-pc-windows-msvc)"
 };
 
 class BuildRecipe {
@@ -94,8 +102,10 @@ class BuildRecipe {
   virtual const SourceLock& sources() const = 0;
   // Whether the disc is extracted into <build>/disc before the steps run.
   virtual bool extracts_disc() const = 0;
-  // Checks the tools the steps need. Fails with a message such as "clang-cl was not
-  // found. Install LLVM 19 and try again." Not called when the cache already has the build.
+  // Checks the tools the steps need and identifies the compiler. Fails with a message
+  // such as "clang-cl was not found. Install LLVM 22 and try again." Called on every
+  // build, including cache hits, because the toolchain is part of the build key. A
+  // recipe that compiles nothing leaves `info` empty.
   virtual Result check_toolchain(ProcessRunner& runner, ToolchainInfo& info) const = 0;
   virtual std::vector<std::unique_ptr<BuildStep>> steps() const = 0;
 };
@@ -133,7 +143,7 @@ struct BuildManifest {
   std::string game_version;
   std::vector<ManifestSource> sources;
   bool unpinned = false;  // never produces golden trails or exit evidence, never joins netplay
-  std::string toolchain;
+  ToolchainInfo toolchain;
 
   std::string to_json() const;
   static std::optional<BuildManifest> parse(std::string_view json_text, std::string& error);
@@ -147,7 +157,7 @@ struct BuildOutcome {
 
 // The build key for these inputs: SHA-256 over a canonical description of them.
 std::string build_key(const BuildRecipe& recipe, std::string_view dump_sha256,
-                      const std::vector<ManifestSource>& sources);
+                      const std::vector<ManifestSource>& sources, const ToolchainInfo& toolchain);
 
 class BuildCache {
  public:

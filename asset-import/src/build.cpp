@@ -28,7 +28,7 @@ namespace {
 
 namespace fs = std::filesystem;
 
-constexpr int kManifestVersion = 1;
+constexpr int kManifestVersion = 2;
 constexpr std::size_t kKeyDirLength = 32;  // 128 bits of the key name the folder; the manifest has all of it
 constexpr const char* kManifestName = "manifest.json";
 
@@ -131,6 +131,20 @@ bool is_key_safe(std::string_view text) {
   return true;
 }
 
+// Why a ToolchainInfo is unusable as part of the key, or empty if it is fine.
+std::string toolchain_problem(const ToolchainInfo& t) {
+  for (const std::string* field : {&t.compiler, &t.version, &t.target}) {
+    if (!is_key_safe(*field)) return "a field has control characters.";
+    // The key must not depend on where the compiler is installed (ADR 0009).
+    if (field->find('/') != std::string::npos || field->find('\\') != std::string::npos) {
+      return "'" + *field + "' looks like a path; give the compiler ID, version and target triple only.";
+    }
+  }
+  if (t.compiler.empty() != t.version.empty()) return "the compiler ID and version must be given together.";
+  if (t.compiler.empty() && !t.target.empty()) return "a target triple needs a compiler.";
+  return {};
+}
+
 }  // namespace
 
 std::string BuildManifest::to_json() const {
@@ -149,7 +163,7 @@ std::string BuildManifest::to_json() const {
       {"game_version", game_version},
       {"sources", sources_json},
       {"unpinned", unpinned},
-      {"toolchain", toolchain},
+      {"toolchain", {{"compiler", toolchain.compiler}, {"version", toolchain.version}, {"target", toolchain.target}}},
       {"complete", true},
   };
   return root.dump(2) + "\n";
@@ -174,7 +188,9 @@ std::optional<BuildManifest> BuildManifest::parse(std::string_view json_text, st
     m.dump_sha256 = root.at("dump_sha256").get<std::string>();
     m.game_version = root.at("game_version").get<std::string>();
     m.unpinned = root.at("unpinned").get<bool>();
-    m.toolchain = root.at("toolchain").get<std::string>();
+    const nlohmann::json& toolchain = root.at("toolchain");
+    m.toolchain = {toolchain.at("compiler").get<std::string>(), toolchain.at("version").get<std::string>(),
+                   toolchain.at("target").get<std::string>()};
     for (const nlohmann::json& s : root.at("sources")) {
       m.sources.push_back({s.at("name").get<std::string>(), s.at("commit").get<std::string>(),
                            s.at("origin").get<std::string>(), s.at("pinned").get<bool>(),
@@ -187,13 +203,23 @@ std::optional<BuildManifest> BuildManifest::parse(std::string_view json_text, st
   }
 }
 
+std::string ToolchainInfo::description() const {
+  if (compiler.empty()) return "none";
+  std::string text = compiler + " " + version;
+  if (!target.empty()) text += " (" + target + ")";
+  return text;
+}
+
 std::string build_key(const BuildRecipe& recipe, std::string_view dump_sha256,
-                      const std::vector<ManifestSource>& sources) {
-  std::string text = "mpt-build-key 1\n";
+                      const std::vector<ManifestSource>& sources, const ToolchainInfo& toolchain) {
+  std::string text = "mpt-build-key 2\n";
   text += "recipe " + recipe.id() + "\n";
   text += "recipe_version " + std::to_string(recipe.version()) + "\n";
   text += "runtime_build_version " + recipe.runtime_build_version() + "\n";
   text += "dump_sha256 " + std::string(dump_sha256) + "\n";
+  text += "toolchain_compiler " + toolchain.compiler + "\n";
+  text += "toolchain_version " + toolchain.version + "\n";
+  text += "toolchain_target " + toolchain.target + "\n";
   for (const ManifestSource& s : sources) {
     text += "source " + s.name + " " + s.commit + " " + (s.pinned ? "pinned" : "unpinned " + s.actual) + "\n";
   }
@@ -268,17 +294,21 @@ std::optional<BuildOutcome> BuildCache::build(const BuildRecipe& recipe, const B
   }
   progress("Checking sources", 1.0, {});
 
+  // --- Toolchain (part of the key, so checked even when the cache has the build) --
+  ToolchainInfo toolchain;
+  if (Result r = recipe.check_toolchain(runner_, toolchain); !r) return fail(r.error());
+  if (const std::string problem = toolchain_problem(toolchain); !problem.empty()) {
+    return fail("The recipe for " + id + " identified its toolchain badly: " + problem);
+  }
+
   // --- Cache lookup --------------------------------------------------------
-  const std::string key = build_key(recipe, request.dump.sha256, manifest_sources);
+  const std::string key = build_key(recipe, request.dump.sha256, manifest_sources, toolchain);
   const fs::path final_dir = recipe_dir / key.substr(0, kKeyDirLength);
   if (!request.force_rebuild) {
     if (const auto existing = read_manifest(final_dir); existing && existing->key == key) {
       return BuildOutcome{final_dir, *existing, true};
     }
   }
-
-  ToolchainInfo toolchain;
-  if (Result r = recipe.check_toolchain(runner_, toolchain); !r) return fail(r.error());
 
   // Leftovers of interrupted builds. We hold the recipe lock, so none is in use.
   for (const auto& entry : fs::directory_iterator(recipe_dir, ec)) {
@@ -347,7 +377,7 @@ std::optional<BuildOutcome> BuildCache::build(const BuildRecipe& recipe, const B
                          request.dump.game_version,
                          manifest_sources,
                          unpinned,
-                         toolchain.description};
+                         toolchain};
   if (!write_file(tmp_dir / kManifestName, manifest.to_json())) {
     return abandon("Could not write the build manifest.");
   }

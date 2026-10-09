@@ -221,7 +221,7 @@ class FakeRecipe final : public BuildRecipe {
   Result check_toolchain(ProcessRunner&, ToolchainInfo& info) const override {
     ++log_.toolchain_checks;
     if (!toolchain_present) return Result::failure("fakecc was not found. Install it and try again.");
-    info.description = "fakecc 1.0";
+    info = toolchain;
     return Result::success();
   }
   std::vector<std::unique_ptr<BuildStep>> steps() const override {
@@ -236,6 +236,7 @@ class FakeRecipe final : public BuildRecipe {
   SourceLock lock;
   bool disc = true;
   bool toolchain_present = true;
+  ToolchainInfo toolchain{"fakecc", "1.0.0", "x86_64-synthetic-none"};
   std::function<Result(BuildContext&)> first_hook;
   std::function<Result(BuildContext&)> second_hook;
 
@@ -651,7 +652,7 @@ TEST_CASE("a dump builds once and is reused") {
   CHECK(m.runtime_build_version == "runtime-1");
   CHECK(m.dump_sha256 == f.request.dump.sha256);
   CHECK(m.game_version == "GMPE01_00");
-  CHECK(m.toolchain == "fakecc 1.0");
+  CHECK(m.toolchain.description() == "fakecc 1.0.0 (x86_64-synthetic-none)");
   CHECK_FALSE(m.unpinned);
   REQUIRE(m.sources.size() == 1);
   CHECK(m.sources[0].origin == "archive");
@@ -682,7 +683,7 @@ TEST_CASE("a dump builds once and is reused") {
   CHECK(second.build_dir == first.build_dir);
   CHECK(second.manifest.key == m.key);
   CHECK(f.log.step_runs == 2);         // nothing ran again
-  CHECK(f.log.toolchain_checks == 1);  // a cache hit needs no toolchain
+  CHECK(f.log.toolchain_checks == 2);  // checked on a cache hit too: the toolchain is part of the key
   CHECK(f.recipe_dir_entries() == std::vector<std::string>{".lock", m.key.substr(0, 32)});
 
   std::string error;
@@ -692,7 +693,7 @@ TEST_CASE("a dump builds once and is reused") {
   CHECK(parsed->sources[0].actual == m.sources[0].actual);
 }
 
-TEST_CASE("a rebuild happens only when the dump, runtime, recipe or pins change") {
+TEST_CASE("a rebuild happens only when the dump, runtime, recipe, toolchain or pins change") {
   BuildFixture f;
   const std::string base = f.build_ok().manifest.key;
   std::set<std::string> keys{base};
@@ -709,6 +710,18 @@ TEST_CASE("a rebuild happens only when the dump, runtime, recipe or pins change"
   CHECK_FALSE(recipe.reused);
   keys.insert(recipe.manifest.key);
   f.recipe.recipe_version = 1;
+
+  f.recipe.toolchain.version = "1.0.1";  // a compiler upgrade
+  const BuildOutcome compiler = f.build_ok();
+  CHECK_FALSE(compiler.reused);
+  CHECK(compiler.manifest.toolchain.version == "1.0.1");
+  keys.insert(compiler.manifest.key);
+  f.recipe.toolchain.target = "aarch64-synthetic-none";
+  const BuildOutcome target = f.build_ok();
+  CHECK_FALSE(target.reused);
+  keys.insert(target.manifest.key);
+  f.recipe.toolchain = {"fakecc", "1.0.0", "x86_64-synthetic-none"};
+  CHECK(f.build_ok().reused);
 
   DiscSpec rev1 = default_spec();
   rev1.version = 1;
@@ -728,8 +741,8 @@ TEST_CASE("a rebuild happens only when the dump, runtime, recipe or pins change"
   CHECK_FALSE(pins.reused);
   keys.insert(pins.manifest.key);
 
-  CHECK(keys.size() == 5);
-  CHECK(f.log.step_runs == 2 * 5);
+  CHECK(keys.size() == 7);
+  CHECK(f.log.step_runs == 2 * 7);
 
   f.request.force_rebuild = true;
   const BuildOutcome forced = f.build_ok();
@@ -795,6 +808,23 @@ TEST_CASE("build errors are clear") {
     CHECK_FALSE(f.build(error).has_value());
     CHECK(error == "fakecc was not found. Install it and try again.");
     CHECK(f.log.step_runs == 0);
+  }
+  SUBCASE("toolchain removed after a build: the cached build is not handed out blind") {
+    f.build_ok();
+    f.recipe.toolchain_present = false;
+    CHECK_FALSE(f.build(error).has_value());
+    CHECK(error.find("fakecc was not found") != std::string::npos);
+  }
+  SUBCASE("a toolchain identified by its path") {
+    f.recipe.toolchain = {"C:\\LLVM\\bin\\clang-cl.exe", "22.1.3", "x86_64-pc-windows-msvc"};
+    CHECK_FALSE(f.build(error).has_value());
+    CHECK(error.find("looks like a path") != std::string::npos);
+    f.recipe.toolchain = {"clang", "22.1.3", "/usr/lib/llvm-22"};
+    CHECK_FALSE(f.build(error).has_value());
+    CHECK(error.find("looks like a path") != std::string::npos);
+    f.recipe.toolchain = {"clang", "", ""};
+    CHECK_FALSE(f.build(error).has_value());
+    CHECK(error.find("together") != std::string::npos);
   }
   SUBCASE("the dump changed after it was verified") {
     f.request.dump.size += 1;
