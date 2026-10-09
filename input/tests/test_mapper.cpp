@@ -328,6 +328,11 @@ TEST_CASE("per-port profiles are independent") {
                         swapped));
   Mapper mapper;
   mapper.set_profile(1, swapped);
+  REQUIRE(mapper.profile(1) != nullptr);
+  CHECK(mapper.profile(1)->name == "swap");
+  CHECK(mapper.profile(0)->name == builtin_default_profile().name);
+  mapper.set_profile(kMaxPlayers, swapped);  // ignored
+  CHECK(mapper.profile(kMaxPlayers) == nullptr);
   DeviceSnapshot a = gamepad(1);
   DeviceSnapshot b = gamepad(2);
   a.gamepad.set(PadButton::south, true);

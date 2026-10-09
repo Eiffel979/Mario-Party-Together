@@ -61,7 +61,8 @@ class Mapper {
 
   void set_profile(std::size_t port, Profile profile);
   void set_profile_all(const Profile& profile);
-  const Profile& profile(std::size_t port) const { return profiles_[port]; }
+  // Nullptr for port >= kMaxPlayers (set_profile ignores those ports likewise).
+  const Profile* profile(std::size_t port) const { return port < kMaxPlayers ? &profiles_[port] : nullptr; }
 
   // Selects per-minigame overrides ("mp4.minigame.<name>"); empty = none. The
   // shell passes the Director's current minigame. This only changes how local
