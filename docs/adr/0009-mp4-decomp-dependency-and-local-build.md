@@ -106,3 +106,22 @@ The earlier draft had interim rules I1–I4 because no licensed source existed. 
 The build-success condition in the earlier draft ("a clean build from the pins") belongs to P1-15's acceptance test, not to this decision, and the fallback covers the case where it fails.
 
 **Left for the user (does not block Phase 1):** the user's D2 answer said the license must be "confirmed with upstream before any distribution beyond developers". That was written about `marioparty4`. Before any distribution beyond developers, the user should say whether Party Board's CC0 grant satisfies it, or whether they still want PR #663 merged (or another explicit upstream confirmation). I4 keeps Phase 1 developer-only either way.
+
+## Amendment after P1-10, P1-13 and the P1-14 gate (architect, 2026-10-09)
+1. **The toolchain is part of the build key**, not only of the manifest.
+   - The key is built from the compiler ID and its full version string, for example `clang 22.1.3`, together with the target triple. It never includes the path.
+   - **Why:** ADR 0008 makes numerics a function of the compiler. Undefined behaviour such as float-to-int overflow, and code generation outside strict FP, can change between versions. After a toolchain upgrade, a cached build would describe a compiler that no longer built it, and that build could not join a netplay build check (Consequences) or be compared with golden trails.
+   - `BuildRecipe::check_toolchain` therefore runs on every `BuildCache::build` call, including cache hits. That costs one `--version` process per build.
+   - A new key also means a new folder. A recipe bump or a toolchain change is the expected way builds get replaced, so old folders need garbage collection later (Phase 2 settings screen).
+2. **Dawn's `DEPS` is pinned through a lock field, not a recipe step.** Dawn is a **host dependency** and does not depend on the dump. It gets its own lock, `runtimes/gc_wii/gx/dawn.lock`, which is fetched and verified by asset-import's source code but is **not** part of any title's build key (Dawn is never linked into a game module, §1).
+   - The `dawn` entry carries a `deps` list: `{ "path": "third_party/abseil-cpp", "source": "dawn_abseil_cpp" }`, where each `source` names a full lock entry (repo, commit, tree, license).
+   - **Cross-check at fetch time.** The fetcher parses `DEPS` from the fetched Dawn tree and fails if a listed dependency's commit differs, or if a `DEPS` entry is neither listed nor named in an explicit `skipped_deps` list with a reason. DirectXShaderCompiler is skipped, because we use FXC (ADR 0007, P1-14 gate amendment).
+   - `fetch_dawn_dependencies.py` is **never run**. It ignores git errors, and every download must go through our verified fetcher.
+   - A small developer tool generates the `deps` entries from `DEPS` when the pin is bumped. Each dependency's license goes in its entry, which gives the Apache-2.0 and BSD inventory for free.
+   - The fetcher sets `core.longpaths` for these sources.
+   - If the lock parser rejects unknown fields, `deps` and `skipped_deps` come with `lock_version` 2.
+3. **`Importer::make_verified` is fixed by asset-import, in P1-10 itself.**
+   - After a build, the only correct `build_dir` is `BuildOutcome::build_dir`. A `VerifiedDump` is created only from a successful build, through one asset-import function that takes the identified dump and the `BuildOutcome`.
+   - The `cache_root`-based overload is removed, so no caller can compute a stale path.
+   - P1-06 and P1-23 only call this function. They never assemble a `VerifiedDump` themselves.
+4. **libco is not adopted.** ADR 0008's amendment after P1-13 accepts our own context switch, so libco leaves the source list. It stays the named fallback.
