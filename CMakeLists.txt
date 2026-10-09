@@ -21,7 +21,11 @@ function(mpt_set_warnings target)
       target_compile_options(${target} PRIVATE /WX)
     endif()
   else()
-    target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wno-sign-conversion)
+    # -Wextra's missing-field-initializers fires on C++20 designated initializers that
+    # leave defaulted members out (e.g. RuntimeConfig{.seed = 1}), which is the intended
+    # way to build contract structs. MSVC has no equivalent warning.
+    target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wno-sign-conversion
+      -Wno-missing-field-initializers)
     if(MPT_WARNINGS_AS_ERRORS)
       target_compile_options(${target} PRIVATE -Werror)
     endif()
