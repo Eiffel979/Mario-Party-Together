@@ -27,8 +27,8 @@ test::TrailSpec spec_with_seed(std::uint64_t seed) {
 
 std::unique_ptr<ITitleRuntime> make_fake() { return std::make_unique<test::FakeRuntime>(); }
 
-// Forwards everything to a FakeRuntime so tests can change one behaviour.
-// Contract v0: P1-20a must add the v1 methods here when FakeRuntime moves to v1.
+// Forwards every ITitleRuntime method (contract v1) to a FakeRuntime, so tests can
+// change one behaviour.
 class DelegatingRuntime : public ITitleRuntime {
  public:
   TitleId id() const override { return inner_.id(); }
@@ -39,6 +39,9 @@ class DelegatingRuntime : public ITitleRuntime {
   SaveState saveState() override { return inner_.saveState(); }
   Result loadState(const SaveState& state) override { return inner_.loadState(state); }
   std::uint64_t stateHash() override { return inner_.stateHash(); }
+  FrameRate frameRate() const override { return inner_.frameRate(); }
+  std::uint64_t saveMediaGeneration() const override { return inner_.saveMediaGeneration(); }
+  SaveMedia saveMedia() const override { return inner_.saveMedia(); }
 
  protected:
   test::FakeRuntime inner_;

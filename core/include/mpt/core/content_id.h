@@ -15,7 +15,9 @@ namespace mpt {
 class ContentId {
  public:
   // Returns nullopt unless `text` is well formed: a known title ID, then a kind
-  // and a name that are both lower snake_case ([a-z0-9_], starting with a letter).
+  // and a name that are both lower snake_case ([a-z0-9_], starting with a letter,
+  // with no trailing '_' and no "__"). The kind's value is not checked: consumers
+  // must check the kind they expect (a MinigameId is not verified to be "minigame").
   static std::optional<ContentId> parse(std::string_view text);
 
   TitleId title() const { return title_; }

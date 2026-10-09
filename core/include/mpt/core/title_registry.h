@@ -12,6 +12,10 @@ namespace mpt {
 
 // Maps each TitleId to the factories that build its runtime and adapter.
 // Runtimes register here; core never names a concrete title implementation.
+//
+// The registry does not track instances. Callers must respect ADR 0002 rule 10:
+// no second live instance of a single-instance runtime in one process, and an
+// adapter from createAdapter() must be destroyed before its runtime.
 class TitleRegistry {
  public:
   using RuntimeFactory = std::function<std::unique_ptr<ITitleRuntime>()>;

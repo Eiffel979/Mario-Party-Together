@@ -47,3 +47,4 @@ Rules:
 - MP4 (USA, NTSC) runs one game-loop iteration per VI field, so `Mp4Runtime` reports {60000, 1001} (`docs/titles/mp4.md` §3).
 - E7 pacing is measured on the reference machine recorded in the Phase 1 plan, decision D7.
 - Lands in P1-03, together with ADRs 0004 and 0005, as one `kCoreContractVersion` bump to 1.
+- **Note from P1-03:** `FrameRate` gained a defaulted `operator==` (ADR 0002, amendment 13), so the conformance suite can compare rates. It compares the stored ratio field by field, so `{60, 1}` and `{120, 2}` are not equal. Runtimes should report a ratio in lowest terms.

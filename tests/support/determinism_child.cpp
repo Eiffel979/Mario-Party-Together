@@ -6,17 +6,20 @@
 // times or paths.
 //
 // Usage: mpt_determinism_child [--seed N] [--frames N] [--interval N] [--instances N]
-//                              [--heap-skew BYTES]
+//                              [--heap-skew BYTES] [--save-counter N]
 //   --instances N   run N fresh instances one after another in this process, and exit
 //                   with 3 unless all their trails agree
 //   --heap-skew B   allocate and keep B bytes before the first instance, so this process
 //                   lays out its heap differently from a run without it
+//   --save-counter N  boot with a FakeRuntime save image holding N instead of blank
+//                     media (the initial image is a determinism input, ADR 0004)
 
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -35,7 +38,8 @@ bool parse_u64(std::string_view text, std::uint64_t& out) {
 
 int usage() {
   std::fputs(
-      "usage: mpt_determinism_child [--seed N] [--frames N] [--interval N] [--instances N] [--heap-skew BYTES]\n",
+      "usage: mpt_determinism_child [--seed N] [--frames N] [--interval N] [--instances N] [--heap-skew BYTES] "
+      "[--save-counter N]\n",
       stderr);
   return 2;
 }
@@ -48,6 +52,8 @@ int main(int argc, char** argv) {
   std::uint64_t interval = 60;
   std::uint64_t instances = 1;
   std::uint64_t heap_skew = 0;
+  std::uint64_t save_counter = 0;
+  bool has_save_media = false;
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg = argv[i];
     std::uint64_t* value = nullptr;
@@ -56,6 +62,10 @@ int main(int argc, char** argv) {
     else if (arg == "--interval") value = &interval;
     else if (arg == "--instances") value = &instances;
     else if (arg == "--heap-skew") value = &heap_skew;
+    else if (arg == "--save-counter") {
+      value = &save_counter;
+      has_save_media = true;
+    }
     else return usage();
     if (i + 1 >= argc || !parse_u64(argv[++i], *value)) return usage();
   }
@@ -70,6 +80,11 @@ int main(int argc, char** argv) {
 
   mpt::test::TrailSpec spec;
   spec.config.seed = seed;
+  // Blank media unless --save-counter is given. Spelled out, not left to a default,
+  // because the initial image is a determinism input (ADR 0004 rule 3).
+  spec.config.save_media = has_save_media
+                               ? std::optional<mpt::SaveMedia>(mpt::test::FakeRuntime::make_save_media(save_counter))
+                               : std::nullopt;
   spec.inputs = mpt::test::scripted_input;
   spec.frames = frames;
   spec.interval = interval;
@@ -90,7 +105,9 @@ int main(int argc, char** argv) {
   }
 
   const std::string header = "# mpt determinism trail: FakeRuntime seed=" + std::to_string(seed) +
-                             " frames=" + std::to_string(frames) + " interval=" + std::to_string(interval) + "\n";
+                             " frames=" + std::to_string(frames) + " interval=" + std::to_string(interval) +
+                             " save_media=" + (has_save_media ? "counter:" + std::to_string(save_counter) : "blank") +
+                             "\n";
   std::fputs(header.c_str(), stdout);
   std::fputs(mpt::test::format_trail(results[0].trail).c_str(), stdout);
   return std::fflush(stdout) == 0 ? 0 : 1;

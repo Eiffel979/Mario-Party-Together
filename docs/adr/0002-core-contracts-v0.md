@@ -90,3 +90,14 @@ Reviewed against `core/include/mpt/core/*.h`, `core/src/`, `core/shell/`, `asset
 - `state.h:13-18`: consider carrying the dump `sha256` (or a build ID) in `SaveState` so that `loadState` can reject a state from another revision without depending on runtime-internal data.
 - `ruleset.h:15` and `title_runtime.h:18`: two seeds with no stated relation. Document that both derive from the host session seed (through `DeterministicRng`).
 - `tests/unit/test_determinism.cpp:27-34,45-62` (owner `qa-reviewer`): add a variant that runs instances one after another and one that compares hashes across two processes, so the harness matches rule 10 and catches address-dependent hashes before MP4 lands. `FakeRuntime::saveState`'s `memcpy` of a struct (`tests/support/fake_runtime.h:42-43`) is fine for the fake but is not a pattern for real runtimes (rule 5).
+
+## Amendment for contract v1 (architect, 2026-10-08, P1-03)
+Contract v1 (ADRs 0003–0005) brought the headers in line with the rules above and added the following. The status stays Accepted. These are normative from `kCoreContractVersion` 1.
+
+12. **Pad value ranges** (requested by input-mapping in P1-07, documented in `input.h`).
+    - Sticks (`stick_x`, `stick_y`, `c_stick_x`, `c_stick_y`): +X is right and +Y is up, with 0 at rest. `input/` produces only the symmetric range -32767..32767. **Runtimes must accept -32768 and treat it exactly as -32767.** A replay or a peer may carry -32768 (a hand-edited replay, another input layer), and if runtimes treated it differently from -32767 they could diverge. The rule makes the value harmless instead of making it invalid.
+    - Triggers (`trigger_l`, `trigger_r`): 0 is released and 255 is fully pressed. Every value is valid.
+    - **The folding rule covers the four stick fields only.** `pointer_x` / `pointer_y` use the full range -32768..32767 as plain values, with no folding. `accel` / `gyro` keep units defined by `input/` until the Phase 4 follow-up above moves them into the contract. Neither group is folded. Any later rule for them needs its own amendment.
+    - Checked by the P1-20c conformance suite: a frame with -32768 on a stick axis gives the same `stateHash()` as the same frame with -32767.
+13. **Equality operators.** `FrameRate`, `SaveMedia`, `PlayerState` and `PartySnapshot` gained defaulted `operator==` in v1. They compare every field, including `PartySnapshot::phase` and `current_minigame`. They exist so that the conformance suite can compare rates and images, and so that the Director (P1-04) can diff snapshots. They add no layout or serialization. `PadState` and `InputFrame` already had them in v0.
+14. **Header hygiene from the review is done.** The `InputFrame` size, trivially-copyable, standard-layout and little-endian `static_assert`s are in `input.h`. Comments for rules 1–10 (rule 11 is now satisfied by ADR 0004) and the seed relation are in the headers. `kCoreContractVersion`'s comment now names its full scope.
