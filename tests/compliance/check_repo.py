@@ -9,9 +9,11 @@ Modes:
   check_repo.py --staged             scan what is staged for the next commit
   check_repo.py --commits A..B       scan files added or changed by each commit in A..B
 
-A file fails if it has a dump/container extension, sits in a dump or extracted-
-asset directory, starts with a known console image signature, is binary, or is
-larger than the size limit. Legitimate exceptions go in allowlist.txt with a reason.
+A file fails if it has a dump/container extension, is a memory-card or save
+image (ADR 0004), sits in a dump or extracted-asset directory, sits under the
+root external/ directory where game-source checkouts live (ADR 0009), starts with
+a known console image signature, is binary, or is larger than the size limit.
+Legitimate exceptions go in allowlist.txt with a reason.
 """
 
 from __future__ import annotations
@@ -38,7 +40,16 @@ FORBIDDEN_EXTENSIONS = {
     ".szs", ".arc", ".brres", ".bfres", ".brstm", ".bcstm", ".bfstm", ".thp", ".msbt", ".sarc",
 }
 
+# Memory-card and save images. They are user data that embed game-made icons and
+# banners, so they are never committed (ADR 0004, P1-20e1).
+SAVE_MEDIA_EXTENSIONS = {".gci", ".gcs", ".sav", ".raw"}
+
+# Forbidden at any depth.
 FORBIDDEN_DIRS = {"dumps", "extracted", "roms", "isos"}
+
+# Forbidden as the first path component only. external/ at the repository root is
+# where developer builds fetch pinned game-source checkouts (ADR 0009 §1, P1-20e1).
+FORBIDDEN_ROOT_DIRS = {"external"}
 
 # (offset, magic bytes, description)
 SIGNATURES = [
@@ -91,6 +102,10 @@ def check_file(path: str, size: int, head: bytes, allowlist: list[str]) -> list[
     pure = PurePosixPath(path)
     if pure.suffix.lower() in FORBIDDEN_EXTENSIONS:
         findings.append(Finding(path, f"forbidden file type '{pure.suffix}'"))
+    if pure.suffix.lower() in SAVE_MEDIA_EXTENSIONS:
+        findings.append(Finding(path, f"memory-card or save image '{pure.suffix}' (save media is user data, ADR 0004)"))
+    if len(pure.parts) > 1 and pure.parts[0].lower() in FORBIDDEN_ROOT_DIRS:
+        findings.append(Finding(path, f"inside the root '{pure.parts[0]}/' directory (game-source checkouts, ADR 0009)"))
     for part in pure.parts[:-1]:
         if part.lower() in FORBIDDEN_DIRS:
             findings.append(Finding(path, f"inside a '{part}/' directory"))

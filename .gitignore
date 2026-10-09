@@ -24,3 +24,12 @@ cmake-build-*/
 *.keys
 extracted/
 dumps/
+
+# Memory-card and save images: user data with game-made icons and banners (ADR 0004)
+*.gci
+*.gcs
+*.sav
+*.raw
+
+# Pinned game-source checkouts for developer builds (ADR 0009)
+/external/
