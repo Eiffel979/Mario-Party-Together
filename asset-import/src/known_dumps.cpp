@@ -5,6 +5,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "mpt/asset_import/byte_source.h"
+
 namespace mpt::asset_import {
 namespace {
 
@@ -72,7 +74,7 @@ std::optional<KnownDumps> KnownDumps::parse(std::string_view json_text, std::str
 std::optional<KnownDumps> KnownDumps::load(const std::filesystem::path& path, std::string& error) {
   std::ifstream file(path, std::ios::binary);
   if (!file) {
-    error = "could not open " + path.string();
+    error = "could not open " + path_for_message(path);
     return std::nullopt;
   }
   std::ostringstream text;
