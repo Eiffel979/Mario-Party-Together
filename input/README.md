@@ -31,7 +31,21 @@ The shell calls `SdlInput::handle_event` for every polled event and
 - **Seating:** a seated port reports `connected = 1` even if its controller is
   unplugged (the player idles rather than vanishing). Unseated ports are all zeros.
 - **Several devices on one port** merge: buttons OR, and per stick axis the larger
-  magnitude wins.
+  magnitude wins. Devices only share a port when the UI asks for it
+  (`PortAssigner::assign`); hot-plug never merges.
+
+## Seating and hot-plug
+- **Lobby (auto-assign on, the default):** each new device, keyboard or gamepad,
+  takes the lowest port with no device, so the keyboard and each controller get
+  separate seats. A device that was unplugged returns to its last port if that
+  port is still free. Once all 4 ports have a device, more devices stay unassigned
+  until the UI seats them.
+- **In a session (auto-assign off):** the shell calls
+  `ports().set_auto_assign(false)` when a `Session` starts and turns it back on
+  when the session ends. While it is off, hot-plug never seats a new port, so a pad
+  plugged in mid-party cannot add a player. The only automatic step left is that a
+  party member's replugged controller returns to its own seat, if that seat is
+  still seated and has no device. Anything else goes through the UI.
 
 ## Profile format (`mpt.input_profile`, version 1)
 Profiles are JSON. Per-title profiles live in `input/profiles/<title>/`. Without

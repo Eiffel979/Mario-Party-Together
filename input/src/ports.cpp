@@ -12,9 +12,9 @@ const DeviceInfo* PortAssigner::find(DeviceId id) const {
   return nullptr;
 }
 
-bool PortAssigner::port_has_gamepad(std::size_t port) const {
+bool PortAssigner::port_has_device(std::size_t port) const {
   for (const auto& [id, p] : layout_.device_port) {
-    if (p == port && id.kind == DeviceKind::gamepad) return true;
+    if (p == port) return true;
   }
   return false;
 }
@@ -22,20 +22,20 @@ bool PortAssigner::port_has_gamepad(std::size_t port) const {
 void PortAssigner::device_added(const DeviceInfo& info) {
   if (find(info.id)) return;  // duplicate add (SDL can report startup devices twice)
   devices_.push_back(info);
-  if (!auto_assign_) return;
 
-  if (info.id.kind == DeviceKind::keyboard) {
-    assign(info.id, 0);
-    return;
-  }
+  // Return to the port this device last used if nobody took it meanwhile. With
+  // auto-assign off, only onto a port that is still seated (never a new player).
   if (!info.persistent_key.empty()) {
-    if (const auto it = last_port_.find(info.persistent_key); it != last_port_.end() && !port_has_gamepad(it->second)) {
+    if (const auto it = last_port_.find(info.persistent_key);
+        it != last_port_.end() && !port_has_device(it->second) && (auto_assign_ || layout_.seated[it->second])) {
       assign(info.id, it->second);
       return;
     }
   }
+  if (!auto_assign_) return;
+  // Otherwise the next port with no device. Never merge onto an occupied port.
   for (std::size_t port = 0; port < kMaxPlayers; ++port) {
-    if (!port_has_gamepad(port)) {
+    if (!port_has_device(port)) {
       assign(info.id, port);
       return;
     }

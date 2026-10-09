@@ -26,11 +26,22 @@ struct PortLayout {
 
 class PortAssigner {
  public:
-  // Auto-assignment on hot-plug: the keyboard joins port 0; each new gamepad
+  // Hot-plug with auto-assign on (lobby / seating screen): each new device
   // returns to the port it last used (matched by persistent_key) if that port
-  // has no gamepad, else takes the lowest port without a gamepad. A fifth
-  // gamepad stays unassigned until the UI seats it.
+  // has no device, else takes the lowest port with no device. Devices never
+  // merge onto an occupied port automatically; sharing a port (e.g. keyboard
+  // and pad for one player) takes an explicit assign(). A device that finds no
+  // free port stays unassigned until the UI seats it.
+  //
+  // With auto-assign off (in a session) hot-plug never seats a new port, so a
+  // pad plugged in mid-party cannot add a player. The only automatic step left
+  // is a replugged device returning to its own last port when that port is
+  // still seated and has no device. The shell turns auto-assign off when a
+  // Session starts and back on when it ends.
   explicit PortAssigner(bool auto_assign = true) : auto_assign_(auto_assign) {}
+
+  void set_auto_assign(bool on) { auto_assign_ = on; }
+  bool auto_assign() const { return auto_assign_; }
 
   void device_added(const DeviceInfo& info);
   void device_removed(DeviceId id);  // the port stays seated; the device's port is remembered
@@ -48,7 +59,7 @@ class PortAssigner {
   const PortLayout& layout() const { return layout_; }
 
  private:
-  bool port_has_gamepad(std::size_t port) const;
+  bool port_has_device(std::size_t port) const;
   const DeviceInfo* find(DeviceId id) const;
 
   bool auto_assign_;
