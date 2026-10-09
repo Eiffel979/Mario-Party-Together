@@ -1,4 +1,5 @@
 add_library(mpt_asset_import
+  src/build.cpp
   src/byte_source.cpp
   src/dump_format.cpp
   src/gc_disc.cpp
