@@ -5,8 +5,10 @@
 #include <cstdint>
 #include <cstring>
 #include <optional>
+#include <string_view>
 #include <vector>
 
+#include "mpt/core/party.h"
 #include "mpt/core/rng.h"
 #include "mpt/core/title_runtime.h"
 
@@ -29,17 +31,46 @@ namespace mpt::test {
 //   latency: the counter and saveMediaGeneration() both go up by one. The generation
 //   is 0 after every boot(). Image and generation are in State, saveState() and
 //   stateHash().
-// - SaveState format_version 2: every State field as a little-endian u64, in a fixed
+// - Party progression (P1-20b2): see kAdvanceButton. FakeAdapter mirrors it.
+// - SaveState format_version 3: every State field as a little-endian u64, in a fixed
 //   order, so the bytes are the same on every platform (no memcpy of the struct).
 class FakeRuntime final : public ITitleRuntime {
  public:
-  static constexpr std::uint32_t kStateFormat = 2;
+  static constexpr std::uint32_t kStateFormat = 3;
   static constexpr std::uint32_t kSaveMediaFormat = 1;
   static constexpr std::size_t kSaveMediaBytes = 8;
   static constexpr FrameRate kRate60{60, 1};
   static constexpr FrameRate kRate50{50, 1};
   static constexpr std::uint32_t kSaveButton = kButtonStart;      // on port 0
   static constexpr std::uint32_t kRateToggleButton = kButtonSelect;  // on port 0
+
+  // Party progression (P1-20b2), read by FakeAdapter. A press of kAdvanceButton on port 0
+  // moves the party one step: none -> setup -> board (turn 1) -> minigame -> board
+  // (turn 2) -> ... -> minigame on the last turn -> results -> finished. Finished stays
+  // finished until the next boot(). Entering a minigame picks it with the game RNG and
+  // moves every player 1-6 spaces; leaving one pays every player 0-10 coins; leaving
+  // results gives a star to every player tied for the most coins.
+  static constexpr std::uint32_t kAdvanceButton = kButtonZ;  // on port 0
+  static constexpr std::uint32_t kMaxTurns = 3;
+  static constexpr std::int32_t kStartingCoins = 10;
+  static constexpr std::string_view kBoardName = "fake_board";
+  static constexpr std::array<std::string_view, 3> kMinigameNames = {"fake_mash", "fake_dodge", "fake_race"};
+  static constexpr std::array<std::string_view, kMaxPlayers> kCharacterNames = {"fake_red", "fake_blue", "fake_green",
+                                                                                 "fake_yellow"};
+
+  struct Party {
+    PartyPhase phase = PartyPhase::none;
+    std::uint32_t turn = 0;      // 1-based once on the board, 0 before
+    std::uint32_t minigame = 0;  // 1-based index into kMinigameNames while phase == minigame, else 0
+    std::array<std::int32_t, kMaxPlayers> coins{};
+    std::array<std::int32_t, kMaxPlayers> stars{};
+    std::array<std::int32_t, kMaxPlayers> board_space = {-1, -1, -1, -1};  // -1 before the board
+
+    friend bool operator==(const Party&, const Party&) = default;
+  };
+
+  // The current party state. Cheap: a reference into State.
+  const Party& party() const { return state_.party; }
 
   // A save image in this runtime's format holding 'counter'.
   static SaveMedia make_save_media(std::uint64_t counter) {
@@ -89,6 +120,7 @@ class FakeRuntime final : public ITitleRuntime {
       ++state_.save_counter;
       ++state_.save_generation;
     }
+    if (pressed & kAdvanceButton) advance_party();
 
     state_.frame = inputs.frame + 1;
     std::memset(pixels_.data(), static_cast<int>(state_.frame & 0xff), pixels_.size() * sizeof(std::uint32_t));
@@ -144,10 +176,11 @@ class FakeRuntime final : public ITitleRuntime {
     std::uint32_t port0_buttons = 0;  // last frame's buttons, for press detection
     std::uint64_t save_counter = 0;   // the save image's contents
     std::uint64_t save_generation = 0;
+    Party party;
   };
 
   // State as a fixed sequence of u64 words: the SaveState layout and the hash input.
-  static constexpr std::size_t kStateWords = 2 + kMaxPlayers + 5;
+  static constexpr std::size_t kStateWords = 2 + kMaxPlayers + 5 + 3 + 3 * kMaxPlayers;
 
   static std::array<std::uint64_t, kStateWords> to_words(const State& s) {
     std::array<std::uint64_t, kStateWords> w{};
@@ -160,6 +193,12 @@ class FakeRuntime final : public ITitleRuntime {
     w[i++] = s.port0_buttons;
     w[i++] = s.save_counter;
     w[i++] = s.save_generation;
+    w[i++] = static_cast<std::uint64_t>(s.party.phase);
+    w[i++] = s.party.turn;
+    w[i++] = s.party.minigame;
+    for (std::int32_t v : s.party.coins) w[i++] = from_i32(v);
+    for (std::int32_t v : s.party.stars) w[i++] = from_i32(v);
+    for (std::int32_t v : s.party.board_space) w[i++] = from_i32(v);
     return w;
   }
 
@@ -180,7 +219,72 @@ class FakeRuntime final : public ITitleRuntime {
     s.port0_buttons = static_cast<std::uint32_t>(buttons);
     s.save_counter = w[i++];
     s.save_generation = w[i++];
+    const std::uint64_t phase = w[i++];
+    const std::uint64_t turn = w[i++];
+    const std::uint64_t minigame = w[i++];
+    if (phase > static_cast<std::uint64_t>(PartyPhase::finished) || turn > kMaxTurns ||
+        minigame > kMinigameNames.size() || (minigame != 0) != (phase == static_cast<std::uint64_t>(PartyPhase::minigame))) {
+      return std::nullopt;
+    }
+    s.party.phase = static_cast<PartyPhase>(phase);
+    s.party.turn = static_cast<std::uint32_t>(turn);
+    s.party.minigame = static_cast<std::uint32_t>(minigame);
+    for (std::int32_t& v : s.party.coins) if (!to_i32(w[i++], v)) return std::nullopt;
+    for (std::int32_t& v : s.party.stars) if (!to_i32(w[i++], v)) return std::nullopt;
+    for (std::int32_t& v : s.party.board_space) if (!to_i32(w[i++], v)) return std::nullopt;
     return s;
+  }
+
+  void advance_party() {
+    Party& current = state_.party;
+    DeterministicRng rng(state_.rng_state);
+    switch (current.phase) {
+      case PartyPhase::none:
+        current = Party{};
+        current.phase = PartyPhase::setup;
+        break;
+      case PartyPhase::setup:
+        current.phase = PartyPhase::board;
+        current.turn = 1;
+        current.coins.fill(kStartingCoins);
+        current.board_space.fill(0);
+        break;
+      case PartyPhase::board:
+        current.phase = PartyPhase::minigame;
+        current.minigame = 1 + static_cast<std::uint32_t>(rng.below(kMinigameNames.size()));
+        for (std::int32_t& space : current.board_space) space += 1 + static_cast<std::int32_t>(rng.below(6));
+        break;
+      case PartyPhase::minigame:
+        current.minigame = 0;
+        for (std::int32_t& coins : current.coins) coins += static_cast<std::int32_t>(rng.below(11));
+        if (current.turn >= kMaxTurns) {
+          current.phase = PartyPhase::results;
+        } else {
+          current.phase = PartyPhase::board;
+          ++current.turn;
+        }
+        break;
+      case PartyPhase::results: {
+        std::int32_t most = current.coins[0];
+        for (std::int32_t coins : current.coins) most = coins > most ? coins : most;
+        for (std::size_t p = 0; p < kMaxPlayers; ++p) {
+          if (current.coins[p] == most) ++current.stars[p];
+        }
+        current.phase = PartyPhase::finished;
+        break;
+      }
+      case PartyPhase::finished:
+        break;
+    }
+    state_.rng_state = rng.next();
+  }
+
+  static std::uint64_t from_i32(std::int32_t v) { return static_cast<std::uint64_t>(static_cast<std::int64_t>(v)); }
+  static bool to_i32(std::uint64_t w, std::int32_t& out) {
+    const auto v = static_cast<std::int64_t>(w);
+    if (v < INT32_MIN || v > INT32_MAX) return false;
+    out = static_cast<std::int32_t>(v);
+    return true;
   }
 
   static void put_u64(std::vector<std::byte>& out, std::size_t at, std::uint64_t value) {

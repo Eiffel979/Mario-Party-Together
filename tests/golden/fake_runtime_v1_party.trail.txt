@@ -1,0 +1,27 @@
+# Golden cross-platform hash trail for the contract-v1 FakeRuntime (P1-20b2).
+# One '<frame> <stateHash>' line per checkpoint (ADR 0006 .trail.txt layout).
+# Checked by tests/unit/test_golden_trail.cpp on the Windows and Linux CI jobs.
+# Recorded on Windows (MSVC, ci-windows) with:
+#   mpt_determinism_child --seed 1234 --save-counter 5 --party-script --frames 600 --interval 30
+# Regenerate only for an intended FakeRuntime change, and review the diff.
+# mpt determinism trail: FakeRuntime seed=1234 frames=600 interval=30 inputs=party save_media=counter:5
+30 c53d3af8c411652c
+60 605c5489e452f96f
+90 dc1eb07499a9ae10
+120 3ad560f403da3fe8
+150 25fc9961cbc3c914
+180 69dd61ee0cd302d2
+210 bf9e5e5a6544bce0
+240 930da7e917b38017
+270 809ca7f714447e37
+300 161de8b02725e7b2
+330 b3acdcc3fa2eee92
+360 651b6e1fed749084
+390 aa5037b7ddc08fac
+420 09f5dea97dbb1b1f
+450 704619a63fd43d3e
+480 30d2d655d6d47fc1
+510 9155d36dfc1ad937
+540 3ec67948242b671e
+570 5654ec77779f5643
+600 60e0d1f516074059

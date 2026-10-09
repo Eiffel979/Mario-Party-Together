@@ -7,10 +7,13 @@
 //
 // Usage: mpt_determinism_child [--seed N] [--frames N] [--interval N] [--instances N]
 //                              [--heap-skew BYTES] [--save-counter N]
+//                              [--party-script]
 //   --instances N   run N fresh instances one after another in this process, and exit
 //                   with 3 unless all their trails agree
 //   --heap-skew B   allocate and keep B bytes before the first instance, so this process
 //                   lays out its heap differently from a run without it
+//   --party-script    use fake_party_script (a whole party, P1-20b2) instead of the
+//                     plain synthetic script
 //   --save-counter N  boot with a FakeRuntime save image holding N instead of blank
 //                     media (the initial image is a determinism input, ADR 0004)
 
@@ -26,6 +29,7 @@
 #include <vector>
 
 #include "determinism_harness.h"
+#include "fake_party_script.h"
 #include "fake_runtime.h"
 
 namespace {
@@ -39,7 +43,7 @@ bool parse_u64(std::string_view text, std::uint64_t& out) {
 int usage() {
   std::fputs(
       "usage: mpt_determinism_child [--seed N] [--frames N] [--interval N] [--instances N] [--heap-skew BYTES] "
-      "[--save-counter N]\n",
+      "[--save-counter N] [--party-script]\n",
       stderr);
   return 2;
 }
@@ -54,8 +58,13 @@ int main(int argc, char** argv) {
   std::uint64_t heap_skew = 0;
   std::uint64_t save_counter = 0;
   bool has_save_media = false;
+  bool party_script = false;
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg = argv[i];
+    if (arg == "--party-script") {
+      party_script = true;
+      continue;
+    }
     std::uint64_t* value = nullptr;
     if (arg == "--seed") value = &seed;
     else if (arg == "--frames") value = &frames;
@@ -85,7 +94,8 @@ int main(int argc, char** argv) {
   spec.config.save_media = has_save_media
                                ? std::optional<mpt::SaveMedia>(mpt::test::FakeRuntime::make_save_media(save_counter))
                                : std::nullopt;
-  spec.inputs = mpt::test::scripted_input;
+  spec.inputs = party_script ? mpt::test::InputSource(mpt::test::fake_party_script)
+                             : mpt::test::InputSource(mpt::test::scripted_input);
   spec.frames = frames;
   spec.interval = interval;
   const auto factory = []() -> std::unique_ptr<mpt::ITitleRuntime> { return std::make_unique<mpt::test::FakeRuntime>(); };
@@ -106,6 +116,7 @@ int main(int argc, char** argv) {
 
   const std::string header = "# mpt determinism trail: FakeRuntime seed=" + std::to_string(seed) +
                              " frames=" + std::to_string(frames) + " interval=" + std::to_string(interval) +
+                             " inputs=" + (party_script ? "party" : "scripted") +
                              " save_media=" + (has_save_media ? "counter:" + std::to_string(save_counter) : "blank") +
                              "\n";
   std::fputs(header.c_str(), stdout);
