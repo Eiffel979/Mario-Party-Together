@@ -26,6 +26,12 @@ option(MPT_REQUIRE_GC_WII "Fail the configure if the GameCube SDK layer cannot b
 set(MPT_CORE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../core/include" CACHE PATH
   "core/ headers (the SDK uses header-only core types: InputFrame, DeterministicRng, StateHasher, Result)")
 
+# Host tools (the verified source fetcher for aurora.lock/dawn.lock) need asset-import, which only
+# the root project has. They are not game code, so they build with the root's compiler.
+if(TARGET mpt::asset_import)
+  add_subdirectory(gx/tools)
+endif()
+
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   enable_language(C)
   add_subdirectory(sdk)
