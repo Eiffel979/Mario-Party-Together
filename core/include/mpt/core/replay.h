@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -74,9 +75,10 @@ std::vector<std::byte> save_media_image_bytes(const SaveMedia& media);
 // All zero for blank media (nullopt), else SHA-256 of save_media_image_bytes().
 Sha256Digest save_media_digest(const std::optional<SaveMedia>& media);
 
-// Canonical bytes of `replay`. It must satisfy the strict-parse rules (decode_replay
-// accepts the result); encode_replay does not re-check them. ReplayWriter always
-// produces a valid Replay.
+// Canonical bytes of `replay`. Precondition: `replay` satisfies the strict-parse rules,
+// including the u32 limits (embedded image, run count per u32 run length, checkpoint
+// count). encode_replay does not re-check them. Replays from ReplayWriter and
+// decode_replay always satisfy them.
 std::vector<std::byte> encode_replay(const Replay& replay);
 
 // Strict parse (ADR 0006 amendment, point 3): every byte must be consumed, and every
@@ -96,8 +98,9 @@ Result validate_replay_fixture(std::span<const std::byte> bytes);
 
 class ReplayWriter {
  public:
-  // Overwrites header.core_contract_version with kCoreContractVersion. The writer does
-  // not check the rest of the header: build it with make_replay_header, which does.
+  // Overwrites header.core_contract_version with kCoreContractVersion. If the header is
+  // unusable (checkpoint interval 0, an embedded image over UINT32_MAX - 4 bytes or not
+  // matching save_media_sha256), every append() and addCheckpoint() fails with the reason.
   explicit ReplayWriter(ReplayHeader header);
 
   // inputs.frame must equal frameCount().
@@ -113,6 +116,7 @@ class ReplayWriter {
 
  private:
   Replay replay_;
+  std::optional<std::string> header_error_;
 };
 
 // Iterates a decoded replay's frames in order, with InputFrame::frame filled in.

@@ -142,9 +142,26 @@ std::optional<SaveMedia> media_from_image_bytes(std::span<const std::byte> image
   return media;
 }
 
+// What the writer and make_replay_header require of a header before anything is
+// recorded: a non-zero interval, and an embedded image that fits the u32 length field
+// and matches the header's digest.
+Result check_header(const ReplayHeader& h) {
+  if (h.checkpoint_interval == 0) return Result::failure("replay: checkpoint interval 0");
+  if (h.embedded_save_media) {
+    if (h.embedded_save_media->data.size() > std::numeric_limits<std::uint32_t>::max() - 4u) {
+      return Result::failure("replay: the save image is too large to embed");
+    }
+    if (h.blank_save_media() || save_media_digest(h.embedded_save_media) != h.save_media_sha256) {
+      return Result::failure("replay: the embedded save image does not match save_media_sha256");
+    }
+  }
+  return Result::success();
+}
+
 // Checkpoint ordering rule shared by the writer and the reader.
 Result check_checkpoint(const ReplayCheckpoint& c, std::optional<std::uint64_t> previous_frame,
                         std::uint32_t interval, std::uint64_t frame_count) {
+  if (interval == 0) return Result::failure("checkpoint interval 0");
   if (c.frame == 0 || c.frame % interval != 0) {
     return Result::failure("checkpoint frame " + std::to_string(c.frame) + " is not a positive multiple of " +
                            std::to_string(interval));
@@ -331,9 +348,11 @@ Result validate_replay_fixture(std::span<const std::byte> bytes) {
 ReplayWriter::ReplayWriter(ReplayHeader header) {
   replay_.header = std::move(header);
   replay_.header.core_contract_version = kCoreContractVersion;
+  if (Result ok = check_header(replay_.header); !ok) header_error_ = ok.error();
 }
 
 Result ReplayWriter::append(const InputFrame& inputs) {
+  if (header_error_) return Result::failure(*header_error_);
   if (inputs.frame != replay_.frame_count) {
     return Result::failure("replay: input for frame " + std::to_string(inputs.frame) + " appended at frame " +
                            std::to_string(replay_.frame_count));
@@ -349,6 +368,10 @@ Result ReplayWriter::append(const InputFrame& inputs) {
 }
 
 Result ReplayWriter::addCheckpoint(const ReplayCheckpoint& checkpoint) {
+  if (header_error_) return Result::failure(*header_error_);
+  if (replay_.checkpoints.size() >= std::numeric_limits<std::uint32_t>::max()) {
+    return Result::failure("replay: too many checkpoints for the u32 count");
+  }
   std::optional<std::uint64_t> previous;
   if (!replay_.checkpoints.empty()) previous = replay_.checkpoints.back().frame;
   if (Result ok = check_checkpoint(checkpoint, previous, replay_.header.checkpoint_interval, replay_.frame_count);
@@ -397,7 +420,6 @@ std::variant<ReplayHeader, Result> make_replay_header(const SessionConfig& confi
   const std::optional<Sha256Digest> dump = parse_sha256_hex(config.dump.sha256);
   if (!dump) return Result::failure("replay: the dump's sha256 is not 64 hex digits");
   if (config.rules) return Result::failure("replay: format v0 cannot record a ruleset");
-  if (checkpoint_interval == 0) return Result::failure("replay: checkpoint interval 0");
 
   ReplayHeader h;
   h.core_contract_version = kCoreContractVersion;
@@ -407,6 +429,7 @@ std::variant<ReplayHeader, Result> make_replay_header(const SessionConfig& confi
   h.save_media_sha256 = save_media_digest(config.runtime.save_media);
   if (embed_save_media && config.runtime.save_media) h.embedded_save_media = config.runtime.save_media;
   h.checkpoint_interval = checkpoint_interval;
+  if (Result ok = check_header(h); !ok) return ok;
   return h;
 }
 
@@ -441,7 +464,7 @@ Result ReplayRecorder::record(const InputFrame& inputs, Session& session) {
   if (session.frame() != inputs.frame + 1) {
     return Result::failure("replay: record() must follow the step of frame " + std::to_string(inputs.frame));
   }
-  if (Result appended = writer_.append(inputs); !appended) return appended;
+  if (Result appended = writer_.append(inputs); !appended) return appended;  // also rejects interval 0
   if (session.frame() % writer_.header().checkpoint_interval == 0) return writer_.addCheckpoint(checkpoint_of(session));
   return Result::success();
 }
@@ -453,6 +476,10 @@ ReplayVerification verify_replay(Session& session, const Replay& replay) {
     return v;
   }
   const std::uint32_t interval = replay.header.checkpoint_interval;
+  if (interval == 0) {
+    v.status = Result::failure("replay: checkpoint interval 0");
+    return v;
+  }
   std::size_t next_checkpoint = 0;
   ReplayReader reader(replay);
   InputFrame inputs;

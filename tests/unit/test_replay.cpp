@@ -329,6 +329,30 @@ TEST_CASE("the writer refuses out-of-order frames and checkpoints") {
   CHECK_FALSE(writer.addCheckpoint(ReplayCheckpoint{0, 0, 0}).ok());
 }
 
+TEST_CASE("the writer refuses an unusable header") {
+  InputFrame in;
+  SUBCASE("checkpoint interval 0") {
+    ReplayHeader header;
+    header.checkpoint_interval = 0;
+    ReplayWriter writer(header);
+    CHECK(contains(writer.append(in).error(), "interval 0"));
+    CHECK(contains(writer.addCheckpoint(ReplayCheckpoint{1, 0, 0}).error(), "interval 0"));
+  }
+  SUBCASE("embedded image that does not match its digest") {
+    ReplayHeader header;
+    header.embedded_save_media = test::FakeRuntime::make_save_media(1);
+    ReplayWriter writer(header);  // save_media_sha256 left all zero
+    CHECK(contains(writer.append(in).error(), "does not match"));
+  }
+}
+
+TEST_CASE("verify_replay refuses a replay with checkpoint interval 0") {
+  const TitleRegistry registry = fake_registry();
+  Replay replay;
+  replay.header.checkpoint_interval = 0;
+  auto session = start_ok(registry, party_config());
+  CHECK(contains(verify_replay(*session, replay).status.error(), "interval 0"));
+}
 TEST_CASE("a recorded party verifies on a fresh session") {
   const TitleRegistry registry = fake_registry();
   const SessionConfig config = party_config();
