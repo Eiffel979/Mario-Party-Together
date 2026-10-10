@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <memory>
 
+#include "../support/delegating_runtime.h"
 #include "../support/determinism_harness.h"
 #include "../support/fake_runtime.h"
 
@@ -27,25 +28,7 @@ test::TrailSpec spec_with_seed(std::uint64_t seed) {
 
 std::unique_ptr<ITitleRuntime> make_fake() { return std::make_unique<test::FakeRuntime>(); }
 
-// Forwards every ITitleRuntime method (contract v1) to a FakeRuntime, so tests can
-// change one behaviour.
-class DelegatingRuntime : public ITitleRuntime {
- public:
-  TitleId id() const override { return inner_.id(); }
-  Result boot(const VerifiedDump& dump, const RuntimeConfig& config) override { return inner_.boot(dump, config); }
-  void stepFrame(const InputFrame& inputs) override { inner_.stepFrame(inputs); }
-  FrameOutput video() override { return inner_.video(); }
-  AudioChunk audio() override { return inner_.audio(); }
-  SaveState saveState() override { return inner_.saveState(); }
-  Result loadState(const SaveState& state) override { return inner_.loadState(state); }
-  std::uint64_t stateHash() override { return inner_.stateHash(); }
-  FrameRate frameRate() const override { return inner_.frameRate(); }
-  std::uint64_t saveMediaGeneration() const override { return inner_.saveMediaGeneration(); }
-  SaveMedia saveMedia() const override { return inner_.saveMedia(); }
-
- protected:
-  test::FakeRuntime inner_;
-};
+using test::DelegatingRuntime;
 
 // A classic port bug: a process-global that boot() never resets and that feeds into the
 // state hash. Each fresh process starts it at the same value, so only running instances
