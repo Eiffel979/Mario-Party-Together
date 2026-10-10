@@ -352,6 +352,37 @@ TEST_CASE("the writer refuses out-of-order frames and checkpoints") {
   CHECK_FALSE(writer.addCheckpoint(ReplayCheckpoint{0, 0, 0}).ok());
 }
 
+TEST_CASE("committed fixtures must be canonical (ADR 0006 amendment, point 6)") {
+  const Replay canonical = synthetic_replay(false);
+  REQUIRE(validate_replay_fixture(encode_replay(canonical)).ok());
+
+  SUBCASE("a split run parses but is not a fixture") {
+    Replay split = canonical;
+    split.runs[0].length = 1;
+    ReplayInputRun rest = canonical.runs[0];
+    rest.length = 2;
+    split.runs.insert(split.runs.begin() + 1, rest);
+    const std::vector<std::byte> bytes = encode_replay(split);
+    CHECK(validate_replay(bytes).ok());
+    CHECK(contains(validate_replay_fixture(bytes).error(), "same pads"));
+  }
+  SUBCASE("a missing checkpoint parses but is not a fixture") {
+    Replay sparse = canonical;
+    sparse.checkpoints.pop_back();
+    const std::vector<std::byte> bytes = encode_replay(sparse);
+    CHECK(validate_replay(bytes).ok());
+    CHECK(contains(validate_replay_fixture(bytes).error(), "a canonical replay has 2"));
+  }
+  SUBCASE("a run at the u32 limit may be followed by the same pads") {
+    Replay huge;
+    huge.header.checkpoint_interval = 0xffffffffu;
+    huge.runs = {ReplayInputRun{0xffffffffu, {}}, ReplayInputRun{1, {}}};
+    huge.frame_count = 0x100000000ull;
+    huge.checkpoints = {ReplayCheckpoint{0xffffffffull, 1, 2}};
+    huge.header.core_contract_version = kCoreContractVersion;
+    CHECK(validate_replay_fixture(encode_replay(huge)).ok());
+  }
+}
 TEST_CASE("the writer refuses an unusable header") {
   InputFrame in;
   SUBCASE("checkpoint interval 0") {

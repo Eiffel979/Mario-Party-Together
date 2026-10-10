@@ -87,11 +87,16 @@ std::variant<Replay, Result> decode_replay(std::span<const std::byte> bytes);
 
 struct ReplayValidationRules {
   bool allow_embedded_save_media = true;
+  // Canonical form, as ReplayRecorder writes it (ADR 0006 amendment, point 6):
+  // maximal runs (two adjacent runs never carry the same pads unless the first is
+  // UINT32_MAX frames long) and a checkpoint at every multiple of the interval up to
+  // frame_count, and nowhere else.
+  bool require_canonical = false;
 };
 // decode_replay plus the extra rules. For tooling that only needs a verdict.
 Result validate_replay(std::span<const std::byte> bytes, const ReplayValidationRules& rules = {});
 // The rule for committed fixtures under tests/replays/ (P1-20e2): a full parse, no
-// trailing bytes, and no embedded save media.
+// trailing bytes, no embedded save media, and canonical form.
 Result validate_replay_fixture(std::span<const std::byte> bytes);
 
 // ---- Writer and reader -----------------------------------------------------------------

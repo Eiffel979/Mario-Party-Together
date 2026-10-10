@@ -336,11 +336,28 @@ Result validate_replay(std::span<const std::byte> bytes, const ReplayValidationR
   if (!rules.allow_embedded_save_media && replay.header.embedded_save_media) {
     return Result::failure("replay: embedded save media is not allowed here (it is user data)");
   }
+  if (rules.require_canonical) {
+    for (std::size_t i = 1; i < replay.runs.size(); ++i) {
+      if (replay.runs[i].pads == replay.runs[i - 1].pads &&
+          replay.runs[i - 1].length != std::numeric_limits<std::uint32_t>::max()) {
+        return Result::failure("replay: input runs " + std::to_string(i - 1) + " and " + std::to_string(i) +
+                               " carry the same pads (not canonical)");
+      }
+    }
+    const std::uint32_t interval = replay.header.checkpoint_interval;
+    const std::uint64_t expected = replay.frame_count / interval;
+    if (replay.checkpoints.size() != expected) {
+      return Result::failure("replay: " + std::to_string(replay.checkpoints.size()) + " checkpoints, a canonical replay has " +
+                             std::to_string(expected) + " (one at every multiple of " + std::to_string(interval) + ")");
+    }
+    // decode_replay already checked that the frames are increasing multiples of the
+    // interval; with the right count, they are exactly interval, 2 x interval, ...
+  }
   return Result::success();
 }
 
 Result validate_replay_fixture(std::span<const std::byte> bytes) {
-  return validate_replay(bytes, ReplayValidationRules{.allow_embedded_save_media = false});
+  return validate_replay(bytes, ReplayValidationRules{.allow_embedded_save_media = false, .require_canonical = true});
 }
 
 // ---- Writer and reader -----------------------------------------------------------------
