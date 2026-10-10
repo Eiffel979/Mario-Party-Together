@@ -293,6 +293,56 @@ MP4 is a good first target. The decomp is complete and matching for the user's e
 
 **PLAN §3 snapshot row, re-verified:** MP4 | GameCube | decomp port (100% matching for USA; upstream CC0 PC port exists) | **Low–Med**. The decomp side is better than expected. Determinism, save-state and audio work, which the upstream port does not attempt, keep the risk above "Low".
 
+## 14. SDK layer core (P1-13a, `runtimes/gc_wii/sdk/`)
+
+Shared by every GameCube/Wii title. Built only with Clang (clang-cl on Windows) with `-ffp-contract=off`, no fast-math, an SSE2 baseline and no CET (`/CETCOMPAT:NO` for every image that hosts the SDK, `-fcf-protection=none` elsewhere; `Sdk::create` refuses a process with user shadow stacks) (ADR 0008 §4). From the root build it is a separate Clang project (ExternalProject) whose tests run as the CTest entry `gc_wii_sdk`. `MPT_REQUIRE_GC_WII` (ON in the `ci-*` presets) makes a missing Clang a configure error. It uses header-only core v1 types (`InputFrame`, `SaveMedia`, `FrameRate`, `DeterministicRng`, `StateHasher`, `Result`).
+
+**C API headers.** `mpt_gc/*.h` are our own declarations, written from the public SDK surface. Party Board compiles against aurora's Dolphin headers (ADR 0007 §6), so OS objects (`OSThread`, `OSAlarm`, `OSMessageQueue`, `OSMutex`) are used **only as keys**: their state lives in the SDK's tables, and the game-side layout does not matter. The exception is `OSThreadQueue` head/tail, which we keep current. Structs whose fields we write (`PADStatus`, `DVDFileInfo`/`DVDCommandBlock`, `CARDFileInfo`, `CARDStat`, `ARQRequest`, `OSCalendarTime`, `DVDDir`) follow the public layout. P1-15 must `static_assert` them against the pinned headers.
+
+**Determinism constants** (changing any of them changes every golden trail):
+
+| Constant | Value |
+|---|---|
+| Time base | 40.5 MHz (bus clock / 4) |
+| Time-query quantum | 405 ticks (10 µs) per `OSGetTime`/`OSGetTick` |
+| NTSC field | 675,675 ticks exactly (60000/1001 Hz). PAL: 810,000 (50 Hz) |
+| Epoch | `2001-01-01 + DeterministicRng(seed ^ 0x47435254_4345504F).below(range)`, range up to 2031-01-01 |
+| Watchdog | a frame that runs more than 60 virtual seconds of time queries faults instead of hanging |
+| Interrupt order | deadline, then source (VI, AI, DSP, ARAM, DVD, CARD, alarm), then scheduling order |
+| Card serial | `0x4D50544743524431` ("MPTGCRD1", `kStableCardSerial`) on every blank or formatted card |
+| New-thread MXCSR | `0x1F80` (round to nearest, no FTZ/DAZ) |
+
+**Virtual time** (confirmed by architect as the reading of ADR 0008 §2). Each frame step sets `now = max(now, R_n)` with `R_n = epoch + n * field`: the field clock is a floor, so time spent in queries is never taken back and time never runs backwards. The VI retrace is frame-driven: it fires once at the start of frame `n >= 1`, never because a busy-wait ran past `R_n`, so one `stepFrame` is always one main-loop iteration. When every thread is blocked, the scheduler jumps `now` to the next interrupt deadline if it falls before `R_{n+1}`. SDK code never calls the public time API internally (CARD timestamps read the clock without a quantum).
+
+**Scheduler.** SDK threads and the root coroutine (`main()`, the default thread at priority 16) are coroutines on arena stacks (256 KiB each, 32 threads). We use **our own context switch** (about 40 instructions per ABI, Win64 with TIB stack-bound swap, and SysV, all in `context.cpp` with documented frame layouts), accepted by architect with libco as the named fallback. A test on both OSes checks that every callee-saved register survives a round trip into a coroutine that clobbers them all, including xmm6–15 and the TIB stack fields on Win64, MXCSR and the x87 control word. No exception, `longjmp` or SEH unwind may cross a switch. Each stack has a 256-byte canary at its bottom, checked after every switch, so an overflow that runs through it is a deterministic fault (an overflow that skips over it is not caught). The best ready thread runs (lowest priority value, then FIFO). At every SDK call boundary, due interrupts run on the current thread's stack, and a strictly higher-priority thread that they made ready preempts the caller. Interrupts that fall due while every thread is idle run on a dedicated interrupt coroutine. `OSDisableInterrupts` only tracks its return value (ADR 0007 §7). Blocking inside an interrupt handler is a fault. `OSSetIdleFunction` only records its arguments: THP decoding moves into the frame step.
+
+**I/O.** DVD, ARAM DMA/ARQ and CARD complete inside the call. Callbacks run at the **next SDK call boundary** by default, so code that sets its "busy" flag after issuing the call still works. `SdkConfig::io_callbacks_before_return` runs them before the call returns instead. The mode is a **per-title constant** recorded here, never a user option, and part of the build fingerprint (architect ruling). **MP4's mode: to be chosen by P1-16**, by checking every completion-wait loop in `game/dvd.c`, `game/data.c`, `game/armem.c`, `game/card.c` and `msm/msmstream.c` (each loop must contain an SDK call for the default to work). The disc is read through `DirectoryFileSource`, which takes entry order and sizes from the extracted `sys/fst.bin` (P1-09's layout, `files/` beside it), rejects unsafe names (`.`, `..`, separators, control bytes) and files missing or with the wrong size, and keeps recently used files open. Reads past the end of a file return zeros.
+
+**PAD mapping** (canonical `Button` → GameCube):
+
+| Canonical | GameCube | Notes |
+|---|---|---|
+| A, B, X, Y, Start, Z | A, B, X, Y, START (MENU), Z | |
+| D-pad | D-pad | |
+| L / R | L / R click + analog 255 | A digital press reports full travel. Analog 255 also sets the click bit |
+| `trigger_l/r` | `triggerL/R` | 0..255 pass through |
+| left stick, C stick | `stickX/Y`, `substickX/Y` | `round(v * 127 / 32767)`, -32768 folded to -32767, +Y up |
+| C-Up/Down/Left/Right | C stick ±127 | only on an axis whose analog value is 0. Opposite presses cancel |
+| Select, Home, ZL | none | |
+| `connected == 0` | `err = PAD_ERR_NO_CONTROLLER` | all fields zero |
+
+The `InputFrame` is latched at the post-retrace point: the pre-retrace callback still sees frame `n-1`, and the post-retrace callback and the main loop see frame `n`. Frame 0 latches at the start of the step. `PADClamp` is the SDK's octagon clamp (stick 72/40/15, C stick 59/31/15, triggers 30..180).
+
+**CARD.** Slot A is served from `RuntimeConfig::save_media` (`SaveMedia::format_version` 1, our own little-endian format documented in `card.cpp`), and slot B is always empty. Card size is 4, 8 or 16 Mbit (16 for blank cards, which have 251 user blocks). The generation increments on format, create, write, set-status, rename and delete. Image and generation live in the arena, so `loadState` restores both (ADR 0004 rule 9). Timestamps are virtual seconds since 2000 (synthetic dates, rule 8).
+
+**Save states and hash.** `saveState()` is the whole arena (SDK state, 24 MB main RAM, 16 MB ARAM, the card, stacks and register contexts) plus a header. `loadState` rejects a different build, configuration, arena base or code base. `hashState()` is the SDK's manifest area, by value: pointers as arena offsets, function pointers as a presence sentinel until P1-16's registration table, register contexts excluded. Game memory is the title manifest's job (P1-18).
+
+**Math.** `mpt_fmaf` is a correctly rounded software fmaf (round-to-odd over an exact two-sum in binary64). It matches hardware FMA3 on 2M random and adversarial inputs (where the CPU and OS support FMA3). `gc_math_redirect.h`, forced-included into the game module, includes `<math.h>`/`<cmath>` itself and then maps `fmaf` and `std::fmaf` onto it. A link-time check (`check_no_host_fma.cmake`, `llvm-nm`) fails if any object leaves `fma`/`fmaf` undefined; it runs on the SDK, on a probe that uses the redirect, and (expected to fail) on a probe that does not. P1-15 runs it on the game module. This meets ADR 0008 §5 condition 1. `mpt_sinf/cosf/tanf/acosf/atan2f` are evaluated in double with no host transcendental and are within 2 ulp. **MTX/VEC/QUAT are not in the SDK:** aurora's MTX at the pin (with patch 2) is the only `PS*`/`C_*` implementation (architect ruling, ADR 0007 §6), and its goldens are P1-14's. Fast casts truncate, saturate, and map NaN to 0. Golden hashes pin trig/fmaf and a synthetic-game trail.
+
+**Faults.** A fatal error in game code records the message and stops the runtime: the faulting thread is never resumed and `stepFrame` returns `StepStatus::faulted`. The frame step's own host-side code never calls the fatal path, and nothing in the SDK aborts the process. Calling the C API from host code instead of game code is a programming error, reported with `std::logic_error`.
+
+**Split.** P1-13a (this layer core) and P1-13b (MusyX pull-mode stepping on virtual AI-DMA ticks, for which an `ai` interrupt source and a `host_tick` event kind are reserved, and THP decoding). Other follow-ups: `OSLink`/`OSUnlink` (replaced by the P1-15 loader shim), `OSStopwatch`, GD/GX (P1-14), fixed arena and module bases (P1-16), ARM64 context switching.
+
 ---
 
 ## Sections still to fill (P1-18)
