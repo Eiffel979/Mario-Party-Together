@@ -4,6 +4,8 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -256,9 +258,30 @@ TEST_CASE("the encoding matches the committed golden on every platform") {
   text << file.rdbuf();
   const std::vector<std::byte> golden = from_hex_lines(text.str());
   if (golden != actual) {
+    // CI keeps no files, so the message itself carries the evidence: the first differing
+    // offset and the 32-byte lines around it from both sides, plus the full actual bytes.
+    std::size_t at = 0;
+    while (at < golden.size() && at < actual.size() && golden[at] == actual[at]) ++at;
+    const std::size_t first_line = at / 32 > 0 ? at / 32 - 1 : 0;
+    const auto window = [&](const std::vector<std::byte>& bytes) {
+      std::string out;
+      for (std::size_t line = first_line; line <= at / 32 + 1 && line * 32 < bytes.size(); ++line) {
+        const std::size_t begin = line * 32;
+        const std::size_t end = std::min(bytes.size(), begin + 32);
+        out += "  @" + std::to_string(begin) + ": " +
+               to_hex_lines(std::vector<std::byte>(bytes.begin() + static_cast<std::ptrdiff_t>(begin),
+                                                   bytes.begin() + static_cast<std::ptrdiff_t>(end)));
+      }
+      return out;
+    };
     const std::filesystem::path out = std::filesystem::temp_directory_path() / "replay_v0_synthetic.mptr.hex.actual";
     std::ofstream(out, std::ios::binary) << to_hex_lines(actual);
-    FAIL("encoding differs from " << path.string() << "; actual bytes written to " << out.string());
+    FAIL("encoding differs from " << path.string() << " at byte " << at << " (golden " << golden.size()
+                                  << " bytes, actual " << actual.size() << " bytes)\ngolden:\n"
+                                  << window(golden) << "actual:\n"
+                                  << window(actual) << "full actual bytes (also written to " << out.string()
+                                  << "):\n"
+                                  << to_hex_lines(actual));
   }
   CHECK(validate_replay(golden).ok());
 }
