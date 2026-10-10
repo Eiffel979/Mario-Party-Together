@@ -91,7 +91,13 @@ Implementing the library pinned down the details below. No `.mptr` file existed 
    - It catches an adapter whose `readParty` diverges even when the game state does not, and it gives E1 a cheap check that the recorded party reached `finished`.
    - The `.trail.txt` sidecar stays `<frame> <state_hash>`. The cross-OS golden is about game state, and `party_digest` is compared replay against replay.
 6. **Validation entry point for the scanner and the dump lane.** The core library provides these:
-   - `validate_replay(bytes, rules)` and `validate_replay_fixture(bytes)`. The fixture variant is a full parse with no embedded save media.
+   - `validate_replay(bytes, rules)` and `validate_replay_fixture(bytes)`.
+   - **The fixture rule is stricter than the general parse** (decided after qa-reviewer's review of P1-05). A committed fixture must:
+     - fully parse with no trailing bytes;
+     - have no embedded save media;
+     - be in **canonical form**, which is exactly what `ReplayRecorder` writes. That means maximal runs: two adjacent runs never carry the same pads, unless the first is `UINT32_MAX` frames long. It also means a checkpoint at **every** multiple of `checkpoint_interval` up to `frame_count`, and nowhere else. So the checkpoint count is `frame_count / checkpoint_interval`.
+     - **Why:** the same inputs then always give the same bytes, so a hand-edited or re-encoded fixture shows up as a change. And every fixture has a complete trail for E3.
+     - The general parse stays lenient on these two points, so that tools and Phase 2 desync reports can carry partial trails.
    - The `mpt_replay_check <file>...` executable, which exits 0 or prints the first problem and exits 1.
    - The Python scanner (P1-20e2) either runs that tool when it is built, or reimplements points 1–3. In that case it is tested against the golden hex file and the corruption cases in `tests/unit/test_replay.cpp`.
 7. **Session glue** (`replay.h`, still free of SDL and the filesystem):
