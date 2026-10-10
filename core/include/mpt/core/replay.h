@@ -162,6 +162,10 @@ std::variant<ReplayHeader, Result> make_replay_header(const SessionConfig& confi
 // dump's title or SHA-256 differs from the header. Save media: blank -> nullopt;
 // embedded -> the embedded image; otherwise `supplied` if its digest matches, else a
 // failure naming the digest the replay needs. `supplied` is ignored when not needed.
+//
+// A session started from this config is ephemeral (ADR 0004 rule 6): the shell must
+// never persist its save media, so it never calls Session::takeSaveMedia() to write a
+// file, and never writes the supplied image back. The same holds for verify_replay.
 std::variant<SessionConfig, Result> session_config_for(const ReplayHeader& header, const VerifiedDump& dump,
                                                        const std::optional<SaveMedia>& supplied = std::nullopt);
 
