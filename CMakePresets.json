@@ -28,22 +28,38 @@
     },
     { "name": "windows-debug",   "inherits": "windows-base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" } },
     { "name": "windows-release", "inherits": "windows-base", "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" } },
+    {
+      "name": "windows-clang-base",
+      "hidden": true,
+      "inherits": "base",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang-cl",
+        "CMAKE_CXX_COMPILER": "clang-cl",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static-md",
+        "VCPKG_MANIFEST_FEATURES": "gc-wii"
+      }
+    },
+    { "name": "windows-clang-debug",   "inherits": "windows-clang-base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" } },
+    { "name": "windows-clang-release", "inherits": "windows-clang-base", "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" } },
     { "name": "linux-debug",     "inherits": "linux-base",   "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" } },
     { "name": "linux-release",   "inherits": "linux-base",   "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" } },
     {
       "name": "ci-windows",
       "inherits": "windows-release",
-      "cacheVariables": { "MPT_WARNINGS_AS_ERRORS": "ON", "MPT_REQUIRE_GC_WII": "ON" }
+      "cacheVariables": { "MPT_WARNINGS_AS_ERRORS": "ON", "MPT_REQUIRE_GC_WII": "ON", "VCPKG_MANIFEST_FEATURES": "gc-wii" }
     },
     {
       "name": "ci-linux",
       "inherits": "linux-release",
-      "cacheVariables": { "MPT_WARNINGS_AS_ERRORS": "ON", "MPT_REQUIRE_GC_WII": "ON" }
+      "cacheVariables": { "MPT_WARNINGS_AS_ERRORS": "ON", "MPT_REQUIRE_GC_WII": "ON", "VCPKG_MANIFEST_FEATURES": "gc-wii" }
     }
   ],
   "buildPresets": [
     { "name": "windows-debug",   "configurePreset": "windows-debug" },
     { "name": "windows-release", "configurePreset": "windows-release" },
+    { "name": "windows-clang-debug",   "configurePreset": "windows-clang-debug" },
+    { "name": "windows-clang-release", "configurePreset": "windows-clang-release" },
     { "name": "linux-debug",     "configurePreset": "linux-debug" },
     { "name": "linux-release",   "configurePreset": "linux-release" },
     { "name": "ci-windows",      "configurePreset": "ci-windows" },
@@ -51,6 +67,8 @@
   ],
   "testPresets": [
     { "name": "windows-debug", "configurePreset": "windows-debug", "output": { "outputOnFailure": true } },
+    { "name": "windows-clang-debug",   "configurePreset": "windows-clang-debug",   "output": { "outputOnFailure": true } },
+    { "name": "windows-clang-release", "configurePreset": "windows-clang-release", "output": { "outputOnFailure": true } },
     { "name": "linux-debug",   "configurePreset": "linux-debug",   "output": { "outputOnFailure": true } },
     { "name": "ci-windows",    "configurePreset": "ci-windows",    "output": { "outputOnFailure": true } },
     { "name": "ci-linux",      "configurePreset": "ci-linux",      "output": { "outputOnFailure": true } }
