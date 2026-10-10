@@ -57,6 +57,7 @@ if(MPT_BUILD_TESTS)
   add_executable(mpt_gc_sdk_tests
     tests/main.cpp
     tests/harness.h
+    tests/test_audio.cpp
     tests/test_card.cpp
     tests/test_clock.cpp
     tests/test_context.cpp
