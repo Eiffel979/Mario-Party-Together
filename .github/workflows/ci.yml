@@ -32,16 +32,27 @@ jobs:
 
       # Also scan every commit being added, so a dump that was committed and then
       # deleted in a later commit still fails: it would remain in history.
+      # On a push the range is before..after, unless the push was forced, created the
+      # branch, or its "before" commit is not in this checkout (a force-push after a rebase
+      # leaves the old head out). Then it scans everything the branch adds over main.
       - name: Scan new commits
         shell: bash
         run: |
+          before="${{ github.event.before }}"
+          after="${{ github.sha }}"
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             range="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
-          elif [ -n "${{ github.event.before }}" ] && ! [[ "${{ github.event.before }}" =~ ^0+$ ]]; then
-            range="${{ github.event.before }}..${{ github.sha }}"
+          elif [ "${{ github.event.forced }}" != "true" ] && [ -n "$before" ] && ! [[ "$before" =~ ^0+$ ]] \
+               && git cat-file -e "$before^{commit}" 2>/dev/null; then
+            range="$before..$after"
+          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            # main has no base to compare against: scan its whole history.
+            range="$after"
           else
-            range="${{ github.sha }}"
+            git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+            range="origin/main..$after"
           fi
+          echo "Scanning commits: $range"
           python3 tests/compliance/check_repo.py --commits "$range"
 
   build:

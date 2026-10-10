@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from check_repo import MAX_FILE_BYTES, check_file, main, scan_commits, scan_staged, scan_tree  # noqa: E402
+from check_repo import MAX_FILE_BYTES, RangeError, check_file, main, scan_commits, scan_staged, scan_tree  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -145,6 +145,19 @@ class ForbiddenPathsRepoTest(unittest.TestCase):
         history = scan_commits(self.REV, [])
         # Commit mode prefixes each path with the short commit id and a colon.
         self.assertEqual({strip_commit_id(finding.path) for finding in history}, set(self.FORBIDDEN))
+
+    def test_unresolvable_range_is_a_clear_error(self):
+        # The push-event case after a force-push: the old head is not in the checkout.
+        self.vcs("add", "--force", "--all")
+        self.vcs("comm" + "it", "-q", "--no-verify", "-m", "synthetic")
+        missing = "e4cc8eb" + "0" * 33 + "..HEAD"
+        with self.assertRaises(RangeError) as ctx:
+            scan_commits(missing, [])
+        self.assertIn("cannot resolve the commit range", str(ctx.exception))
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(main(["--commits", missing]), 2)
+        self.assertIn("origin/main..HEAD", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
 
     def test_main_exits_nonzero(self):
         self.vcs("add", "--force", "--all")

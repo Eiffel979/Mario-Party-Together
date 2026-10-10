@@ -82,6 +82,10 @@ SIGNATURES = [
 ]
 
 
+class RangeError(Exception):
+    """A --commits range that git cannot resolve (for example a base lost to a force-push)."""
+
+
 @dataclass
 class Finding:
     path: str
@@ -168,7 +172,17 @@ def scan_staged(allowlist: list[str]) -> list[Finding]:
 
 def scan_commits(rev_range: str, allowlist: list[str]) -> list[Finding]:
     findings = []
-    for commit in git("rev-list", "--reverse", rev_range).split():
+    try:
+        commits = git("rev-list", "--reverse", rev_range).split()
+    except subprocess.CalledProcessError as e:
+        detail = (e.stderr or "").strip().splitlines()
+        raise RangeError(
+            f"cannot resolve the commit range '{rev_range}'"
+            + (f" (git: {detail[0]})" if detail else "")
+            + ". Its base may be missing from this checkout, for example after a force-push. "
+            "Scan a range that exists, such as origin/main..HEAD."
+        ) from e
+    for commit in commits:
         changed = git("diff-tree", "--no-commit-id", "--root", "-r", "-z", "--name-only", "--diff-filter=ACMR", commit)
         for path in changed.split("\0"):
             if path:
@@ -188,7 +202,11 @@ def main(argv: list[str]) -> int:
     if args.staged:
         findings = scan_staged(allowlist)
     elif args.commits:
-        findings = scan_commits(args.commits, allowlist)
+        try:
+            findings = scan_commits(args.commits, allowlist)
+        except RangeError as e:
+            print(f"compliance: {e}", file=sys.stderr)
+            return 2
     else:
         findings = scan_tree(allowlist)
 
