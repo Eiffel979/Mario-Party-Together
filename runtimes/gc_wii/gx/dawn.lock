@@ -1,0 +1,396 @@
+{
+  "lock_version": 2,
+  "sources": [
+    {
+      "name": "dawn",
+      "repo": "https://dawn.googlesource.com/dawn",
+      "commit": "13abc3bc8ea2d3c2050f9e77a12d012108ceee24",
+      "tree": "e18fff1311af75075d75d644b229ad317cd4d7da",
+      "license": "BSD-3-Clause",
+      "deps": [
+        {
+          "path": "third_party/abseil-cpp",
+          "source": "dawn_abseil_cpp"
+        },
+        {
+          "path": "third_party/jinja2",
+          "source": "dawn_jinja2"
+        },
+        {
+          "path": "third_party/markupsafe",
+          "source": "dawn_markupsafe"
+        },
+        {
+          "path": "third_party/spirv-headers/src",
+          "source": "dawn_spirv_headers"
+        },
+        {
+          "path": "third_party/spirv-tools/src",
+          "source": "dawn_spirv_tools"
+        },
+        {
+          "path": "third_party/vulkan-headers/src",
+          "source": "dawn_vulkan_headers"
+        },
+        {
+          "path": "third_party/vulkan-utility-libraries/src",
+          "source": "dawn_vulkan_utility_libraries"
+        },
+        {
+          "path": "third_party/webgpu-headers/src",
+          "source": "dawn_webgpu_headers"
+        }
+      ],
+      "skipped_deps": [
+        {
+          "path": "build",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "build/linux/debian_bullseye_amd64-sysroot",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "build/linux/debian_bullseye_arm64-sysroot",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "build/linux/debian_bullseye_armhf-sysroot",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "build/linux/debian_bullseye_i386-sysroot",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "build/linux/debian_bullseye_mips64el-sysroot",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "build/linux/debian_bullseye_mipsel-sysroot",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "buildtools",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "buildtools/linux64",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "buildtools/mac",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "buildtools/reclient",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "buildtools/win",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "testing",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "third_party/EGL-Registry/src",
+          "reason": "The OpenGL and OpenGL ES backends are off."
+        },
+        {
+          "path": "third_party/OpenGL-Registry/src",
+          "reason": "The OpenGL and OpenGL ES backends are off."
+        },
+        {
+          "path": "third_party/agility-sdk/src",
+          "reason": "Not used: D3D12 headers come from the Windows SDK, and DXC is off."
+        },
+        {
+          "path": "third_party/angle",
+          "reason": "The OpenGL and OpenGL ES backends are off."
+        },
+        {
+          "path": "third_party/catapult",
+          "reason": "Tests, benchmarks and fuzzers are not built."
+        },
+        {
+          "path": "third_party/clang-format/script",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "third_party/depot_tools",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "third_party/directx-headers/src",
+          "reason": "Not used: D3D12 headers come from the Windows SDK, and DXC is off."
+        },
+        {
+          "path": "third_party/directx-shader-compiler/src",
+          "reason": "DXC is not built: D3D12 compiles shaders with FXC (ADR 0007, P1-14 gate amendment, patch 9)."
+        },
+        {
+          "path": "third_party/emsdk",
+          "reason": "Node bindings and Emscripten are not built."
+        },
+        {
+          "path": "third_party/glfw3/src",
+          "reason": "GLFW windowing is off (DAWN_USE_GLFW=OFF); the renderer is headless."
+        },
+        {
+          "path": "third_party/glslang/src",
+          "reason": "Only needed for Tint command-line tools and the GLSL validator, which are off."
+        },
+        {
+          "path": "third_party/google_benchmark/src",
+          "reason": "Tests, benchmarks and fuzzers are not built."
+        },
+        {
+          "path": "third_party/googletest",
+          "reason": "Tests, benchmarks and fuzzers are not built."
+        },
+        {
+          "path": "third_party/gpuweb",
+          "reason": "Node bindings and Emscripten are not built."
+        },
+        {
+          "path": "third_party/jsoncpp",
+          "reason": "The WGSL language server is not built."
+        },
+        {
+          "path": "third_party/langsvr",
+          "reason": "The WGSL language server is not built."
+        },
+        {
+          "path": "third_party/libFuzzer/src",
+          "reason": "Tests, benchmarks and fuzzers are not built."
+        },
+        {
+          "path": "third_party/libc++/src",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "third_party/libc++abi/src",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "third_party/libdrm/src",
+          "reason": "Mesa (TINT_BUILD_MESA) is not built."
+        },
+        {
+          "path": "third_party/libprotobuf-mutator/src",
+          "reason": "Protobuf is off (DAWN_BUILD_PROTOBUF=OFF)."
+        },
+        {
+          "path": "third_party/llvm-libc/src",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "third_party/mesa/src",
+          "reason": "Mesa (TINT_BUILD_MESA) is not built."
+        },
+        {
+          "path": "third_party/meson/src",
+          "reason": "Mesa (TINT_BUILD_MESA) is not built."
+        },
+        {
+          "path": "third_party/ninja",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "third_party/node-addon-api",
+          "reason": "Node bindings and Emscripten are not built."
+        },
+        {
+          "path": "third_party/node-api-headers",
+          "reason": "Node bindings and Emscripten are not built."
+        },
+        {
+          "path": "third_party/node/linux-amd64",
+          "reason": "Node bindings and Emscripten are not built."
+        },
+        {
+          "path": "third_party/node/linux-arm64",
+          "reason": "Node bindings and Emscripten are not built."
+        },
+        {
+          "path": "third_party/node/mac-amd64",
+          "reason": "Node bindings and Emscripten are not built."
+        },
+        {
+          "path": "third_party/node/mac-arm64",
+          "reason": "Node bindings and Emscripten are not built."
+        },
+        {
+          "path": "third_party/node/windows-amd64",
+          "reason": "Node bindings and Emscripten are not built."
+        },
+        {
+          "path": "third_party/node/windows-arm64",
+          "reason": "Node bindings and Emscripten are not built."
+        },
+        {
+          "path": "third_party/partition_alloc",
+          "reason": "Chromium-only dependency, not used by the CMake build."
+        },
+        {
+          "path": "third_party/placeholder_chromium",
+          "reason": "Chromium-only dependency, not used by the CMake build."
+        },
+        {
+          "path": "third_party/protobuf",
+          "reason": "Protobuf is off (DAWN_BUILD_PROTOBUF=OFF)."
+        },
+        {
+          "path": "third_party/siso/cipd",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "third_party/swiftshader",
+          "reason": "Not used by this build: the Vulkan loader comes from the system, and SwiftShader and validation layers are off."
+        },
+        {
+          "path": "third_party/vulkan-deps",
+          "reason": "Not used by this build: the Vulkan loader comes from the system, and SwiftShader and validation layers are off."
+        },
+        {
+          "path": "third_party/vulkan-loader/src",
+          "reason": "Not used by this build: the Vulkan loader comes from the system, and SwiftShader and validation layers are off."
+        },
+        {
+          "path": "third_party/vulkan-tools/src",
+          "reason": "Not used by this build: the Vulkan loader comes from the system, and SwiftShader and validation layers are off."
+        },
+        {
+          "path": "third_party/vulkan-validation-layers/src",
+          "reason": "Not used by this build: the Vulkan loader comes from the system, and SwiftShader and validation layers are off."
+        },
+        {
+          "path": "third_party/vulkan_memory_allocator",
+          "reason": "Not used by this build: the Vulkan loader comes from the system, and SwiftShader and validation layers are off."
+        },
+        {
+          "path": "third_party/webgpu-cts",
+          "reason": "Tests, benchmarks and fuzzers are not built."
+        },
+        {
+          "path": "third_party/zlib",
+          "reason": "Chromium-only dependency, not used by the CMake build."
+        },
+        {
+          "path": "tools/clang",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "tools/cmake",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "tools/code_coverage",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "tools/golang/linux-amd64",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "tools/golang/linux-arm64",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "tools/golang/mac-amd64",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "tools/golang/mac-arm64",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "tools/golang/windows-amd64",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "tools/golang/windows-arm64",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "tools/mb",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "tools/memory",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "tools/protoc_wrapper",
+          "reason": "Protobuf is off (DAWN_BUILD_PROTOBUF=OFF)."
+        },
+        {
+          "path": "tools/valgrind",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        },
+        {
+          "path": "tools/win",
+          "reason": "GN/Chromium toolchain and tooling; we build with CMake and our own compiler."
+        }
+      ]
+    },
+    {
+      "name": "dawn_abseil_cpp",
+      "repo": "https://chromium.googlesource.com/chromium/src/third_party/abseil-cpp",
+      "commit": "d16e32215c3ab90ba57c2e904a5344d85c7353e4",
+      "tree": "ace871bd59bbbcf9111fc3bcfe3966de28eef89f",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "dawn_jinja2",
+      "repo": "https://chromium.googlesource.com/chromium/src/third_party/jinja2",
+      "commit": "c3027d884967773057bf74b957e3fea87e5df4d7",
+      "tree": "b1ced381d7e8c813f62afc3be3026da78800409c",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "name": "dawn_markupsafe",
+      "repo": "https://chromium.googlesource.com/chromium/src/third_party/markupsafe",
+      "commit": "4256084ae14175d38a3ff7d739dca83ae49ccec6",
+      "tree": "8c1f275c5022de6417bf43377c671b44d7a474d6",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "name": "dawn_spirv_headers",
+      "repo": "https://chromium.googlesource.com/external/github.com/KhronosGroup/SPIRV-Headers",
+      "commit": "1e770e7de8373a8dd49f23416cf7ca4001d01040",
+      "tree": "34077d6a2236c55f45a65ac0b08bf59dc4fb195c",
+      "license": "MIT AND CC-BY-4.0"
+    },
+    {
+      "name": "dawn_spirv_tools",
+      "repo": "https://chromium.googlesource.com/external/github.com/KhronosGroup/SPIRV-Tools",
+      "commit": "b38c4f83024546d4000b2db8e2294cf81b7f26e0",
+      "tree": "84b385bd968c622f3cb3c092ea400a3216205323",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "dawn_vulkan_headers",
+      "repo": "https://chromium.googlesource.com/external/github.com/KhronosGroup/Vulkan-Headers",
+      "commit": "015e25c3c91b70eb1a754d36fb14c4ba6ad9b0b9",
+      "tree": "dc26f39a4a93a35619c092296b6180edfa96bf4d",
+      "license": "Apache-2.0 AND MIT"
+    },
+    {
+      "name": "dawn_vulkan_utility_libraries",
+      "repo": "https://chromium.googlesource.com/external/github.com/KhronosGroup/Vulkan-Utility-Libraries",
+      "commit": "8383c46b129c2b3a5f3833e602d946d2fcc57e39",
+      "tree": "c6e4a35cfbd45f6049ce687ec0c86dc20aa4f5db",
+      "license": "Apache-2.0 AND MIT AND CC-BY-4.0"
+    },
+    {
+      "name": "dawn_webgpu_headers",
+      "repo": "https://chromium.googlesource.com/external/github.com/webgpu-native/webgpu-headers",
+      "commit": "bf8ddb91dc38ea11ec1b727dae1fa965c4207d22",
+      "tree": "c9260d6ef1a439d9e38507c2e8ed99f83317200f",
+      "license": "BSD-3-Clause"
+    }
+  ]
+}
