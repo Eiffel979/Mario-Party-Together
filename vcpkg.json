@@ -20,5 +20,18 @@
     },
     "nlohmann-json",
     "doctest"
-  ]
+  ],
+  "features": {
+    "gc-wii": {
+      "description": "Libraries for runtimes/gc_wii's GX layer (aurora front end and renderer, ADR 0007 section 6). tracy is used for its headers only: TRACY_ENABLE is never defined and TracyClient is never linked.",
+      "dependencies": [
+        "abseil",
+        "xxhash",
+        "fmt",
+        "libpng",
+        "sqlite3",
+        "tracy"
+      ]
+    }
+  }
 }
