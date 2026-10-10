@@ -22,6 +22,18 @@ mpt_set_warnings(mpt_unit_tests)
 
 add_test(NAME unit COMMAND mpt_unit_tests)
 
+# Runtime conformance suite (P1-20c) against FakeRuntime and FakeAdapter, plus self-tests
+# that every check catches the bug it is meant to catch. Mp4Runtime reuses the same
+# checks on the dump lane (P1-16, P1-20d).
+add_executable(mpt_conformance_tests
+  conformance/main.cpp
+  conformance/test_conformance_fake.cpp
+  conformance/test_conformance_selftest.cpp
+)
+target_link_libraries(mpt_conformance_tests PRIVATE mpt::core doctest::doctest)
+mpt_set_warnings(mpt_conformance_tests)
+add_test(NAME conformance COMMAND mpt_conformance_tests)
+
 # Cross-process determinism (ADR 0002 rule 10 follow-up, P1-20b1): the same FakeRuntime run
 # in separate processes must give byte-identical hash trails.
 add_executable(mpt_determinism_child support/determinism_child.cpp)
