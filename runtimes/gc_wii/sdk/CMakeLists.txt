@@ -1,5 +1,6 @@
 # The SDK replacement layer core (P1-13). Built only with Clang (see ../CMakeLists.txt).
 add_library(mpt_gc_sdk STATIC
+  src/ai.cpp
   src/ar.cpp
   src/card.cpp
   src/context.cpp

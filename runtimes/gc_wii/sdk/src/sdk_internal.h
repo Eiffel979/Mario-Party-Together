@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "mpt/gc/sdk.h"
+#include "mpt_gc/ai.h"
 #include "mpt_gc/ar.h"
 #include "mpt_gc/card.h"
 #include "mpt_gc/dvd.h"
@@ -46,7 +47,7 @@ inline constexpr std::size_t kLowMemoryBytes = 0x3100;     // console OS globals
 
 // ---- Threads ------------------------------------------------------------------------
 enum class ThreadState : std::uint8_t { free, ready, running, waiting, moribund };
-enum class WaitKind : std::uint8_t { none, queue, retrace, join, mutex, mq_send, mq_recv };
+enum class WaitKind : std::uint8_t { none, queue, retrace, join, mutex, mq_send, mq_recv, idle };
 
 struct ThreadSlot {
   ThreadState state;
@@ -71,7 +72,7 @@ struct ThreadSlot {
 // Ties at one deadline are broken by this fixed source order, then by the order
 // the events were scheduled in (ADR 0008 §2).
 enum class Source : std::uint8_t { vi = 0, ai = 1, dsp = 2, aram = 3, dvd = 4, card = 5, alarm = 6 };
-enum class EventKind : std::uint8_t { none, retrace, alarm, dvd_read, dvd_cancel, ar_dma, arq, card, host_tick };
+enum class EventKind : std::uint8_t { none, retrace, alarm, dvd_read, dvd_cancel, ar_dma, arq, card, host_tick, ai_dma };
 
 struct Event {
   std::int64_t deadline;
@@ -113,6 +114,36 @@ struct HeapSlot {
   std::uint32_t end;
   std::uint32_t free_head;   // block offsets, 0 = none
   std::uint32_t alloc_head;
+};
+
+// ---- AI (audio DMA) ----------------------------------------------------------------
+// One AI-DMA block completes per virtual AI tick. The attached sound engine
+// (MusyX in pull mode) renders into one of two blocks in this state, exactly as
+// MusyX's own AI callback refills the DMA buffer on the console (ADR 0007 §4).
+inline constexpr std::uint32_t kAiEngineBlockSamples = 160 * 2;  // 5 ms of s16 stereo at 32 kHz
+
+struct AiState {
+  std::uint8_t initialized;
+  std::uint8_t dma_enabled;
+  std::uint8_t engine_attached;
+  std::uint8_t engine_block;  // the block the engine renders next
+  std::uint32_t dsp_rate;     // AI_SAMPLERATE_32KHZ / _48KHZ
+  void* dma_addr;
+  std::uint32_t dma_len;      // bytes
+  AIDCallback callback;       // the registered DMA callback (the engine's when none is registered)
+  std::int64_t next_deadline;  // of the pending AI tick, if dma_enabled
+  std::int64_t period;         // of the pending tick, in timer ticks
+  std::int64_t period_acc;     // fractional remainder accumulator (numerator over the rate)
+  std::uint64_t ticks;         // AI ticks so far
+  std::uint64_t frames_out;    // stereo frames DMA'd so far (identical with null or real output)
+  // DVD audio streaming registers: stored, never played (no title streams disc audio yet).
+  std::uint32_t stream_play_state;
+  std::uint32_t stream_rate;
+  std::uint8_t stream_vol_l;
+  std::uint8_t stream_vol_r;
+  std::uint32_t stream_trigger;
+  AISCallback stream_callback;
+  alignas(32) std::int16_t engine_buf[2][kAiEngineBlockSamples];
 };
 
 // ---- Card ---------------------------------------------------------------------------------
@@ -225,6 +256,17 @@ struct SdkState {
 
   // CARD.
   CardState card;
+
+  // AI and the sound engine's DMA blocks.
+  AiState ai;
+
+  // THP (the decoder itself is stateless) and the idle function, which runs
+  // as the lowest-priority thread once per frame step (THP decoding, ADR 0007 §4).
+  std::uint8_t thp_initialized;
+  std::int32_t idle_slot;      // thread slot of the idle thread, -1 = none
+  OSIdleFunction idle_fn;
+  void* idle_param;
+  std::uint64_t idle_runs;
 };
 
 // ---- Host-side implementation ----------------------------------------------------------------
@@ -258,6 +300,9 @@ struct Sdk::Impl {
   std::vector<detail::DvdEntry> dvd;
   std::string fault;
   std::function<void(const char*)> report_sink;
+  // DMA'd PCM (s16 stereo, AI rate) waiting for the host. Presentation only:
+  // not in the arena, never hashed, empty with null audio output.
+  std::vector<std::int16_t> pcm;
 
   std::byte* mainRam() const { return arena + main_offset; }
   std::byte* aramBase() const { return arena + aram_offset; }
@@ -326,6 +371,10 @@ void dvdBuildIndex(Sdk::Impl& impl);
 void dvdDispatch(const Event& e);
 void arDispatch(const Event& e);
 void cardDispatch(const Event& e);
+void aiBoot(Sdk::Impl& impl);
+void aiDispatch(const Event& e);
+void aiHash(StateHasher& h);
+void idleArm();  // makes the idle thread ready at the start of a frame step
 Result cardBoot(Sdk::Impl& impl);
 void cardHash(StateHasher& h);
 std::vector<std::byte> cardSerialize();

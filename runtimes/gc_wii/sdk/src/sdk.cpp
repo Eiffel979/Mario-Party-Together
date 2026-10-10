@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <utility>
 
 #include "context.h"
 #include "mpt/core/rng.h"
@@ -178,6 +179,20 @@ void threadEntry(void* arg) {
   void* result = nullptr;
   if (slot == 0) {
     impl().main(impl().main_arg);
+  } else if (slot == st().idle_slot) {
+    // The idle thread: runs the idle function once per frame step, at the
+    // lowest priority, then waits to be armed again (idleArm).
+    for (;;) {
+      auto& s = st();
+      if (s.idle_fn) s.idle_fn(s.idle_param);
+      ++s.idle_runs;
+      ThreadSlot& t = s.threads[slot];
+      t.state = ThreadState::waiting;
+      t.wait_kind = WaitKind::idle;
+      t.wait_key = nullptr;
+      t.wait_seq = ++s.seq;
+      switchToHost();
+    }
   } else {
     ThreadSlot& t = st().threads[slot];
     if (t.func) result = t.func(t.param);
@@ -441,6 +456,15 @@ void completeIo(Source source, EventKind kind, void* a, void* b, std::int64_t c)
 
 void initThreadContext(std::uint32_t slot) { initSlotContext(impl(), slot, &threadEntry); }
 
+void idleArm() {
+  auto& s = st();
+  if (!s.idle_fn || s.idle_slot < 0) return;
+  ThreadSlot& t = s.threads[s.idle_slot];
+  if (t.state != ThreadState::waiting || t.wait_kind != WaitKind::idle) return;  // still busy from an earlier frame
+  t.wait_kind = WaitKind::none;
+  makeReady(t);
+}
+
 void dispatch(const Event& e) {
   switch (e.kind) {
     case EventKind::retrace:
@@ -459,6 +483,9 @@ void dispatch(const Event& e) {
       break;
     case EventKind::card:
       cardDispatch(e);
+      break;
+    case EventKind::ai_dma:
+      aiDispatch(e);
       break;
     case EventKind::host_tick:
       reinterpret_cast<void (*)(void*)>(e.b)(e.a);
@@ -517,6 +544,8 @@ Result Sdk::create(const SdkConfig& config, MainFn main, void* arg, std::unique_
         "Link the host executable with /CETCOMPAT:NO (Windows) or without shadow-stack marking (-fcf-protection=none).");
   if (config.thread_stack_bytes < 64 * 1024 || config.thread_stack_bytes % 4096 != 0)
     return Result::failure("thread_stack_bytes must be a multiple of 4096 and at least 64 KiB");
+  for (const auto& region : config.state_regions)
+    if (region.empty() || !region.data()) return Result::failure("empty registered state region");
   if (config.card.size_mbits != 4 && config.card.size_mbits != 8 && config.card.size_mbits != 16)
     return Result::failure("card size must be 4, 8 or 16 Mbit");
 
@@ -582,6 +611,7 @@ Result Sdk::create(const SdkConfig& config, MainFn main, void* arg, std::unique_
   s.arena_hi = static_cast<std::uint32_t>(I->main_offset + kMainRamBytes);
   s.tv_format = config.video == VideoStandard::ntsc ? VI_NTSC : VI_PAL;
   s.dvd_auto_invalidation = 1;
+  s.idle_slot = -1;
   s.arq_chunk_size = 4096;
   for (auto& m : s.mutexes) m.owner = -1;
 
@@ -603,6 +633,7 @@ Result Sdk::create(const SdkConfig& config, MainFn main, void* arg, std::unique_
     return r;
   }
   osSyncGlobalsFromState();
+  aiBoot(*I);
 
   out.reset(new Sdk(std::move(I)));
   return Result::success();
@@ -640,6 +671,7 @@ StepStatus Sdk::stepFrame(const InputFrame& input) {
       impl_->fault = "virtual interrupt queue full (256 pending events) at the retrace";
     }
   }
+  idleArm();
   runUntilIdle();
   ++s.frame;
   return status();
@@ -653,6 +685,9 @@ std::byte* Sdk::arenaBase() const { return impl_->arena; }
 std::size_t Sdk::arenaSize() const { return impl_->arena_size; }
 std::span<std::byte> Sdk::mainRam() const { return {impl_->mainRam(), kMainRamBytes}; }
 std::span<std::byte> Sdk::aram() const { return {impl_->aramBase(), kAramBytes}; }
+std::vector<std::int16_t> Sdk::takeAudio() { return std::exchange(impl_->pcm, {}); }
+std::uint32_t Sdk::audioRate() const { return impl_->st->ai.dsp_rate == AI_SAMPLERATE_48KHZ ? kAiRate48k : kAiRate32k; }
+std::uint64_t Sdk::audioFrames() const { return impl_->st->ai.frames_out; }
 void Sdk::setReportSink(std::function<void(const char*)> sink) { impl_->report_sink = std::move(sink); }
 std::uint64_t Sdk::saveMediaGeneration() const { return impl_->st->card.generation; }
 SaveMedia Sdk::saveMedia() const { return SaveMedia{card_image_format_version(), cardSerialize()}; }
@@ -765,6 +800,13 @@ void Sdk::hashState(StateHasher& h) const {
   h.update_u64(s.arq_chunk_size);
 
   cardHash(h);
+
+  aiHash(h);
+  h.update_u64(s.thp_initialized);
+  h.update_u64(hashFunction(reinterpret_cast<const void*>(s.idle_fn)));
+  h.update_u64(hashPointer(s.idle_param));
+  h.update_u64(static_cast<std::uint64_t>(static_cast<std::int64_t>(s.idle_slot)));
+  h.update_u64(s.idle_runs);
 }
 
 std::uint64_t Sdk::stateHash() const {
@@ -781,7 +823,15 @@ struct SaveHeader {
   std::uint64_t arena_base;
   std::uint64_t code_anchor;  // detects a different build or module base
   std::uint64_t stack_bytes;
+  std::uint64_t region_count;  // registered globals, appended after the arena
+  std::uint64_t region_bytes;
 };
+
+std::size_t regionBytes(const SdkConfig& c) {
+  std::size_t n = 0;
+  for (const auto& r : c.state_regions) n += r.size();
+  return n;
+}
 }  // namespace
 
 std::vector<std::byte> Sdk::saveState() const {
@@ -790,10 +840,18 @@ std::vector<std::byte> Sdk::saveState() const {
                impl_->arena_size,
                reinterpret_cast<std::uintptr_t>(impl_->arena),
                reinterpret_cast<std::uintptr_t>(&threadEntry),
-               impl_->config.thread_stack_bytes};
-  std::vector<std::byte> out(sizeof h + impl_->arena_size);
+               impl_->config.thread_stack_bytes,
+               impl_->config.state_regions.size(),
+               regionBytes(impl_->config)};
+  std::vector<std::byte> out(sizeof h + impl_->arena_size + h.region_bytes);
   std::memcpy(out.data(), &h, sizeof h);
-  std::memcpy(out.data() + sizeof h, impl_->arena, impl_->arena_size);
+  std::byte* at = out.data() + sizeof h;
+  std::memcpy(at, impl_->arena, impl_->arena_size);
+  at += impl_->arena_size;
+  for (const auto& r : impl_->config.state_regions) {
+    std::memcpy(at, r.data(), r.size());
+    at += r.size();
+  }
   return out;
 }
 
@@ -804,14 +862,23 @@ Result Sdk::loadState(std::span<const std::byte> state) {
   std::memcpy(&h, state.data(), sizeof h);
   if (h.magic != kSaveMagic) return Result::failure("not a GameCube SDK save state");
   if (h.state_size != sizeof(SdkState) || h.arena_size != impl_->arena_size ||
-      h.stack_bytes != impl_->config.thread_stack_bytes)
+      h.stack_bytes != impl_->config.thread_stack_bytes || h.region_count != impl_->config.state_regions.size() ||
+      h.region_bytes != regionBytes(impl_->config))
     return Result::failure("save state from a different SDK build or configuration");
   if (h.arena_base != reinterpret_cast<std::uintptr_t>(impl_->arena) ||
       h.code_anchor != reinterpret_cast<std::uintptr_t>(&threadEntry))
     return Result::failure(
         "save state needs the same arena and code addresses (same build, same process or fixed bases; ADR 0008 §10-11)");
-  if (state.size() != sizeof h + impl_->arena_size) return Result::failure("save state has the wrong size");
-  std::memcpy(impl_->arena, state.data() + sizeof h, impl_->arena_size);
+  if (state.size() != sizeof h + impl_->arena_size + h.region_bytes)
+    return Result::failure("save state has the wrong size");
+  const std::byte* at = state.data() + sizeof h;
+  std::memcpy(impl_->arena, at, impl_->arena_size);
+  at += impl_->arena_size;
+  for (const auto& r : impl_->config.state_regions) {
+    std::memcpy(r.data(), at, r.size());
+    at += r.size();
+  }
+  impl_->pcm.clear();
   impl_->fault.clear();
   recomputeEarliest();
   osSyncGlobalsFromState();

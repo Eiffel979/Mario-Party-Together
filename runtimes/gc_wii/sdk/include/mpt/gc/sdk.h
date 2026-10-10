@@ -25,6 +25,7 @@
 #include "mpt/core/save_media.h"
 #include "mpt/core/state.h"
 #include "mpt/core/title_runtime.h"
+#include "mpt/gc/audio.h"
 #include "mpt/gc/file_source.h"
 
 namespace mpt::gc {
@@ -57,6 +58,17 @@ struct SdkConfig {
   // Arena placement. 0 = anywhere. Fixed bases for fresh-process save states
   // are P1-16 (ADR 0008 §11); create() fails if this address is unavailable.
   std::uintptr_t arena_base = 0;
+
+  // The title's sound engine, stepped in pull mode on virtual AI ticks (see
+  // mpt/gc/audio.h and mpt_gc/ai.h). Not attached = the game drives AI DMA itself.
+  AudioEngine audio_engine;
+  // false = null audio: DMA'd PCM is dropped, everything game-visible still runs.
+  bool audio_output = true;
+  // Registered globals: memory outside the arena that holds game-visible state
+  // (a sound engine's or the game module's static data). Saved and restored
+  // with the arena, never hashed raw; their owner hashes them by value. The
+  // same regions must be passed for loadState (ADR 0008 §10).
+  std::vector<std::span<std::byte>> state_regions;
 };
 
 enum class StepStatus : std::uint8_t {
@@ -114,6 +126,12 @@ class Sdk {
   // Host-visible outputs (presentation only, never game input).
   std::array<std::uint32_t, 4> rumble() const;  // PADControlMotor state per port
   void setReportSink(std::function<void(const char*)> sink);  // OSReport text
+  // DMA'd audio since the last call: interleaved s16 stereo at audioRate() Hz.
+  // Empty with null audio output. The shell resamples it to the device.
+  std::vector<std::int16_t> takeAudio();
+  std::uint32_t audioRate() const;
+  // Stereo frames DMA'd so far. Game-side state: identical with null output.
+  std::uint64_t audioFrames() const;
 
   // Virtual time without a time-query quantum, for the runtime and tests.
   std::int64_t now() const;
