@@ -104,9 +104,4 @@ IdentifyReport Importer::identify(const std::filesystem::path& path) const {
   return report;
 }
 
-VerifiedDump Importer::make_verified(const KnownDump& dump, const std::filesystem::path& cache_root) {
-  return VerifiedDump{dump.title, dump.region, dump.revision, dump.sha256,
-                      cache_root / std::string(to_string(dump.title)) / dump.sha256};
-}
-
 }  // namespace mpt::asset_import
