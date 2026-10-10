@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from check_repo import MAX_FILE_BYTES, check_file, main, scan_commits, scan_staged, scan_tree  # noqa: E402
+from check_repo import MAX_FILE_BYTES, RangeError, check_file, main, scan_commits, scan_staged, scan_tree  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -146,11 +146,44 @@ class ForbiddenPathsRepoTest(unittest.TestCase):
         # Commit mode prefixes each path with the short commit id and a colon.
         self.assertEqual({strip_commit_id(finding.path) for finding in history}, set(self.FORBIDDEN))
 
+    def test_unresolvable_range_is_a_clear_error(self):
+        # The push-event case after a force-push: the old head is not in the checkout.
+        self.vcs("add", "--force", "--all")
+        self.vcs("comm" + "it", "-q", "--no-verify", "-m", "synthetic")
+        missing = "e4cc8eb" + "0" * 33 + "..HEAD"
+        with self.assertRaises(RangeError) as ctx:
+            scan_commits(missing, [])
+        self.assertIn("cannot resolve the commit range", str(ctx.exception))
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(main(["--commits", missing]), 2)
+        self.assertIn("origin/main..HEAD", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
+
     def test_main_exits_nonzero(self):
         self.vcs("add", "--force", "--all")
         with contextlib.redirect_stderr(io.StringIO()) as err:
             self.assertEqual(main(["--staged"]), 1)
         self.assertIn("external/partyboard/src/main.c", err.getvalue())
+
+
+class GraphicsArtifactsTest(unittest.TestCase):
+    """P1-14 gate: Dawn libraries and GPU pipeline caches are local build output (ADR 0007)."""
+
+    def test_dawn_and_pipeline_caches_fail_at_any_depth(self):
+        for name in ["webgpu_dawn.dll", "build/bin/webgpu_dawn.dll", "WebGPU_Dawn.DLL",
+                     "dawn_cache.db", "cache/gx/dawn_cache.db", "pipeline_cache.db", "x/y/Pipeline_Cache.DB"]:
+            with self.subTest(name=name):
+                self.assertTrue(any("Dawn build output or GPU pipeline cache" in r for r in reasons(name)))
+
+    def test_text_content_does_not_help(self):
+        # Even a synthetic text file under one of these names is rejected: the name is the rule.
+        self.assertTrue(any("forbidden file" in r for r in reasons("pipeline_cache.db", b"synthetic text\n")))
+
+    def test_similar_names_pass(self):
+        for name in ["docs/pipeline_cache.md", "src/dawn_cache.cpp", "pipeline_cache.db.txt",
+                     "runtimes/gc_wii/gx/webgpu_dawn.h", "notes/dawn.txt"]:
+            with self.subTest(name=name):
+                self.assertEqual(reasons(name), [])
 
 
 if __name__ == "__main__":
