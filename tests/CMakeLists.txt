@@ -12,6 +12,7 @@ add_executable(mpt_unit_tests
   unit/test_fake_adapter.cpp
   unit/test_fake_runtime_v1.cpp
   unit/test_golden_trail.cpp
+  unit/test_replay.cpp
   unit/test_session.cpp
 )
 target_link_libraries(mpt_unit_tests PRIVATE mpt::core mpt::asset_import doctest::doctest)
@@ -33,6 +34,11 @@ add_executable(mpt_conformance_tests
 target_link_libraries(mpt_conformance_tests PRIVATE mpt::core doctest::doctest)
 mpt_set_warnings(mpt_conformance_tests)
 add_test(NAME conformance COMMAND mpt_conformance_tests)
+
+# The .mptr validator (ADR 0006) must reject a file that is not a replay.
+add_test(NAME replay_check_rejects_non_replay
+  COMMAND mpt_replay_check --fixture "${CMAKE_CURRENT_SOURCE_DIR}/golden/replay_v0_synthetic.mptr.hex")
+set_tests_properties(replay_check_rejects_non_replay PROPERTIES PASS_REGULAR_EXPRESSION "not an \\.mptr file")
 
 # Cross-process determinism (ADR 0002 rule 10 follow-up, P1-20b1): the same FakeRuntime run
 # in separate processes must give byte-identical hash trails.

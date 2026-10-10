@@ -3,7 +3,9 @@
 add_library(mpt_core
   src/content_id.cpp
   src/party_director.cpp
+  src/replay.cpp
   src/session.cpp
+  src/sha256.cpp
   src/title_id.cpp
   src/title_registry.cpp
 )
@@ -11,6 +13,11 @@ add_library(mpt::core ALIAS mpt_core)
 target_include_directories(mpt_core PUBLIC include)
 target_compile_features(mpt_core PUBLIC cxx_std_20)
 mpt_set_warnings(mpt_core)
+
+# .mptr validator for the compliance scanner and the dump lane (ADR 0006).
+add_executable(mpt_replay_check tools/replay_check.cpp)
+target_link_libraries(mpt_replay_check PRIVATE mpt::core)
+mpt_set_warnings(mpt_replay_check)
 
 # The host shell executable.
 add_executable(mpt_shell
