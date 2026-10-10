@@ -1,0 +1,17 @@
+MPT patch 2 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc (ADR 0007 section 6).
+Backport of upstream 4143fc1: signed-overflow UB in the frsqrte emulation.
+Applied in order by runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+
+diff --git a/include/dolphin/ppc_math.h b/include/dolphin/ppc_math.h
+index db12db5f11af92d2a162193b784405563b0d7a3f..c8f4cb5800deae389b329a7fa789e4b47d7f0dd2 100644
+--- a/include/dolphin/ppc_math.h
++++ b/include/dolphin/ppc_math.h
+@@ -117,7 +117,7 @@ static inline double frsqrte(double val) {
+     }
+ 
+     key = (uint32_t)(((uint64_t)exponent | mantissa) >> 37);
+-    new_exp = ((uint64_t)((0xbfcLL << EXPONENT_SHIFT_F64) - exponent) >> 1) & EXPONENT_MASK_F64;
++    new_exp = (((0xbfcULL << EXPONENT_SHIFT_F64) - (uint64_t)exponent) >> 1) & EXPONENT_MASK_F64;
+ 
+     entry = &RSQRTE_TABLE[0x1fu & (key >> 11)];
+     result.u = new_exp | (uint64_t)(entry->base + entry->dec * (int64_t)(key & 0x7ffu));

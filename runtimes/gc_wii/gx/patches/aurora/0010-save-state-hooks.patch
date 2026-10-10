@@ -1,0 +1,66 @@
+MPT patch 6 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc (ADR 0007 section 6).
+gx::reset_caches_for_load_state() and get/set of the texture/TLUT object ID counters.
+Applied in order by runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+
+diff --git a/lib/dolphin/gx/GXTexture.cpp b/lib/dolphin/gx/GXTexture.cpp
+index 15649114179b2f0cda07ebb1646847f03aa320e4..b1c66d4fe8ae12d3ac6ed7d86deb8cb3a363a367 100644
+--- a/lib/dolphin/gx/GXTexture.cpp
++++ b/lib/dolphin/gx/GXTexture.cpp
+@@ -391,3 +391,13 @@ void __GXFlushTextureState() {
+   __gx->bpSent = 1;
+ }
+ }
++
++namespace aurora::gx {
++// Save-state access to the texture/TLUT object ID counters. The IDs live in game memory (GXTexObj,
++// GXTlutObj), so the counters are game state: they are saved and restored with it, never hashed.
++ObjIdCounters get_obj_id_counters() noexcept { return {sNextTexObjId, sNextTlutObjId}; }
++void set_obj_id_counters(const ObjIdCounters& counters) noexcept {
++  sNextTexObjId = counters.nextTexObjId;
++  sNextTlutObjId = counters.nextTlutObjId;
++}
++} // namespace aurora::gx
+diff --git a/lib/gx/gx.cpp b/lib/gx/gx.cpp
+index 9fa5bcc72c7d4f85cb7dc81a1e8c731c0b8d0408..95bbba6bcb8aa05037c940950657d96c1c4e3446 100644
+--- a/lib/gx/gx.cpp
++++ b/lib/gx/gx.cpp
+@@ -400,6 +400,18 @@ void clear_copy_texture_cache() noexcept {
+ 
+ void clear_static_texture_cache() noexcept { s_staticTextureCacheClearPending.store(true, std::memory_order_release); }
+ 
++void reset_caches_for_load_state() noexcept {
++  for (auto& item : g_gxState.textures) {
++    item.ref.reset();
++  }
++  s_textureObjectCaches.clear();
++  s_tlutObjectCaches.clear();
++  g_gxState.loadedTextures.fill({});
++  g_gxState.loadedTluts.fill({});
++  clear_copy_texture_cache();
++  clear_static_texture_cache();
++}
++
+ void evict_copy_texture(const void* dest) noexcept {
+   absl::flat_hash_set<const void*> sourceIdentities;
+   if (const auto it = g_gxState.copyTextures.find(dest); it != g_gxState.copyTextures.end()) {
+diff --git a/lib/gx/gx.hpp b/lib/gx/gx.hpp
+index 287bbd785ed46e3b233062fd8073dff04d1f5324..23589d4820cea46db02fd35014e2d4499a10ed68 100644
+--- a/lib/gx/gx.hpp
++++ b/lib/gx/gx.hpp
+@@ -396,6 +396,16 @@ void initialize() noexcept;
+ void shutdown() noexcept;
+ void clear_static_texture_cache() noexcept;
+ void clear_copy_texture_cache() noexcept;
++// Drops every renderer-side texture, TLUT and copy-texture cache, for loading a save state: cached
++// entries are keyed by object IDs and copy destinations that the loaded state may reuse. Call it
++// with the render worker idle (after gfx::gpu_synchronize).
++void reset_caches_for_load_state() noexcept;
++struct ObjIdCounters {
++  u32 nextTexObjId;
++  u32 nextTlutObjId;
++};
++ObjIdCounters get_obj_id_counters() noexcept;
++void set_obj_id_counters(const ObjIdCounters& counters) noexcept;
+ void evict_copy_texture(const void* dest) noexcept;
+ void evict_texture_object(u32 texObjId) noexcept;
+ void evict_tlut_object(u32 tlutObjId) noexcept;

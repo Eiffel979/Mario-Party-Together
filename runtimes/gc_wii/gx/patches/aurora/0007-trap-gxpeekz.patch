@@ -1,0 +1,27 @@
+MPT patch 5 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc (ADR 0007 section 6).
+GXPeekZ is fatal: aurora answers it from a GPU snapshot refreshed on a wall clock.
+Applied in order by runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+
+diff --git a/lib/dolphin/gx/GXCpu2Efb.cpp b/lib/dolphin/gx/GXCpu2Efb.cpp
+index 2128662947b98dba8a2b3ee70e6a6ad8f4c7681a..8815aa53adaec816040b2fd7a29687e62cf5a06c 100644
+--- a/lib/dolphin/gx/GXCpu2Efb.cpp
++++ b/lib/dolphin/gx/GXCpu2Efb.cpp
+@@ -5,14 +5,8 @@
+ #include <dolphin/gx/GXCpu2Efb.h>
+ 
+ void GXPeekZ(u16 x, u16 y, u32* z) {
+-  if (z != nullptr) {
+-    u32 value = 0;
+-    if (aurora::gfx::depth_peek::read_latest(x, y, value)) {
+-      *z = value;
+-    } else {
+-      *z = g_gxState.clearDepth & 0x00ffffffu;
+-    }
+-  }
+-
+-  aurora::gfx::depth_peek::request_snapshot();
++  // Trapped: aurora answers from a GPU depth snapshot refreshed on a wall clock, so the result would
++  // depend on the GPU and on host timing. A title that needs GXPeekZ needs a decision first.
++  (void)z;
++  FATAL("GXPeekZ({}, {}) is not supported (its result would depend on the GPU and host timing)", x, y);
+ }

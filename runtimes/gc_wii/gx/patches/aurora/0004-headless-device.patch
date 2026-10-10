@@ -1,0 +1,51 @@
+MPT patch 3 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc (ADR 0007 section 6).
+Without an SDL window, create no surface: the EFB is an offscreen RGBA8Unorm texture.
+Applied in order by runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+
+diff --git a/lib/webgpu/gpu.cpp b/lib/webgpu/gpu.cpp
+index a9694652c0a54100ca87f1356276eab058371be6..b655200e944bdfce316a6fe4692da4c82f9ff85e 100644
+--- a/lib/webgpu/gpu.cpp
++++ b/lib/webgpu/gpu.cpp
+@@ -716,7 +716,9 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
+   g_dawnInstance->EnableBackendValidation(backend != WGPUBackendType::D3D12);
+ #endif
+ 
+-  {
++  // Headless mode: no window means no surface. The EFB is an offscreen texture only.
++  const bool headless = window::get_sdl_window() == nullptr;
++  if (!headless) {
+     window::SurfaceLock surfaceLock;
+     if (!create_surface()) {
+       return false;
+@@ -919,6 +921,31 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
+   }
+   g_queue = g_device.GetQueue();
+ 
++  if (headless) {
++    const auto size = window::get_window_size();
++    g_graphicsConfig = GraphicsConfig{
++        .surfaceConfiguration =
++            wgpu::SurfaceConfiguration{
++                .format = wgpu::TextureFormat::RGBA8Unorm,
++                .usage = wgpu::TextureUsage::RenderAttachment,
++                .width = size.fb_width,
++                .height = size.fb_height,
++                .presentMode = wgpu::PresentMode::Fifo,
++            },
++        .depthFormat = wgpu::TextureFormat::Depth32Float,
++        .msaaSamples = g_config.msaa,
++        .textureAnisotropy = g_config.maxTextureAnisotropy,
++    };
++    create_copy_pipeline();
++    create_resample_pipeline();
++    g_frameBuffer = create_render_texture(size.fb_width, size.fb_height, true);
++    g_frameBufferResolved = create_render_texture(size.fb_width, size.fb_height, false);
++    g_depthBuffer = create_depth_texture(size.fb_width, size.fb_height);
++    g_CopyBindGroup = create_copy_bind_group(present_source());
++    Log.info("Headless device: offscreen EFB {}x{} RGBA8Unorm", size.fb_width, size.fb_height);
++    return true;
++  }
++
+   const wgpu::Status status = g_surface.GetCapabilities(g_adapter, &g_surfaceCapabilities);
+   if (status != wgpu::Status::Success) {
+     Log.error("Failed to get surface capabilities: {}", magic_enum::enum_name(status));

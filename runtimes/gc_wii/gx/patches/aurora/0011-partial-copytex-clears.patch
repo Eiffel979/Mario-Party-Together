@@ -1,0 +1,92 @@
+MPT patch 7b against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc (ADR 0007 section 6).
+GXCopyTex(..., GX_TRUE) clears only the copied rectangle (our port of the idea in upstream 9c0bf66).
+Applied in order by runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+
+diff --git a/lib/gfx/clear.cpp b/lib/gfx/clear.cpp
+index d0b4c7862f8b8a9d2d4d866db55478cd07d6ee99..c78823218aa313474324022d58b6932d3f5d2eb9 100644
+--- a/lib/gfx/clear.cpp
++++ b/lib/gfx/clear.cpp
+@@ -119,7 +119,12 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass, const wgp
+   pass.SetBlendConstant(&data.color);
+   pass.SetViewport(0.f, 0.f, static_cast<float>(targetSize.width), static_cast<float>(targetSize.height), data.depth,
+                    data.depth);
+-  pass.SetScissorRect(0, 0, targetSize.width, targetSize.height);
++  if (data.rect.width > 0 && data.rect.height > 0) {
++    pass.SetScissorRect(static_cast<uint32_t>(data.rect.x), static_cast<uint32_t>(data.rect.y),
++                        static_cast<uint32_t>(data.rect.width), static_cast<uint32_t>(data.rect.height));
++  } else {
++    pass.SetScissorRect(0, 0, targetSize.width, targetSize.height);
++  }
+   pass.Draw(3);
+ }
+ } // namespace aurora::gfx::clear
+diff --git a/lib/gfx/clear.hpp b/lib/gfx/clear.hpp
+index 2f87117ecd050de1abf1749e74d6af1eab1134fe..07202b1af1b5f5db014c628e2517a2ef6671dd57 100644
+--- a/lib/gfx/clear.hpp
++++ b/lib/gfx/clear.hpp
+@@ -9,6 +9,8 @@ struct DrawData {
+   PipelineRef pipeline;
+   wgpu::Color color;
+   float depth = 0.f;
++  // Scissor for a partial clear, in target pixels; width 0 means the whole target.
++  ClipRect rect{};
+ };
+ 
+ constexpr uint32_t ClearPipelineConfigVersion = 2;
+diff --git a/lib/gfx/common.cpp b/lib/gfx/common.cpp
+index eff0c65fe0511e66d872f23236fe4f1ebc1127ec..2857b9461f5007224b40173b9d1d144176709067 100644
+--- a/lib/gfx/common.cpp
++++ b/lib/gfx/common.cpp
+@@ -581,6 +581,10 @@ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool cl
+ 
+   // Populate new render pass from previous
+   const auto msaaSamples = prevPass.msaaSamples;
++  // GXCopyTex(..., GX_TRUE) clears only the copied rectangle. Attachment clears (load ops) cover the
++  // whole target, so a partial rectangle is cleared with a scissored clear draw instead.
++  const bool fullRect = rect.x <= 0 && rect.y <= 0 && rect.width >= static_cast<int32_t>(prevPass.targetSize.width) &&
++                        rect.height >= static_cast<int32_t>(prevPass.targetSize.height);
+   RenderPass newPass{
+       .colorView = prevPass.colorView,
+       .resolveView = prevPass.resolveView,
+@@ -592,23 +596,25 @@ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool cl
+       .msaaSamples = msaaSamples,
+       .clearColorValue = clearColorValue,
+       .clearDepthValue = clearDepthValue,
+-      .clearColor = clearColor && clearAlpha,
+-      .clearDepth = clearDepth,
++      .clearColor = fullRect && clearColor && clearAlpha,
++      .clearDepth = fullRect && clearDepth,
+       .hasDepth = prevPass.hasDepth,
+       .hasStencil = prevPass.hasStencil,
+   };
+   newPass.commands.reserve(2048);
++  const bool drawColor = !newPass.clearColor && (clearColor || clearAlpha);
++  const bool drawDepth = !newPass.clearDepth && clearDepth;
+   current_render_passes().emplace_back(std::move(newPass));
+   ++g_currentRenderPass;
+ 
+-  if (!newPass.clearColor && (clearColor || clearAlpha)) {
+-    // If we're only clearing color _or_ alpha, perform a clear draw
++  if (drawColor || drawDepth) {
++    // Clear draw for color or alpha alone, or for a partial rectangle.
+     push_draw_command(clear::DrawData{
+         .pipeline = pipeline_ref(clear::PipelineConfig{
+             .msaaSamples = msaaSamples,
+-            .clearColor = clearColor,
+-            .clearAlpha = clearAlpha,
+-            .clearDepth = false, // Depth cleared via render attachment
++            .clearColor = drawColor && clearColor,
++            .clearAlpha = drawColor && clearAlpha,
++            .clearDepth = drawDepth,
+         }),
+         .color =
+             wgpu::Color{
+@@ -617,6 +623,8 @@ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool cl
+                 .b = clearColorValue.z(),
+                 .a = clearColorValue.w(),
+             },
++        .depth = clearDepthValue,
++        .rect = fullRect ? ClipRect{} : rect,
+     });
+   }
+   push_command(CommandType::SetViewport, Command::Data{.setViewport = g_cachedViewport});

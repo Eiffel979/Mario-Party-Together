@@ -1,0 +1,26 @@
+MPT patch 2 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc (ADR 0007 section 6).
+Backport of upstream f8573d3: PSVECSquareMag rounding.
+Applied in order by runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+
+diff --git a/lib/dolphin/mtx/vec.c b/lib/dolphin/mtx/vec.c
+index 6dc14670554593fb01b5698b0b2af0b580750330..54ac1281148133e0174cefe730de14257402a0f4 100644
+--- a/lib/dolphin/mtx/vec.c
++++ b/lib/dolphin/mtx/vec.c
+@@ -70,8 +70,16 @@ f32 C_VECSquareMag(const Vec* v) {
+ }
+ 
+ f32 PSVECSquareMag(const Vec* v) {
++  f32 xx;
++  f32 yy;
++  f32 xx_zz;
++
+   assert(v && "VECMag():  NULL VecPtr 'v' ");
+-  return (v->z * v->z + v->x * v->x) + v->y * v->y;
++
++  xx = v->x * v->x;
++  yy = v->y * v->y;
++  xx_zz = fmaf(v->z, v->z, xx);
++  return fmaf(xx_zz, 1.0f, yy);
+ }
+ 
+ f32 C_VECMag(const Vec* v) {

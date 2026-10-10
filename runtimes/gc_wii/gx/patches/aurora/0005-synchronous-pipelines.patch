@@ -1,0 +1,37 @@
+MPT patch 4 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc (ADR 0007 section 6).
+gfx::g_synchronousPipelines: no compile thread and no per-frame cap, so no draw is skipped.
+Applied in order by runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+
+diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
+index 04a4310eaecef640d15fe74cd612276c21117299..4e9da0a0088524aabaf2c4cbb5af6635e0df1486 100644
+--- a/lib/gfx/pipeline_cache.cpp
++++ b/lib/gfx/pipeline_cache.cpp
+@@ -59,6 +59,8 @@ static std::mutex g_pipelineMutex;
+ static bool g_hasPipelineThread = false;
+ static bool g_pipelineFrameActive = false;
+ static size_t g_pipelinesPerFrame = 0;
++// Synchronous-pipeline mode: no compile thread and no per-frame build cap, so no draw is skipped.
++bool g_synchronousPipelines = false;
+ // For synchronous pipeline fallback (OpenGL)
+ #ifdef NDEBUG
+ constexpr size_t BuildPipelinesPerFrame = 5;
+@@ -416,7 +418,7 @@ static PipelineRef find_pipeline_impl(ShaderType type, const PipelineConfig& con
+         }
+       }
+     } else {
+-      if (!g_hasPipelineThread && g_pipelinesPerFrame < BuildPipelinesPerFrame) {
++      if (g_synchronousPipelines || (!g_hasPipelineThread && g_pipelinesPerFrame < BuildPipelinesPerFrame)) {
+         g_pipelines.try_emplace(hash, CachedPipeline{
+                                           .pipeline = cb(),
+                                           .firstFrameUsed = firstFrameUsed,
+@@ -1032,8 +1034,8 @@ void initialize_pipeline_cache() {
+   g_pipelineThreadEnd = false;
+   g_gpuCachePrunePending = false;
+ 
+-  if (webgpu::g_backendType == wgpu::BackendType::OpenGL || webgpu::g_backendType == wgpu::BackendType::OpenGLES ||
+-      webgpu::g_backendType == wgpu::BackendType::WebGPU) {
++  if (g_synchronousPipelines || webgpu::g_backendType == wgpu::BackendType::OpenGL ||
++      webgpu::g_backendType == wgpu::BackendType::OpenGLES || webgpu::g_backendType == wgpu::BackendType::WebGPU) {
+     g_hasPipelineThread = false;
+   } else {
+     g_hasPipelineThread = true;
