@@ -2,6 +2,8 @@
 # tests can link it without pulling in the windowing layer.
 add_library(mpt_core
   src/content_id.cpp
+  src/party_director.cpp
+  src/session.cpp
   src/title_id.cpp
   src/title_registry.cpp
 )
