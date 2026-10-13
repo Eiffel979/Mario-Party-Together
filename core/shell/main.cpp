@@ -5,6 +5,7 @@
 #include <string>
 
 #include "app.h"
+#include "titles.h"
 
 int main(int argc, char** argv) {
   SDL_SetMainReady();
@@ -16,5 +17,7 @@ int main(int argc, char** argv) {
     std::fputs(message.c_str(), exit_code == 0 ? stdout : stderr);
     return exit_code;
   }
-  return mpt::shell::run(*options);
+  mpt::shell::ShellTitles titles;
+  mpt::shell::register_titles(titles);  // generated from the enabled runtime targets
+  return mpt::shell::run(*options, titles);
 }
