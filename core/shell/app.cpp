@@ -82,7 +82,7 @@ std::optional<UserDirs> user_dirs(const AppOptions& options, std::string& error)
 std::optional<std::vector<std::byte>> read_file(const std::filesystem::path& path, std::string& error) {
   std::ifstream in(path, std::ios::binary);
   if (!in) {
-    error = "cannot read " + path.string();
+    error = "cannot read " + display_path(path);
     return std::nullopt;
   }
   const std::vector<char> chars((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -333,13 +333,11 @@ class Shell final : public IShellCommands {
   bool start_live(const VerifiedDump& dump, std::optional<std::uint64_t> seed) {
     const ShellTitle* title = find_title(titles_, dump.title);
     if (!title) return false;
-    std::string error;
     slot_ = save_slot_path(dirs_.saves, dump.title, dump.region);
-    std::optional<SaveMedia> initial = load_save_media(*slot_, error);
-    if (!error.empty()) {
-      std::fprintf(stderr, "save: %s (starting with a blank card)\n", error.c_str());
-      initial.reset();
-    }
+    // An unreadable slot is moved aside, never overwritten (save_store.h).
+    SlotOpen opened = open_save_slot(*slot_);
+    if (!opened.warning.empty()) std::fprintf(stderr, "save: %s\n", opened.warning.c_str());
+    std::optional<SaveMedia> initial = std::move(opened.initial);
     SessionConfig config;
     config.dump = dump;
     config.runtime.seed = seed ? *seed : pick_seed();
@@ -355,11 +353,13 @@ class Shell final : public IShellCommands {
     }
     FrameLoopHooks hooks;
     hooks.sample = [this](std::uint64_t frame) -> std::optional<InputFrame> { return input_.sample(frame); };
-    hooks.persist = [this](const SaveMedia& media) {
-      if (Result stored = store_save_media(*slot_, media); !stored) {
-        std::fprintf(stderr, "save: %s\n", stored.error().c_str());
-      }
-    };
+    if (opened.persist) {
+      hooks.persist = [this](const SaveMedia& media) {
+        if (Result stored = store_save_media(*slot_, media); !stored) {
+          std::fprintf(stderr, "save: %s\n", stored.error().c_str());
+        }
+      };
+    }
     return start_session(config, std::move(hooks), recorder_ ? &*recorder_ : nullptr);
   }
 
@@ -423,7 +423,7 @@ class Shell final : public IShellCommands {
         std::fprintf(stderr, "record: %s\n", written.error().c_str());
         exit_code_ = 1;
       } else {
-        std::printf("recorded %s\n", options_.record->string().c_str());
+        std::printf("recorded %s\n", display_path(*options_.record).c_str());
       }
       recorder_.reset();
     }

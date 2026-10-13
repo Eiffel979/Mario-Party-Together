@@ -26,8 +26,14 @@ namespace mpt::shell {
 // [A-Za-z0-9_-] (or is empty) becomes "unknown", so it can never escape the folder.
 std::filesystem::path save_slot_path(const std::filesystem::path& saves_root, TitleId title, std::string_view region);
 
-// Writes `bytes` to a temporary file next to `path`, then renames it over `path`, so a
-// crash never leaves a half-written save. Creates missing parent folders.
+// UTF-8 text for messages. path::string() throws on Windows for names outside the ANSI
+// code page, and the user folder contains the user's name.
+std::string display_path(const std::filesystem::path& path);
+
+// Writes `bytes` to a temporary file next to `path` whose name is unique to this process
+// and call, flushes it to the disk, then renames it over `path` (and on POSIX syncs the
+// folder), so neither a crash nor a second shell on the same slot leaves a half-written
+// save. Creates missing parent folders.
 Result write_file_atomic(const std::filesystem::path& path, std::span<const std::byte> bytes);
 
 // nullopt if the file does not exist (a blank card). A file that exists but cannot be
@@ -35,5 +41,17 @@ Result write_file_atomic(const std::filesystem::path& path, std::span<const std:
 std::optional<SaveMedia> load_save_media(const std::filesystem::path& path, std::string& error);
 
 Result store_save_media(const std::filesystem::path& path, const SaveMedia& media);
+
+// What a live session starts from (P1-06 g). A slot that is missing is a blank card. A
+// slot that exists but cannot be read is never overwritten: it is renamed to
+// slot0.mptsave.bak (or .bak2, .bak3, ... if those exist), and the session starts blank.
+// If that rename fails, the session starts blank and ephemeral (`persist` false), so the
+// user's file is left exactly as it was.
+struct SlotOpen {
+  std::optional<SaveMedia> initial{};
+  bool persist = true;
+  std::string warning{};  // empty unless the slot was unreadable
+};
+SlotOpen open_save_slot(const std::filesystem::path& path);
 
 }  // namespace mpt::shell
