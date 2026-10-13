@@ -76,6 +76,13 @@ class ForbiddenPathsTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertTrue(any("memory-card or save image" in r for r in reasons(name)))
 
+    def test_shell_save_slots_fail(self):
+        for name in ["mp4/USA/slot0.mptsave", "saves/mp4/USA/slot0.mptsave.tmp", "x.MPTSAVE"]:
+            with self.subTest(name=name):
+                self.assertTrue(any("shell save slot" in r for r in reasons(name)))
+        self.assertEqual(reasons("core/shell/save_store.cpp"), [])
+        self.assertEqual(reasons("docs/mptsave_format.md"), [])
+
     def test_memory_card_header_with_text_body_still_fails(self):
         # A synthetic GCI-style header (game code + maker code) built here, not read from a card.
         head = b"GXXE01" + b"synthetic test card, not a real save\n"
@@ -106,7 +113,8 @@ class ForbiddenPathsRepoTest(unittest.TestCase):
     """
 
     REV = "HEAD"
-    FORBIDDEN = ["external/partyboard/src/main.c", "saves/card.gci", "slot.gcs", "game.sav", "card.raw"]
+    FORBIDDEN = ["external/partyboard/src/main.c", "saves/card.gci", "slot.gcs", "game.sav", "card.raw",
+                 "saves/mp4/USA/slot0.mptsave"]
 
     def setUp(self):
         self._old_cwd = os.getcwd()
