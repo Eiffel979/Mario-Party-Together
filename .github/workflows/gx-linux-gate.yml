@@ -90,9 +90,11 @@ jobs:
           echo "VCPKG_ROOT=$MPT_VCPKG_DIR" >> "$GITHUB_ENV"
 
       # The whole tree with Clang, so runtimes/gc_wii builds in-tree and its tests are visible here.
+      # Warnings are not errors here: the main CI builds the rest of the tree with GCC and owns that.
       - name: Configure (null renderer first, to build the source fetcher)
         run: |
           cmake --preset ci-linux -B "$BUILD_DIR" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DMPT_WARNINGS_AS_ERRORS=OFF \
             -DMPT_GX_BACKEND=null -DMPT_SOURCE_CACHE="$MPT_SOURCE_CACHE" -DMPT_DAWN_PREFIX="$MPT_DAWN_PREFIX"
 
       - name: Fetch and verify aurora (aurora.lock)
