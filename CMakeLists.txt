@@ -55,6 +55,7 @@ set(MPT_GX_BACKEND "null" CACHE STRING "GX renderer for runtimes/gc_wii: null or
 set_property(CACHE MPT_GX_BACKEND PROPERTY STRINGS null dawn)
 set(MPT_DAWN_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/external/dawn" CACHE PATH
   "Dawn install prefix made by runtimes/gc_wii/gx/tools/build_dawn.cmake")
+option(MPT_REQUIRE_GX "Fail the configure if the GX layer cannot be built (always on for MPT_GX_BACKEND=dawn)" OFF)
 
 # GameCube/Wii SDK layer: built with Clang as its own project (ADR 0008 §4).
 add_subdirectory(runtimes/gc_wii)
