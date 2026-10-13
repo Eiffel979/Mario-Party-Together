@@ -174,8 +174,11 @@ TEST_CASE("letterbox keeps the aspect and centres the frame") {
   CHECK(letterbox(1280, 720, Aspect{16, 9}) == PixelRect{0, 0, 1280, 720});
   CHECK(letterbox(800, 800, Aspect{16, 9}) == PixelRect{0, 175, 800, 450});
   CHECK(letterbox(0, 720, Aspect{4, 3}) == PixelRect{});
-  CHECK(display_aspect(640, 480, false).num == 640);
-  CHECK(display_aspect(640, 480, true).num == 16);
+  CHECK(display_aspect(false).num == 4);
+  CHECK(display_aspect(false).den == 3);
+  CHECK(display_aspect(true).num == 16);
+  // A 640x448 frame is still shown 4:3.
+  CHECK(letterbox(1280, 720, display_aspect(false)) == PixelRect{160, 0, 960, 720});
 }
 
 TEST_CASE("save slots: paths, atomic writes and round trips") {

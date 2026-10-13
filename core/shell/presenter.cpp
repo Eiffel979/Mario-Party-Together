@@ -33,7 +33,7 @@ void Presenter::present(bool widescreen, IOverlay* overlay) {
   SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
   SDL_RenderClear(renderer_);
   if (has_frame_ && texture_) {
-    const PixelRect r = letterbox(w, h, display_aspect(tex_w_, tex_h_, widescreen));
+    const PixelRect r = letterbox(w, h, display_aspect(widescreen));
     const SDL_FRect dst{static_cast<float>(r.x), static_cast<float>(r.y), static_cast<float>(r.w),
                         static_cast<float>(r.h)};
     SDL_RenderTexture(renderer_, texture_, nullptr, &dst);

@@ -20,13 +20,12 @@ struct Aspect {
   std::uint32_t den = 3;
 };
 
-// The display aspect of a frame: 16:9 when the session runs widescreen (the runtime
-// renders anamorphic), otherwise the frame's own width:height (square pixels).
-inline Aspect display_aspect(std::uint32_t frame_w, std::uint32_t frame_h, bool widescreen) {
-  if (widescreen) return Aspect{16, 9};
-  if (frame_w == 0 || frame_h == 0) return Aspect{4, 3};
-  return Aspect{frame_w, frame_h};
-}
+// The display aspect: 16:9 when the session runs widescreen (the runtime renders
+// anamorphic), otherwise 4:3. Console output is 4:3 whatever the frame's pixel size
+// (an EFB such as 640x448 has non-square pixels), so the frame's own width:height is never
+// used. Titles that are natively 16:9 (MP9 on, later phases) will need the runtime to
+// report its display aspect, which is a core contract change for its own ADR.
+inline Aspect display_aspect(bool widescreen) { return widescreen ? Aspect{16, 9} : Aspect{4, 3}; }
 
 // The largest rectangle of `aspect` that fits in dst_w x dst_h, centred. Empty if the
 // window is empty.
