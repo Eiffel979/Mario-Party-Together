@@ -23,7 +23,7 @@ set(_out "${CMAKE_CURRENT_BINARY_DIR}/out")
 function(_mpt_gx_scene_exe name renderer)
   add_executable(${name} scene_runner.cpp scenes.cpp)
   target_link_libraries(${name} PRIVATE ${renderer} mpt::gx_math_redirect xxHash::xxhash)
-  target_include_directories(${name} PRIVATE "${MPT_GX_AURORA}/lib" "${MPT_GX_AURORA}/lib/dolphin/gx")
+  target_include_directories(${name} SYSTEM PRIVATE "${MPT_GX_AURORA}/lib" "${MPT_GX_AURORA}/lib/dolphin/gx")
   target_compile_options(${name} PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${MPT_GX_WARN_FLAGS}>")
 endfunction()
 
@@ -65,6 +65,7 @@ endif()
 find_package(doctest CONFIG REQUIRED)
 add_executable(mpt_gx_mtx_tests test_mtx.cpp)
 target_link_libraries(mpt_gx_mtx_tests PRIVATE mpt_gx_frontend mpt::gx_math_redirect doctest::doctest)
+target_compile_definitions(mpt_gx_mtx_tests PRIVATE _CRT_SECURE_NO_WARNINGS)  # std::getenv
 target_compile_options(mpt_gx_mtx_tests PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${MPT_GX_WARN_FLAGS}>")
 add_test(NAME gx_mtx_golden COMMAND mpt_gx_mtx_tests)
 

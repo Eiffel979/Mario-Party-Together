@@ -206,9 +206,11 @@ add_library(mpt::gx_math_redirect ALIAS mpt_gx_math_redirect)
 # ---- Front end + MTX: game-visible, game module, ADR 0008 flags ---------------------------------
 add_library(mpt_gx_frontend STATIC ${MPT_GX_FRONTEND_SOURCES} ${MPT_GX_MTX_SOURCES} src/sdk_additions.cpp)
 add_library(mpt::gx_frontend ALIAS mpt_gx_frontend)
-target_include_directories(mpt_gx_frontend
-  PUBLIC include "${MPT_GX_AURORA}/include"
-  PRIVATE "${MPT_GX_AURORA}/lib" "${MPT_GX_AURORA}/lib/dolphin/gx")
+target_include_directories(mpt_gx_frontend PUBLIC include)
+# aurora's headers are SYSTEM: our warning flags are not for its code.
+target_include_directories(mpt_gx_frontend SYSTEM
+  PUBLIC "${MPT_GX_AURORA}/include"
+  PRIVATE "${MPT_GX_AURORA}/lib/dolphin/gx")
 target_compile_definitions(mpt_gx_frontend PUBLIC ${_aurora_defs})
 target_link_libraries(mpt_gx_frontend
   PUBLIC mpt::gc_sdk mpt_gx_dawn_headers mpt_gx_tracy_headers fmt::fmt xxHash::xxhash
@@ -218,7 +220,7 @@ set_source_files_properties(${MPT_GX_FRONTEND_SOURCES} ${MPT_GX_MTX_SOURCES} TAR
   PROPERTIES COMPILE_OPTIONS "${_aurora_nowarn};${_force_include}")
 target_compile_options(mpt_gx_frontend PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${MPT_GX_WARN_FLAGS}>")
 # Renderer internals the front end's headers reference.
-target_include_directories(mpt_gx_frontend PUBLIC "$<BUILD_INTERFACE:${MPT_GX_AURORA}/lib>")
+target_include_directories(mpt_gx_frontend SYSTEM PUBLIC "$<BUILD_INTERFACE:${MPT_GX_AURORA}/lib>")
 
 # ---- Renderers ----------------------------------------------------------------------------------
 # The null renderer is always built (it is small and needs no Dawn), so tests can compare null against
@@ -227,7 +229,7 @@ add_library(mpt_gx_renderer_null STATIC ${MPT_GX_NULL_SOURCES} src/null_renderer
 set_source_files_properties(${MPT_GX_NULL_SOURCES} TARGET_DIRECTORY mpt_gx_renderer_null
   PROPERTIES COMPILE_OPTIONS "${_aurora_nowarn}")
 target_link_libraries(mpt_gx_renderer_null PUBLIC mpt_gx_frontend)
-target_include_directories(mpt_gx_renderer_null PRIVATE "${MPT_GX_AURORA}/lib" "${MPT_GX_AURORA}/lib/dolphin/gx")
+target_include_directories(mpt_gx_renderer_null SYSTEM PRIVATE "${MPT_GX_AURORA}/lib" "${MPT_GX_AURORA}/lib/dolphin/gx")
 target_compile_options(mpt_gx_renderer_null PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${MPT_GX_WARN_FLAGS}>")
 
 if(MPT_GX_BACKEND STREQUAL "dawn")
@@ -241,7 +243,7 @@ if(MPT_GX_BACKEND STREQUAL "dawn")
   target_link_libraries(mpt_gx_renderer_dawn
     PUBLIC mpt_gx_frontend dawn::webgpu_dawn
     PRIVATE SDL3::SDL3 PNG::PNG unofficial::sqlite3::sqlite3 absl::flat_hash_map absl::flat_hash_set absl::hash)
-  target_include_directories(mpt_gx_renderer_dawn PRIVATE "${MPT_GX_AURORA}/lib" "${MPT_GX_AURORA}/lib/dolphin/gx")
+  target_include_directories(mpt_gx_renderer_dawn SYSTEM PRIVATE "${MPT_GX_AURORA}/lib" "${MPT_GX_AURORA}/lib/dolphin/gx")
   target_compile_options(mpt_gx_renderer_dawn PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${MPT_GX_WARN_FLAGS}>")
   add_library(mpt::gx ALIAS mpt_gx_renderer_dawn)
 else()
