@@ -30,6 +30,8 @@ dumps/
 *.gcs
 *.sav
 *.raw
+*.mptsave
+*.mptsave.tmp
 
 # Pinned game-source checkouts for developer builds (ADR 0009)
 /external/

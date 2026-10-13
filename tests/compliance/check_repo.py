@@ -44,6 +44,9 @@ FORBIDDEN_EXTENSIONS = {
 # Memory-card and save images. They are user data that embed game-made icons and
 # banners, so they are never committed (ADR 0004, P1-20e1).
 SAVE_MEDIA_EXTENSIONS = {".gci", ".gcs", ".sav", ".raw"}
+# The shell's own save slots (core/shell/save_store.h): <title>/<region>/slot0.mptsave and its
+# .tmp sibling during an atomic write. Matched on any suffix, so the .tmp file fails too.
+SHELL_SAVE_SUFFIX = ".mptsave"
 
 # Graphics build output and caches, matched by file name at any depth (ADR 0007 section 6,
 # P1-14 gate). Dawn is built locally from pinned source and never committed, and GPU
@@ -112,6 +115,8 @@ def check_file(path: str, size: int, head: bytes, allowlist: list[str]) -> list[
     pure = PurePosixPath(path)
     if pure.suffix.lower() in FORBIDDEN_EXTENSIONS:
         findings.append(Finding(path, f"forbidden file type '{pure.suffix}'"))
+    if any(suffix.lower() == SHELL_SAVE_SUFFIX for suffix in pure.suffixes):
+        findings.append(Finding(path, "shell save slot (save media is user data, ADR 0004)"))
     if pure.suffix.lower() in SAVE_MEDIA_EXTENSIONS:
         findings.append(Finding(path, f"memory-card or save image '{pure.suffix}' (save media is user data, ADR 0004)"))
     if pure.name.lower() in FORBIDDEN_FILENAMES:
