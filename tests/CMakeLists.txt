@@ -106,4 +106,15 @@ find_package(Python3 COMPONENTS Interpreter)
 if(Python3_FOUND)
   add_test(NAME compliance_selftest
     COMMAND Python3::Interpreter -m unittest discover -s "${CMAKE_CURRENT_SOURCE_DIR}/compliance" -p "test_*.py")
+  set_tests_properties(compliance_selftest PROPERTIES
+    ENVIRONMENT "MPT_REPLAY_CHECK=$<TARGET_FILE:mpt_replay_check>")
+
+  # The built .mptr validator accepts a valid fixture, and it and the scanner's Python port
+  # (tests/compliance/mptr.py) agree on every generated case (P1-20e2). Fails, rather than
+  # skips, if the tool is missing.
+  add_test(NAME replay_check_agrees_with_scanner
+    COMMAND Python3::Interpreter -m unittest test_mptr.ToolCrossCheckTest
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/compliance")
+  set_tests_properties(replay_check_agrees_with_scanner PROPERTIES
+    ENVIRONMENT "MPT_REPLAY_CHECK=$<TARGET_FILE:mpt_replay_check>;MPT_REQUIRE_REPLAY_CHECK=1")
 endif()
