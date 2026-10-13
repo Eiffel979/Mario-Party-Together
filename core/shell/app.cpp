@@ -302,6 +302,10 @@ class Shell final : public IShellCommands {
       const std::uint64_t t0 = SDL_GetTicksNS();
       if (loop_) {
         const bool ui_focus = overlay_ && overlay_->hasFocus();
+        // Leaving a UI screen starts a new pacing segment, as resuming from pause does, so
+        // the frames that were not stepped are not caught up in a burst.
+        if (had_ui_focus_ && !ui_focus) pacer_.reset(SDL_GetTicksNS());
+        had_ui_focus_ = ui_focus;
         const FrameLoop::Tick tick = loop_->tick(ui_focus);
         if (tick == FrameLoop::Tick::stepped) {
           stepped = true;
@@ -554,6 +558,7 @@ class Shell final : public IShellCommands {
   AudioOut audio_;
   FramePacer pacer_;
   IOverlay* overlay_ = nullptr;
+  bool had_ui_focus_ = false;
 
   std::unique_ptr<Session> session_;
   std::unique_ptr<FrameLoop> loop_;
