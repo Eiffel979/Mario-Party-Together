@@ -26,6 +26,10 @@ namespace ai = mpt::asset_import;
 
 namespace {
 
+// argv is in the native narrow encoding (the ANSI code page on Windows, UTF-8 elsewhere), which is
+// what fs::path's narrow constructor expects.
+fs::path arg_path(const std::string& text) { return fs::path(text); }
+
 int usage() {
   std::cerr << "usage: mpt_fetch_sources --lock <file> --cache <dir> [--override name=<dir>]... [--out <file.cmake>]\n";
   return 2;
@@ -53,16 +57,16 @@ int main(int argc, char** argv) {
     const std::string arg = argv[i];
     const bool has_value = i + 1 < argc;
     if (arg == "--lock" && has_value) {
-      lock_path = fs::u8path(argv[++i]);
+      lock_path = arg_path(argv[++i]);
     } else if (arg == "--cache" && has_value) {
-      cache = fs::u8path(argv[++i]);
+      cache = arg_path(argv[++i]);
     } else if (arg == "--out" && has_value) {
-      out_path = fs::u8path(argv[++i]);
+      out_path = arg_path(argv[++i]);
     } else if (arg == "--override" && has_value) {
       const std::string value = argv[++i];
       const auto eq = value.find('=');
       if (eq == std::string::npos || eq == 0) return usage();
-      inputs[value.substr(0, eq)] = ai::SourceInput{ai::SourceOrigin::override_dir, fs::u8path(value.substr(eq + 1))};
+      inputs[value.substr(0, eq)] = ai::SourceInput{ai::SourceOrigin::override_dir, arg_path(value.substr(eq + 1))};
     } else {
       return usage();
     }
