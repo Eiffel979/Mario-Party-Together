@@ -14,6 +14,9 @@ image (ADR 0004), is a Dawn library or GPU pipeline cache (ADR 0007),
 sits in a dump or extracted-asset directory, sits under the
 root external/ directory where game-source checkouts live (ADR 0009), starts with
 a known console image signature, is binary, or is larger than the size limit.
+Replay files (.mptr) are allowed only under tests/replays/, and only if they pass
+the committed-fixture rule of ADR 0006 (mptr.py, plus mpt_replay_check --fixture
+when MPT_REPLAY_CHECK names the built tool).
 Legitimate exceptions go in allowlist.txt with a reason.
 """
 
@@ -21,10 +24,16 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import os
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import Callable, Optional
+
+sys.path.insert(0, str(Path(__file__).parent))
+import mptr  # noqa: E402
 
 HEAD_BYTES = 64 * 1024  # how much of each file is inspected for signatures and NUL bytes
 MAX_FILE_BYTES = 1024 * 1024
@@ -49,6 +58,9 @@ SAVE_MEDIA_EXTENSIONS = {".gci", ".gcs", ".sav", ".raw"}
 # P1-14 gate). Dawn is built locally from pinned source and never committed, and GPU
 # pipeline caches hold driver- and shader-derived data from a local run.
 FORBIDDEN_FILENAMES = {"webgpu_dawn.dll", "dawn_cache.db", "pipeline_cache.db"}
+
+# Replay fixtures (ADR 0006): the only place .mptr files may be committed.
+REPLAY_FIXTURE_DIR = "tests/replays/"
 
 # Forbidden at any depth.
 FORBIDDEN_DIRS = {"dumps", "extracted", "roms", "isos"}
@@ -103,8 +115,41 @@ def load_allowlist(path: Path = ALLOWLIST) -> list[str]:
     return patterns
 
 
-def check_file(path: str, size: int, head: bytes, allowlist: list[str]) -> list[Finding]:
-    """Checks one file given its repo-relative POSIX path, total size and first bytes."""
+def run_replay_check(tool: str, data: bytes) -> Optional[str]:
+    """Runs the built mpt_replay_check --fixture on `data`. None if it passes, else its message."""
+    handle, name = tempfile.mkstemp(suffix=".mptr")
+    try:
+        with os.fdopen(handle, "wb") as f:
+            f.write(data)
+        result = subprocess.run([tool, "--fixture", name], capture_output=True, text=True)
+    finally:
+        os.unlink(name)
+    if result.returncode == 0:
+        return None
+    if result.returncode == 1:
+        return result.stdout.strip().split(": ", 1)[-1] or "rejected"
+    return f"mpt_replay_check failed to run (exit {result.returncode}): {result.stderr.strip()}"
+
+
+def replay_fixture_problem(data: bytes) -> Optional[str]:
+    """The committed-fixture rule (ADR 0006 amendment, point 6). None if `data` passes."""
+    problem = mptr.validate(data, fixture=True)
+    tool = os.environ.get("MPT_REPLAY_CHECK")
+    if tool:
+        tool_problem = run_replay_check(tool, data)
+        if (problem is None) != (tool_problem is None):
+            return (f"mptr.py and mpt_replay_check disagree (mptr.py: {problem or 'valid'}; "
+                    f"mpt_replay_check: {tool_problem or 'valid'})")
+    return problem
+
+
+def check_file(path: str, size: int, head: bytes, allowlist: list[str],
+               content: Optional[Callable[[], bytes]] = None) -> list[Finding]:
+    """Checks one file given its repo-relative POSIX path, total size and first bytes.
+
+    `content` returns the whole file. It is needed only for replay fixtures; without it
+    `head` must already hold the whole file.
+    """
     if any(fnmatch.fnmatchcase(path, pattern) for pattern in allowlist):
         return []
 
@@ -122,6 +167,18 @@ def check_file(path: str, size: int, head: bytes, allowlist: list[str]) -> list[
         if part.lower() in FORBIDDEN_DIRS:
             findings.append(Finding(path, f"inside a '{part}/' directory"))
             break
+    if pure.suffix.lower() == ".mptr":
+        if not path.startswith(REPLAY_FIXTURE_DIR):
+            findings.append(Finding(path, "replay files belong only in tests/replays/ (ADR 0006)"))
+        else:
+            # A fixture is binary by design. It is fully parsed instead of the signature
+            # and NUL-byte checks below; the size limit still applies.
+            problem = replay_fixture_problem(content() if content else head)
+            if problem:
+                findings.append(Finding(path, f"invalid replay fixture: {problem}"))
+            if size > MAX_FILE_BYTES:
+                findings.append(Finding(path, f"{size} bytes exceeds the {MAX_FILE_BYTES} byte limit"))
+            return findings
     for offset, magic, description in SIGNATURES:
         if head[offset:offset + len(magic)] == magic:
             findings.append(Finding(path, f"looks like a {description}"))
@@ -147,6 +204,11 @@ def read_blob_head(spec: str) -> tuple[int, bytes]:
     return size, head
 
 
+def read_blob(spec: str) -> bytes:
+    """The whole content of a git blob."""
+    return subprocess.run(["git", "cat-file", "blob", spec], check=True, capture_output=True).stdout
+
+
 def scan_tree(allowlist: list[str]) -> list[Finding]:
     findings = []
     for path in git("ls-files", "-z").split("\0"):
@@ -157,7 +219,7 @@ def scan_tree(allowlist: list[str]) -> list[Finding]:
             continue
         with file.open("rb") as f:
             head = f.read(HEAD_BYTES)
-        findings += check_file(path, file.stat().st_size, head, allowlist)
+        findings += check_file(path, file.stat().st_size, head, allowlist, content=file.read_bytes)
     return findings
 
 
@@ -166,7 +228,7 @@ def scan_staged(allowlist: list[str]) -> list[Finding]:
     for path in git("diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR").split("\0"):
         if path:
             size, head = read_blob_head(f":{path}")
-            findings += check_file(path, size, head, allowlist)
+            findings += check_file(path, size, head, allowlist, content=lambda spec=f":{path}": read_blob(spec))
     return findings
 
 
@@ -187,7 +249,9 @@ def scan_commits(rev_range: str, allowlist: list[str]) -> list[Finding]:
         for path in changed.split("\0"):
             if path:
                 size, head = read_blob_head(f"{commit}:{path}")
-                findings += [Finding(f"{commit[:10]}:{f.path}", f.reason) for f in check_file(path, size, head, allowlist)]
+                content = lambda spec=f"{commit}:{path}": read_blob(spec)  # noqa: E731
+                findings += [Finding(f"{commit[:10]}:{f.path}", f.reason)
+                             for f in check_file(path, size, head, allowlist, content=content)]
     return findings
 
 
