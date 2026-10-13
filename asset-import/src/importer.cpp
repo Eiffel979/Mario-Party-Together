@@ -2,10 +2,12 @@
 
 #include <fstream>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include "mpt/asset_import/byte_source.h"
 #include "mpt/asset_import/gc_disc.h"
+#include "mpt/asset_import/sha1.h"
 #include "mpt/asset_import/sha256.h"
 
 namespace mpt::asset_import {
@@ -13,6 +15,24 @@ namespace {
 
 constexpr std::uintmax_t kMaxN64Size = 64ull * 1024 * 1024;  // largest N64 cartridge
 constexpr std::size_t kChunkSize = 1 << 20;
+
+// SHA-256 (the identity) and SHA-1 (to cross-check public dump databases, D8),
+// fed from the same read.
+struct Hashers {
+  Sha256 sha256;
+  Sha1 sha1;
+  void update(std::span<const std::byte> data) {
+    sha256.update(data);
+    sha1.update(data);
+  }
+};
+
+// "Mario Party 4 (USA, Rev 1, GMPE01_01)"
+std::string describe(const KnownDump& dump) {
+  std::string text = std::string(title_display_name(dump.title)) + " (" + dump.region + ", " + dump.revision;
+  if (!dump.game_version.empty()) text += ", " + dump.game_version;
+  return text + ")";
+}
 
 }  // namespace
 
@@ -45,7 +65,7 @@ IdentifyReport Importer::identify(const std::filesystem::path& path) const {
 
   file.clear();
   file.seekg(0);
-  Sha256 hasher;
+  Hashers hasher;
   if (is_n64(report.format)) {
     if (size > kMaxN64Size || size % 4 != 0) {
       report.message = "File size does not match an N64 cartridge image.";
@@ -66,7 +86,8 @@ IdentifyReport Importer::identify(const std::filesystem::path& path) const {
       hasher.update(std::span(chunk).first(static_cast<std::size_t>(file.gcount())));
     }
   }
-  report.sha256 = hasher.finish_hex();
+  report.sha256 = hasher.sha256.finish_hex();
+  report.sha1 = hasher.sha1.finish_hex();
 
   // The hash is the identity: a known-good dump is accepted on its hash alone, even
   // if a strict structural rule would object (extraction enforces those rules on
@@ -81,9 +102,44 @@ IdentifyReport Importer::identify(const std::filesystem::path& path) const {
     }
   }
 
-  if (const KnownDump* match = known_.find_by_sha256(report.sha256); match && match->size == size) {
+  if (const KnownDump* match = known_.find_supported(report.sha256, report.sha1, size)) {
     report.match = *match;
-  } else if (report.format == DumpFormat::gc_disc && !report.gc_disc) {
+    return report;
+  }
+
+  // Known, but not a version we support: name it (E11) instead of calling it unknown.
+  if (const KnownDump* known = known_.find_by_sha1(report.sha1, size); known && !known->supported) {
+    report.unsupported = *known;
+    report.message = "This is " + describe(*known) + ". " + known->reason;
+    return report;
+  }
+  if (report.gc_disc) {
+    const auto candidates = known_.find_by_disc(report.gc_disc->disc_id, report.gc_disc->version);
+    for (const KnownDump* known : candidates) {
+      if (known->supported) continue;
+      report.unsupported = *known;
+      report.message = "This is " + describe(*known) + ". " + known->reason;
+      if (size != kGcFullDiscSize) report.message += " (The image also looks truncated or trimmed.)";
+      return report;
+    }
+    for (const KnownDump* known : candidates) {
+      // The header says this is a version we support, but the hashes differ.
+      report.message = "This disc says it is " + describe(*known) +
+                       ", but it does not match the verified dump of that version.";
+      std::string damage;
+      if (!GcDisc::open(*gc_source, damage)) {
+        report.message += " It is damaged or altered: " + damage;
+      } else if (size != kGcFullDiscSize) {
+        report.message += " The image is " + std::to_string(size) + " bytes but a full disc is " +
+                          std::to_string(kGcFullDiscSize) + " bytes, so it is probably truncated or trimmed.";
+      } else {
+        report.message += " It may be a bad dump or a modified copy. Dump the disc again and try again.";
+      }
+      return report;
+    }
+  }
+
+  if (report.format == DumpFormat::gc_disc && !report.gc_disc) {
     report.message = gc_error;
   } else if (std::string error; report.gc_disc && !GcDisc::open(*gc_source, error)) {
     report.message = "This GameCube disc (" + report.gc_disc->disc_id + ") is not in the known-good list, and " +

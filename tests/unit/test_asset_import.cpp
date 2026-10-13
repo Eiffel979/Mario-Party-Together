@@ -11,6 +11,7 @@
 #include "mpt/asset_import/dump_format.h"
 #include "mpt/asset_import/importer.h"
 #include "mpt/asset_import/known_dumps.h"
+#include "mpt/asset_import/sha1.h"
 #include "mpt/asset_import/sha256.h"
 
 using namespace mpt;
@@ -80,10 +81,17 @@ class TempDir {
   std::filesystem::path path_;
 };
 
-KnownDumps known_with(const std::string& sha256, std::uint64_t size) {
+std::string sha1_of(std::span<const std::byte> data) {
+  Sha1 h;
+  h.update(data);
+  return h.finish_hex();
+}
+
+KnownDumps known_with(const std::string& sha256, const std::string& sha1, std::uint64_t size) {
   std::string error;
-  const std::string json = R"({"version":1,"dumps":[{"title":"mp1","region":"USA","revision":"1.0","sha256":")" +
-                           sha256 + R"(","size":)" + std::to_string(size) + "}]}";
+  const std::string json =
+      R"({"version":2,"dumps":[{"title":"mp1","region":"USA","revision":"1.0","supported":true,"sha256":")" + sha256 +
+      R"(","sha1":")" + sha1 + R"(","size":)" + std::to_string(size) + "}]}";
   auto known = KnownDumps::parse(json, error);
   REQUIRE_MESSAGE(known.has_value(), error);
   return *known;
@@ -137,39 +145,90 @@ TEST_CASE("N64 byte orders normalize to z64") {
   CHECK_FALSE(normalize_n64(v64, DumpFormat::gc_disc));
 }
 
-TEST_CASE("known_dumps.json is validated") {
-  const std::string empty_sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-  std::string error;
-  CHECK(KnownDumps::parse(R"({"version":1,"dumps":[]})", error).has_value());
-
-  CHECK_FALSE(KnownDumps::parse("not json", error).has_value());
-  CHECK_FALSE(KnownDumps::parse(R"({"version":2,"dumps":[]})", error).has_value());
-  CHECK_FALSE(KnownDumps::parse(R"({"version":1})", error).has_value());
-  CHECK_FALSE(
-      KnownDumps::parse(R"({"version":1,"dumps":[{"title":"mp99","sha256":")" + empty_sha + R"(","size":1}]})", error)
-          .has_value());
-  CHECK_FALSE(
-      KnownDumps::parse(R"({"version":1,"dumps":[{"title":"mp1","sha256":")" + empty_sha + R"(","size":0}]})", error)
-          .has_value());
-
-  const std::string entry = R"({"title":"mp1","sha256":")" + empty_sha + R"(","size":1})";
-  CHECK_FALSE(KnownDumps::parse(R"({"version":1,"dumps":[)" + entry + "," + entry + "]}", error).has_value());
-  CHECK(error.find("duplicates") != std::string::npos);
-
-  CHECK_FALSE(KnownDumps::parse(R"({"version":1,"dumps":[{"title":"mp1","sha256":"ABC","size":1}]})", error)
-                  .has_value());
-  CHECK(error.find("sha256") != std::string::npos);
+TEST_CASE("SHA-1 is computed alongside SHA-256 and matches FIPS 180-4") {
+  CHECK(sha1_of(as_bytes("abc")) == "a9993e364706816aba3e25717850c26c9cd0d89d");
 }
 
-TEST_CASE("the shipped known_dumps.json is valid") {
+TEST_CASE("known_dumps.json schema v2 is validated") {
+  const std::string sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+  const std::string sha1 = "da39a3ee5e6b4b0d3255bfef95601890afd80709";
+  const std::string supported = R"({"title":"mp1","region":"USA","revision":"1.0","supported":true,"sha256":")" +
+                                sha256 + R"(","sha1":")" + sha1 + R"(","size":1)";
+  auto doc = [](const std::string& entries) { return R"({"version":2,"dumps":[)" + entries + "]}"; };
+  auto rejected = [](const std::string& json, std::string_view needle) {
+    std::string error;
+    CHECK_FALSE(KnownDumps::parse(json, error).has_value());
+    CHECK_MESSAGE(error.find(needle) != std::string::npos, "error was: " << error);
+  };
+
   std::string error;
-  CHECK_MESSAGE(KnownDumps::load(MPT_KNOWN_DUMPS_JSON, error).has_value(), error);
+  CHECK(KnownDumps::parse(doc(""), error).has_value());
+  CHECK(KnownDumps::parse(doc(supported + "}"), error).has_value());
+
+  rejected("not json", "not a JSON object");
+  rejected(R"({"version":1,"dumps":[]})", "unsupported version");
+  rejected(R"({"version":2})", "\"dumps\"");
+  rejected(R"({"version":2,"dumps":[],"extra":1})", "unknown field 'extra'");
+  rejected(doc(supported + R"(,"crc":"x"})"), "unknown field 'crc'");
+  rejected(doc(R"({"title":"mp99","region":"USA","revision":"1.0","supported":false,"disc_id":"GABE01","reason":"r"})"),
+           "title");
+  rejected(doc(R"({"title":"mp1","region":"USA","revision":"1.0","sha256":")" + sha256 + R"("})"), "supported");
+  rejected(doc(R"({"title":"mp1","region":"USA","revision":"1.0","supported":true,"sha256":")" + sha256 +
+               R"(","size":1})"),
+           "needs sha256, sha1 and size");
+  rejected(doc(R"({"title":"mp1","region":"USA","revision":"1.0","supported":true,"sha256":")" + sha256 +
+               R"(","sha1":")" + sha1 + R"(","size":0})"),
+           "size");
+  rejected(doc(supported + "}," + supported + "}"), "duplicates");
+  rejected(doc(R"({"title":"mp1","region":"USA","revision":"1.0","supported":true,"sha256":"ABC","sha1":")" + sha1 +
+               R"(","size":1})"),
+           "sha256");
+  rejected(doc(supported + R"(,"md5":"xyz"})"), "md5");
+  rejected(doc(supported + R"(,"reason":"r"})"), "must not have a reason");
+  rejected(doc(R"({"title":"mp4","region":"EUR","revision":"any","supported":false,"disc_id":"GABP01"})"),
+           "needs a reason");
+  rejected(doc(R"({"title":"mp4","region":"EUR","revision":"any","supported":false,"reason":"r"})"),
+           "sha1 or a disc_id");
+  rejected(doc(R"({"title":"mp4","region":"EUR","revision":"any","supported":false,"disc_id":"gabp01","reason":"r"})"),
+           "disc_id");
+  rejected(doc(R"({"title":"mp4","region":"USA","revision":"x","supported":false,"disc_id":"GABE01","disc_version":256,)"
+               R"("reason":"r"})"),
+           "disc_version");
+  rejected(doc(R"({"title":"mp4","region":"USA","revision":"x","supported":false,"sha1":")" + sha1 +
+               R"(","disc_version":1,"reason":"r"})"),
+           "needs a disc_id");
+}
+
+TEST_CASE("the shipped known_dumps.json is valid and supports exactly GMPE01_00") {
+  std::string error;
+  const auto known = KnownDumps::load(MPT_KNOWN_DUMPS_JSON, error);
+  REQUIRE_MESSAGE(known.has_value(), error);
+  std::vector<const KnownDump*> supported;
+  for (const KnownDump& dump : known->entries()) {
+    if (dump.supported) supported.push_back(&dump);
+  }
+  REQUIRE(supported.size() == 1);
+  const KnownDump& mp4 = *supported[0];
+  CHECK(mp4.title == TitleId::mp4);
+  CHECK(mp4.game_version == "GMPE01_00");
+  CHECK(mp4.disc_id == "GMPE01");
+  CHECK(mp4.disc_version == std::uint8_t{0});
+  CHECK(mp4.size == 1'459'978'240u);  // a full GameCube disc
+  CHECK(mp4.sha256.size() == 64);
+  CHECK(mp4.sha1.size() == 40);
+
+  // E11: the other MP4 revisions and regions are named, not "unknown".
+  CHECK_FALSE(known->find_by_disc("GMPE01", 1).empty());
+  CHECK_FALSE(known->find_by_disc("GMPP01", 0).empty());
+  CHECK_FALSE(known->find_by_disc("GMPJ01", 0).empty());
+  CHECK_FALSE(known->find_by_disc("GMPE01", 1)[0]->supported);
 }
 
 TEST_CASE("importer identifies a synthetic N64 dump in any byte order") {
   const auto z64 = fake_z64();
   const std::string expected_sha = sha256_of(z64);
-  const Importer importer(known_with(expected_sha, z64.size()));
+  const std::string expected_sha1 = sha1_of(z64);
+  const Importer importer(known_with(expected_sha, expected_sha1, z64.size()));
   const TempDir dir;
 
   const std::pair<const char*, std::vector<std::byte>> cases[] = {
@@ -179,6 +238,7 @@ TEST_CASE("importer identifies a synthetic N64 dump in any byte order") {
     const IdentifyReport report = importer.identify(dir.write(name, data));
     CHECK(is_n64(report.format));
     CHECK(report.sha256 == expected_sha);
+    CHECK(report.sha1 == expected_sha1);  // of the normalized image, from the same read
     REQUIRE(report.match.has_value());
     CHECK(report.match->title == TitleId::mp1);
     CHECK(report.match->region == "USA");
@@ -186,7 +246,7 @@ TEST_CASE("importer identifies a synthetic N64 dump in any byte order") {
 }
 
 TEST_CASE("importer rejects unknown, unsupported and unreadable files") {
-  const Importer importer(known_with(std::string(64, '0'), 1));
+  const Importer importer(known_with(std::string(64, '0'), std::string(40, '0'), 1));
   const TempDir dir;
 
   const IdentifyReport not_in_db = importer.identify(dir.write("other.z64", fake_z64()));
