@@ -12,7 +12,7 @@ A decomp port compiles the community's reverse-engineered C source of the game. 
 P1-01 (`docs/titles/mp4.md` §1–5, §13) established:
 - **`mariopartyrd/marioparty4`** (the matching decomp) is complete and fully matching for `GMPE01_00` and `GMPE01_01`. `main` is at `147b165a83187ac9e6cfdc3bf52f2e73437b1ffd` and has **no license**. A CC0 1.0 license is proposed in open PR #663, not merged. Its matching build `#include`s about 20 data blobs that decomp-toolkit extracts from the user's `main.dol` and `bootDll.rel`, so it cannot compile without a dump.
 - **`mariopartyrd/partyboard`** ("Party Board") is the same organisation's PC port. Its game sources are forked from the decomp and adapted for PC. It is licensed **CC0 1.0** today. Under its PC build it reads those blobs **at runtime** from the user's disc data through a per-revision address table, so the compiled game code contains no dump-derived bytes. It supports `GMPE01_00` and `GMPE01_01`. It has **no audio** (MusyX init is disabled), **no THP movies**, and memory-card saves that do not fit our host-owned model. Its OS time layer (aurora) reads the host clock.
-- Party Board's submodules: `AxioDL/musyx` (CC0 1.0), `encounter/aurora` (MIT) and `higan-emu/libco` (ISC, to be confirmed if adopted). aurora in turn builds Dawn (BSD-3-Clause), at a commit it records (spike S1).
+- Party Board's submodules: `AxioDL/musyx` (MIT at the commit Party Board records; CC0 1.0 from `8cb588d` on, corrected after P1-13b), `encounter/aurora` (MIT) and `higan-emu/libco` (ISC, to be confirmed if adopted). aurora in turn builds Dawn (BSD-3-Clause), at a commit it records (spike S1).
 - The developer's local copy of `marioparty4` is a zip with no `.git` and an empty `extern/musyx`. Sampled blobs match `main` at `147b165`, but a zip cannot prove a commit.
 - The developer's dump is USA Rev 0 (`GMPE01`, version byte `0x00`), the primary matching target.
 
@@ -29,7 +29,7 @@ P1-01 (`docs/titles/mp4.md` §1–5, §13) established:
 | Name | Repository | Pin (full commit hash) | License (SPDX) | Role |
 |---|---|---|---|---|
 | `partyboard` | `https://github.com/mariopartyrd/partyboard` | `98ac07fd1e8f7ab938bbb6fe75789fad99419010` | `CC0-1.0` | MP4 game source: game core, RELs, `msm`, MSL math, THP, and selected port files (§2) |
-| `musyx` | `https://github.com/AxioDL/musyx` | `2a0e01aeff0d06a9ee9e12966c435cb75144af9e` (the commit Party Board's pin records) | `CC0-1.0` | Sound library, run through its PC synth in pull mode (ADR 0007) |
+| `musyx` | `https://github.com/AxioDL/musyx` | **`86851a3a8d51788d166ea42d137b49526f570400`** (upstream `main`, 2026-10-13), replacing `2a0e01aeff0d06a9ee9e12966c435cb75144af9e`, which Party Board's pin records. See the amendment after P1-13b. | `CC0-1.0` at the new pin. The old pin `2a0e01a` is `MIT`: CC0 starts at `8cb588d`. | Sound library, run through its PC synth in pull mode (ADR 0007). The pull-mode renderer exists only from `9fc772d` on. |
 | `aurora` | `https://github.com/encounter/aurora` | `514339438178ef2bed1b14e5149d90ece0c6e0cc` (Party Board's pin). **Required** (spike S1, ADR 0007 §6). | `MIT` | GX front end, WebGPU renderer, MTX and Dolphin headers (GD for later titles). Not `aurora_core`, and not its OS/VI/PAD/DVD/CARD/SI/THP/time code. Carries the ADR 0007 §6 patch set. |
 | `dawn` | `https://dawn.googlesource.com/dawn` (GitHub mirror `google/dawn`) | `13abc3bc8ea2d3c2050f9e77a12d012108ceee24` (the commit aurora records). **Required.** | `BSD-3-Clause` (some dependencies, such as Tint's, are `Apache-2.0`) | WebGPU implementation for aurora's renderer. **Built from source, never prebuilt.** Its own dependencies are pinned by the `DEPS` file at this commit, and fetched with that commit's `fetch_dawn_dependencies.py`. Linked into the host-side renderer library, never into the game module (ADR 0007 §6). |
 | `libco` | `https://github.com/higan-emu/libco` | `e18e09d634d612a01781168ad4d76be10a7e3bad` (Party Board's pin). **Only if P1-13 adopts it** (ADR 0008 §1). | `ISC` (confirm when adopted) | Coroutines |
@@ -101,7 +101,7 @@ The earlier draft had interim rules I1–I4 because no licensed source existed. 
 ## Review (architect, 2026-10-08)
 **Verdict: Accepted.** The earlier draft stayed Proposed for two reasons, and both are now resolved for the sources we actually build:
 1. **Pins.** Every source is pinned by a full upstream commit hash from P1-01 (§1). After spike S1, aurora and Dawn are required. libco stays conditional on P1-13, and its pin is already known.
-2. **License.** The pinned game source is CC0 1.0, musyx is CC0 1.0, aurora is MIT, Dawn is BSD-3-Clause (with Apache-2.0 dependencies) and libco is ISC (to be confirmed if adopted). These clearly permit fetching, patching and compiling locally. The unlicensed `marioparty4` is no longer a build input.
+2. **License.** The pinned game source is CC0 1.0, musyx is CC0 1.0 (at the pin set after P1-13b; the earlier pin `2a0e01a` was MIT, which this review misstated), aurora is MIT, Dawn is BSD-3-Clause (with Apache-2.0 dependencies) and libco is ISC (to be confirmed if adopted). These clearly permit fetching, patching and compiling locally. The unlicensed `marioparty4` is no longer a build input.
 
 The build-success condition in the earlier draft ("a clean build from the pins") belongs to P1-15's acceptance test, not to this decision, and the fallback covers the case where it fails.
 
@@ -125,3 +125,35 @@ The build-success condition in the earlier draft ("a clean build from the pins")
    - The `cache_root`-based overload is removed, so no caller can compute a stale path.
    - P1-06 and P1-23 only call this function. They never assemble a `VerifiedDump` themselves.
 4. **libco is not adopted.** ADR 0008's amendment after P1-13 accepts our own context switch, so libco leaves the source list. It stays the named fallback.
+
+## Amendment after P1-13b: the musyx pin (architect, 2026-10-13)
+### Context
+runtime-gc-wii found during P1-13b that the musyx commit Party Board records, `2a0e01a`, cannot provide what ADR 0007 §4 and `docs/titles/mp4.md` §7 assume:
+- It has no PC renderer: no `sndPCRender`.
+- `hw_pc.c` builds a DSP command list but never mixes it, so voices never end.
+- The PC branch of `hw_aramdma.c` is stubs.
+- It synchronizes with Win32 mutexes or pthreads.
+- Under clang-cl it fails on a conflicting `aramUploadData` declaration.
+- It calls the host `powf`.
+
+The pull-mode renderer landed upstream in `9fc772d`, after that pin. The §1 table also gave the wrong license: `2a0e01a` is **MIT**, and musyx is CC0 only from `8cb588d` on. MIT still permits fetching, patching and local builds, so nothing done so far was out of bounds. The table row is now corrected.
+
+### Decision: option (a), bump the pin
+1. **The new pin is upstream `main` at `86851a3a8d51788d166ea42d137b49526f570400`.** It is CC0, it contains the pull-mode renderer from `9fc772d`, and it contains every upstream fix since.
+   - **Why not the earliest commit after `9fc772d`:** a minimal bump would leave us carrying fixes upstream has already made.
+   - **Why the API risk is low:** musyx is a matching decompilation of the console SDK, so its `snd*` API is the SDK's and stays stable across commits. The PC renderer adds code; it does not change the API `msm` calls.
+   - **License:** the new pin is CC0 like `partyboard`, so the I2/I3 relaxations (§5) apply to it unchanged.
+2. **The lock records the override.** In `runtimes/gc_wii/mp4/decomp.lock`, `musyx` is pinned at `86851a3` with its tree hash. `partyboard`'s `submodules` entry for `extern/musyx` keeps `gitlink: 2a0e01a…`, with the reason "pull-mode PC renderer (9fc772d) and CC0 (8cb588d) postdate Party Board's pin". The source-lock format supports this already (P1-10).
+3. **Acceptance conditions.** The P1-13b musyx integration does not merge until all of these hold:
+   - **(a) Party Board's `msm` builds against the new pin.** It must compile and link unmodified, or with a small patch under §5, as part of the P1-15 build. P1-15 records the result in `docs/titles/mp4.md`.
+   - **(b) The render path runs on the game thread only.** `sndPCRender`, or whatever the pull entry point is at the pin, is called from inside `stepFrame` on the virtual AI-DMA ticks (ADR 0007 §4). Every Win32 or pthread mutex, thread or condition variable on the paths we link is compiled to a no-op or patched out. A source grep in P1-22 lists any that remain.
+   - **(c) It builds with clang-cl and Linux Clang** under ADR 0008 §4 flags. The `aramUploadData` conflict is fixed upstream at the pin or by a §5 patch.
+   - **(d) A null output still runs the sequencer.** Sequencer and voice state are identical with null and real output on synthetic sound data (P1-13b test, E10).
+4. **Fallback.** If (a) fails and cannot be fixed by a small patch to `msm` or musyx, the pin moves to the **earliest CC0 commit at or after `9fc772d`** that passes (a)–(d). This needs no further amendment; runtime-gc-wii records the commit in the lock and in `mp4.md`. If no such commit passes, architect revisits option (b).
+5. **Option (b), our own DSP-voice renderer, stays rejected** (ADR 0007, Alternatives). It would re-derive the console's voice mixing (ADPCM decode, envelopes, pitch, the AUX buses) without a reference to check against. That is a large new source of audio-state divergence in exactly the area ADR 0008 §8 hashes. Upstream now has the renderer we need.
+
+### Host `powf` and other libm calls in musyx: through our math library
+Yes, this is required. musyx is linked into the **game module**, and its sequencer and voice state is game-visible (ADR 0007 §4, ADR 0008 §8: MP4 polls stream, music and SFX status and MIDI controller values). So every libm call in the musyx sources we compile follows ADR 0008 §5, like game code:
+- `powf`, and any `pow`, `expf`, `logf`, `sinf`/`cosf`, `sqrtf` or other transcendental found in the linked musyx sources, resolves to our math library through the same forced-include redirect as `gc_math_redirect.h`, never to the host CRT or glibc. `sqrt`/`sqrtf` and `fmod` are exactly specified by IEEE, so host versions remain allowed, as §5 already says.
+- P1-13b adds `mpt_powf` (and whatever else the audit finds) to the SDK math library, with golden values. The values must cover the exponent range musyx uses: pitch and volume curves.
+- The P1-22 source grep extends to musyx: every libm symbol referenced by the linked musyx objects is listed and must resolve to our library.
