@@ -136,3 +136,18 @@ All options can be kept out of deterministic state equally well. §3 is architec
 - Adding `rmlui` (default features) to `vcpkg.json` and `add_subdirectory(ui)` to the root `CMakeLists.txt` is a **P1-23 prerequisite**. architect lands it in the first P1-23 PR, alongside the first `ui/` sources, so `main` never has a dangling subdirectory.
 - The overlay pass, the `IOverlay` and `IShellCommands` seams, event routing, not stepping while a screen has focus, and the UI-on/UI-off replay test are **added to P1-06**.
 
+
+## Seams settled in P1-06 (architect, 2026-10-13)
+These are shell-internal, so this is a note, not an amendment. `core/shell/overlay.h` is the source.
+- **`IOverlay`** gains `bool hasFocus() const`, in addition to `handleEvent`, `update` and `render` as sketched in §2.2.
+  - While it returns true, every SDL event goes to the UI and the shell does not step the session.
+  - Otherwise, the UI is offered only the host pause action.
+  - Gamepad hot-plug events always also reach `input/`, so seating stays correct while a screen is open.
+- **`IShellCommands`** has five requests:
+  - `requestStart(StartRequest{VerifiedDump dump, optional seed})`;
+  - `requestPause`, `requestResume`, `requestStop`;
+  - `requestQuit`.
+
+  All of them are queued and applied at the top of the next loop iteration, never in the middle of a step. The `VerifiedDump` always comes from `asset_import::make_verified`.
+- **Host pause action:** until `input/` owns the host-reserved binding (§3.2 request), the shell treats Esc and the gamepad Guide button as the pause action. It consumes them before `input/` sees the event. With no UI, the shell toggles pause itself. Masking held buttons on resume (§3.3) is still for input-mapping to implement.
+- **§3.5 check:** the UI-on/UI-off check is `tests/unit/test_shell.cpp`. It plays the same replay through `FrameLoop` three ways and gets the same trail each time: with no overlay, with a stub overlay that holds focus mid-run, and with a host pause and resume.
