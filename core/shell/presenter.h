@@ -24,7 +24,7 @@ class Presenter {
   // uploaded frame: Phase 1 runtimes always hand CPU pixels (ADR 0002 rule 8).
   void upload(const FrameOutput& frame);
 
-  // Clears, draws the last uploaded frame letterboxed (16:9 when `widescreen`), runs the
+  // Clears, draws the last uploaded frame letterboxed (4:3, or 16:9 when `widescreen`), runs the
   // overlay's render pass if any, and presents.
   void present(bool widescreen, IOverlay* overlay);
 
