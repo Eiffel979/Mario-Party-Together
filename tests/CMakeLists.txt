@@ -8,6 +8,7 @@ add_executable(mpt_unit_tests
   unit/test_core.cpp
   unit/test_determinism.cpp
   unit/test_determinism_harness.cpp
+  unit/test_dump_lane.cpp
   unit/test_gc_disc.cpp
   unit/test_fake_adapter.cpp
   unit/test_fake_runtime_v1.cpp
@@ -40,6 +41,17 @@ add_test(NAME conformance COMMAND mpt_conformance_tests)
 add_test(NAME replay_check_rejects_non_replay
   COMMAND mpt_replay_check --fixture "${CMAKE_CURRENT_SOURCE_DIR}/golden/replay_v0_synthetic.mptr.hex")
 set_tests_properties(replay_check_rejects_non_replay PROPERTIES PASS_REGULAR_EXPRESSION "not an \\.mptr file")
+
+# The dump lane (P1-20d, ADR 0006): manual and local only. Skipped (exit 77) unless
+# MPT_DUMP_DIR is set; see tests/dump_lane/README.md. Run it with: ctest -L dump
+add_executable(mpt_dump_lane dump_lane/main.cpp)
+target_link_libraries(mpt_dump_lane PRIVATE mpt::core)
+target_compile_definitions(mpt_dump_lane PRIVATE
+  MPT_REPLAYS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/replays"
+  MPT_REPO_ROOT="${PROJECT_SOURCE_DIR}")
+mpt_set_warnings(mpt_dump_lane)
+add_test(NAME dump_lane_replays COMMAND mpt_dump_lane)
+set_tests_properties(dump_lane_replays PROPERTIES LABELS dump SKIP_RETURN_CODE 77)
 
 # Cross-process determinism (ADR 0002 rule 10 follow-up, P1-20b1): the same FakeRuntime run
 # in separate processes must give byte-identical hash trails.
