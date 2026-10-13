@@ -15,7 +15,7 @@ This note was written by reading the community decomp and its PC-port fork in pl
 |---|---|---|---|
 | `https://github.com/mariopartyrd/marioparty4` | Matching decomp (the reference) | `main` = `147b165a83187ac9e6cfdc3bf52f2e73437b1ffd` (2026-06-04, "Backport mp5 macros") | **None on `main`.** A CC0 1.0 license is proposed in open PR #663 (branch `license-change`, `db93f095a90dcc2e5fc27e1a66e313e752a3a06d`, 2026-09-24), not merged. |
 | `https://github.com/mariopartyrd/partyboard` | Upstream's own PC port ("Party Board"). Same organisation, game sources forked from the decomp. | `main` = `98ac07fd1e8f7ab938bbb6fe75789fad99419010` (2026-09-29) | **CC0 1.0** (`LICENSE` at the root) |
-| `https://github.com/AxioDL/musyx` | MusyX sound-library decomp (submodule `extern/musyx` of both repos) | Party Board pins `2a0e01aeff0d06a9ee9e12966c435cb75144af9e`. Upstream HEAD is `86851a3a8d51788d166ea42d137b49526f570400`. | CC0 1.0 |
+| `https://github.com/AxioDL/musyx` | MusyX sound-library decomp (submodule `extern/musyx` of both repos) | Party Board pins `2a0e01aeff0d06a9ee9e12966c435cb75144af9e`. Upstream HEAD is `86851a3a8d51788d166ea42d137b49526f570400`. | **MIT** at the pin. CC0 1.0 only from `8cb588d` ("Release to CC0 public domain"), after the pin (found in P1-13b, §15). |
 | `https://github.com/encounter/aurora` | GameCube/Wii source-level compatibility layer used by Party Board. **Adopted after S1: its GX front end, Dawn renderer, MTX and headers, without `aurora_core`** (ADR 0007 §6, ADR 0009 §1). | Party Board pins `514339438178ef2bed1b14e5149d90ece0c6e0cc`. Upstream HEAD on 2026-10-08 is `50e5be30ec12cc72768bc564bc016b55e82be868`, 132 commits later. | MIT |
 | `https://github.com/higan-emu/libco` | Coroutines used by Party Board for game processes | Party Board pins `e18e09d634d612a01781168ad4d76be10a7e3bad` | ISC (check during P1-15) |
 
@@ -36,7 +36,7 @@ The decomp also has branches `port` (now a stub whose README points to the Party
 - `marioparty4` `main`: **no license file anywhere** (verified in the local copy and on GitHub, where `license: null`). By default that means all rights are reserved by the contributors. Reading it is fine. Building and distributing anything derived from it is not covered until a license lands.
 - Upstream intends to use CC0: a maintainer opened PR #663 on 2026-09-24. It has no review comments yet.
 - `partyboard` is CC0 1.0 today. It contains the same game sources (adapted for PC), so it is the only MP4 game-source tree with a clear license right now.
-- musyx is CC0 and aurora is MIT, both compatible with this project.
+- musyx is MIT at the pinned commit and CC0 from `8cb588d` on. aurora is MIT. All are compatible with this project. (ADR 0009 lists musyx as CC0 at the pin. P1-13b found that the pin's `LICENSE` is MIT, §15.)
 - CC0 only covers the contributors' own rights. It does not touch Nintendo's rights in the game itself. That is why ADR 0001/0009 still apply: no game data in the repo, and the build depends on the user's dump.
 
 ## 3. Matching revision and the user's dump
@@ -115,7 +115,7 @@ Interrupt masking (`OSDisableInterrupts`/`OSRestoreInterrupts`) appears in `pad.
 - They go in the hash manifest.
 - A "null audio" mode may drop the PCM, but it **must still run the synth/sequencer**, or E6 breaks.
 
-AxioDL musyx has a PC backend with a pull API (`sndPCRender(out, frames)`) and a null host backend, which fits exactly. Its SDL backend renders on its own SDL thread and **must not be used**.
+AxioDL musyx has a PC backend with a pull API (`sndPCRender(out, frames)`) and a null host backend, which fits exactly. Its SDL backend renders on its own SDL thread and **must not be used**. **Correction (P1-13b, §15):** that renderer exists only on upstream `main` (from `9fc772d`, after the pin). The pinned commit `2a0e01a` has no PC renderer.
 
 ## 8. GPU readbacks and GX state read back by the CPU
 
@@ -314,7 +314,7 @@ Shared by every GameCube/Wii title. Built only with Clang (clang-cl on Windows) 
 
 **Virtual time** (confirmed by architect as the reading of ADR 0008 §2). Each frame step sets `now = max(now, R_n)` with `R_n = epoch + n * field`: the field clock is a floor, so time spent in queries is never taken back and time never runs backwards. The VI retrace is frame-driven: it fires once at the start of frame `n >= 1`, never because a busy-wait ran past `R_n`, so one `stepFrame` is always one main-loop iteration. When every thread is blocked, the scheduler jumps `now` to the next interrupt deadline if it falls before `R_{n+1}`. SDK code never calls the public time API internally (CARD timestamps read the clock without a quantum).
 
-**Scheduler.** SDK threads and the root coroutine (`main()`, the default thread at priority 16) are coroutines on arena stacks (256 KiB each, 32 threads). We use **our own context switch** (about 40 instructions per ABI, Win64 with TIB stack-bound swap, and SysV, all in `context.cpp` with documented frame layouts), accepted by architect with libco as the named fallback. A test on both OSes checks that every callee-saved register survives a round trip into a coroutine that clobbers them all, including xmm6–15 and the TIB stack fields on Win64, MXCSR and the x87 control word. No exception, `longjmp` or SEH unwind may cross a switch. Each stack has a 256-byte canary at its bottom, checked after every switch, so an overflow that runs through it is a deterministic fault (an overflow that skips over it is not caught). The best ready thread runs (lowest priority value, then FIFO). At every SDK call boundary, due interrupts run on the current thread's stack, and a strictly higher-priority thread that they made ready preempts the caller. Interrupts that fall due while every thread is idle run on a dedicated interrupt coroutine. `OSDisableInterrupts` only tracks its return value (ADR 0007 §7). Blocking inside an interrupt handler is a fault. `OSSetIdleFunction` only records its arguments: THP decoding moves into the frame step.
+**Scheduler.** SDK threads and the root coroutine (`main()`, the default thread at priority 16) are coroutines on arena stacks (256 KiB each, 32 threads). We use **our own context switch** (about 40 instructions per ABI, Win64 with TIB stack-bound swap, and SysV, all in `context.cpp` with documented frame layouts), accepted by architect with libco as the named fallback. A test on both OSes checks that every callee-saved register survives a round trip into a coroutine that clobbers them all, including xmm6–15 and the TIB stack fields on Win64, MXCSR and the x87 control word. No exception, `longjmp` or SEH unwind may cross a switch. Each stack has a 256-byte canary at its bottom, checked after every switch, so an overflow that runs through it is a deterministic fault (an overflow that skips over it is not caught). The best ready thread runs (lowest priority value, then FIFO). At every SDK call boundary, due interrupts run on the current thread's stack, and a strictly higher-priority thread that they made ready preempts the caller. Interrupts that fall due while every thread is idle run on a dedicated interrupt coroutine. `OSDisableInterrupts` only tracks its return value (ADR 0007 §7). Blocking inside an interrupt handler is a fault. `OSSetIdleFunction` runs the idle function once per frame step on the lowest-priority thread (P1-13b, §15).
 
 **I/O.** DVD, ARAM DMA/ARQ and CARD complete inside the call. Callbacks run at the **next SDK call boundary** by default, so code that sets its "busy" flag after issuing the call still works. `SdkConfig::io_callbacks_before_return` runs them before the call returns instead. The mode is a **per-title constant** recorded here, never a user option, and part of the build fingerprint (architect ruling). **MP4's mode: to be chosen by P1-16**, by checking every completion-wait loop in `game/dvd.c`, `game/data.c`, `game/armem.c`, `game/card.c` and `msm/msmstream.c` (each loop must contain an SDK call for the default to work). The disc is read through `DirectoryFileSource`, which takes entry order and sizes from the extracted `sys/fst.bin` (P1-09's layout, `files/` beside it), rejects unsafe names (`.`, `..`, separators, control bytes) and files missing or with the wrong size, and keeps recently used files open. Reads past the end of a file return zeros.
 
@@ -341,7 +341,107 @@ The `InputFrame` is latched at the post-retrace point: the pre-retrace callback 
 
 **Faults.** A fatal error in game code records the message and stops the runtime: the faulting thread is never resumed and `stepFrame` returns `StepStatus::faulted`. The frame step's own host-side code never calls the fatal path, and nothing in the SDK aborts the process. Calling the C API from host code instead of game code is a programming error, reported with `std::logic_error`.
 
-**Split.** P1-13a (this layer core) and P1-13b (MusyX pull-mode stepping on virtual AI-DMA ticks, for which an `ai` interrupt source and a `host_tick` event kind are reserved, and THP decoding). Other follow-ups: `OSLink`/`OSUnlink` (replaced by the P1-15 loader shim), `OSStopwatch`, GD/GX (P1-14), fixed arena and module bases (P1-16), ARM64 context switching.
+**Split.** P1-13a (this layer core) and P1-13b (§15). Other follow-ups: `OSLink`/`OSUnlink` (replaced by the P1-15 loader shim), `OSStopwatch`, GD/GX (P1-14), fixed arena and module bases (P1-16), ARM64 context switching.
+
+## 15. SDK audio and movies (P1-13b, `runtimes/gc_wii/sdk/`)
+
+**Status:** the AI layer, engine stepping, null audio, idle-function scheduling and THP decoding are done and tested on synthetic data. **MusyX itself is not integrated yet. It is blocked on the musyx pin** (see the end of this section).
+
+**AI and virtual AI ticks** (`mpt_gc/ai.h`, `src/ai.cpp`).
+- There is one virtual interrupt (source `ai`, event `ai_dma`) per DMA block.
+- A block's period is its length in frames at the DSP rate, converted to 40.5 MHz ticks with an integer remainder accumulator. MusyX's block is 160 frames at 32 kHz, which is **202,500 ticks exactly** (5 ms).
+- At a tick, in interrupt context:
+  1. the block that just played goes to the output (`frames_out` counts it in either output mode);
+  2. the registered DMA callback runs and sets up the next block;
+  3. the next tick is scheduled from the block length now set.
+
+  So a callback's block plays one tick later (5 ms latency).
+- The sample count is a pure function of virtual time. With no busy-waits, frame `n` ends with exactly `floor((R_{n+1} - epoch - 1) / 202,500)` blocks played. Busy-waits that run virtual time ahead also run audio ahead, by at most what they waited, and deterministically.
+- `AIGetDMABytesLeft` is derived from virtual time.
+- The DVD audio-streaming registers (`AISetStream*`) are stored and hashed but never played. MP4 does not seem to stream disc audio. P1-16 confirms.
+
+**Sound-engine attachment** (`mpt/gc/audio.h`, `SdkConfig::audio_engine`).
+- A pull-mode engine is `render(user, out, frames)` (s16 stereo, 32 kHz) plus `hash(user, hasher)`.
+- When an engine is attached, the SDK plays the part MusyX's own AI hookup plays on the console: DMA runs from boot, and the engine's callback is the registered DMA callback until game code registers its own.
+- `AIRegisterDMACallback` then returns the engine's callback. A game callback that chains to it (THPSimple) therefore renders the engine block first, and can then mix movie audio into `AIGetDMAStartAddr()`, as on the console.
+- The engine's two DMA blocks are in `SdkState` (the arena). Their contents are game-visible, so they are saved, and they are identical in both output modes.
+
+**Null audio** (`SdkConfig::audio_output = false`). Only the host's copy of the PCM is dropped. The engine renders every block, every callback runs, and every register and counter is the same. A test checks that null and real output give identical hash trails and `audioFrames()` (E6).
+
+**Registered globals** (`SdkConfig::state_regions`).
+- Memory outside the arena that holds game-visible state (MusyX's statics now, the game module's later) is saved and restored with the arena.
+- It is never hashed raw. Its owner hashes it by value, through the engine's `hash`.
+- The save-state header records the region count and total size, and `loadState` rejects a mismatch.
+
+**Hash manifest additions** (all by value):
+- the AI registers: DMA address (as an arena offset), callback (a sentinel until P1-16's registration table), pending tick deadline, period and remainder, tick and frame counters, and the stream registers;
+- the attached engine's own hash;
+- the THP init flag;
+- the idle function (sentinel), its parameter (arena offset), its thread slot and its run count.
+
+These additions changed the SDK's golden trail in `test_state.cpp`.
+
+**Idle function.**
+- `OSSetIdleFunction` runs the function on an SDK thread at priority 31, with its own arena stack. The game's stack argument is not used.
+- The thread is made ready once at the start of every frame step, after the retrace. It runs when every other thread is waiting, at most once per step.
+- If it blocks, it keeps its place and is not re-armed until it has finished. `NULL` stops it.
+- **Open for P1-16:** check that the idle function in `game/thpmain.c` returns after a bounded amount of work. A function that loops forever without an SDK call would hang the step. A loop that queries the time trips the watchdog instead.
+
+**THP decoder** (`mpt_gc/thp.h`, `mpt/gc/thp.h`, `src/thp.cpp`). This is **our own** decoder, not a port of Party Board's THP sources, because P1-13b had no approved checkout of the pinned Party Board tree to port from. It is written from the public JPEG (ITU T.81) and DSP-ADPCM formats.
+- **Video:** baseline sequential Huffman JPEG, 8-bit, 4:2:0 (Y 2x2, then Cb and Cr 1x1, in that scan order). It handles DQT, DHT, DRI, SOF0, SOS and restart markers, and skips APPn and COM. Width and height must be multiples of 16.
+  - Output is GX **I8 tiles** (8x4): Y at full size, U and V at half size. This is what THPSimple binds as textures.
+  - The IDCT is a separable integer transform with a fixed Q13 basis (`kDctBasis`), so the output is bit-identical on every platform. It is not bit-identical to the console's float IDCT, but that only affects the picture.
+- **Audio:** DSP-ADPCM with an exact integer decode of both channels, either interleaved (`THP_AUDIO_INTERLEAVE`, 0) or one channel after the other (`THP_AUDIO_NOINTERLEAVE`, 1).
+- **Container:** the header, the component info (versions 1.0 and 1.1) and the frame chain (`nextTotalSize`), all bounds-checked.
+- The C API has no length argument, as on the console. Reads are bounded by the end of the arena, or by 16 MiB for data outside it.
+- **To verify on the dump lane (P1-16):**
+  - whether real THP streams use byte stuffing exactly as standard JPEG does;
+  - the `flag` values of `THPAudioDecode`;
+  - how mono movies lay out their audio;
+  - per-track sizes in multi-track 1.1 files.
+
+  Our tests only prove self-consistency on streams we generate.
+
+**Tests (E10, synthetic data only).**
+- `test_audio.cpp` uses a toy pull-mode engine (a sequencer, voices that end on their own, a MIDI controller) that game code polls in a non-yielding busy-wait shaped like `SNDGRP_WAIT`. It covers:
+  - null against real output;
+  - exact samples per frame;
+  - save states with registered statics;
+  - perturbation of engine state;
+  - a chained THP-style callback;
+  - game-driven DMA at 48 kHz;
+  - `AIStopDMA`;
+  - the idle thread.
+- `test_thp.cpp` builds a THP movie at test time with an integer JPEG and ADPCM writer (`thp_encoder.h`). It covers:
+  - decode quality and restart intervals;
+  - goldens for video and audio;
+  - malformed streams;
+  - walking the container;
+  - playback through the idle function with movie audio in the AI stream, across save states and with null audio.
+
+**MusyX: blocked on the pin.** ADR 0009 pins musyx at `2a0e01aeff0d06a9ee9e12966c435cb75144af9e` (Party Board's submodule commit). At that commit:
+- There is **no PC renderer and no `sndPCRender`**.
+  - `hw_pc.c` builds the DSP command list but never mixes it.
+  - Nothing advances the DSP voices, so voices never end and `SAMPLE_END` messages never reach the synth. Voice status the game polls would be wrong.
+  - The PC branch of `hw_aramdma.c` is all stubs (`aramStoreData` returns `NULL`), so sample upload does not work.
+- `hw_pc.c` uses Win32 mutexes or pthreads for its critical section.
+- A compile-only probe with clang-cl 22 and our flags (`-ffp-contract=off`, with `gc_math_redirect.h` force-included):
+  - 32 of the 33 sources compile;
+  - `hw_aramdma.c` fails, because `aramUploadData` is declared with `u32` in `hardware.h` and `unsigned long` in the PC branch;
+  - the host libm imports are `powf` (reverb), and `floorf` and `fmodf` (sequencer and volume conversion). `floorf` and `fmodf` are exactly specified, but `powf` would need our math library (ADR 0008 §5).
+- The pull-mode renderer the ADRs describe landed upstream in `9fc772d` ("Sdl3 (#14)", 2026-09-23). It brings `sndPCRender`, `sndPCConfigure`, a null host backend (`hw_pc_null.c`) and integer 5 ms control cycles. Upstream `main` is at `86851a3a8d51788d166ea42d137b49526f570400`, and that tree is also CC0.
+
+**Decision needed (architect, an ADR 0009 pin bump).** The two options are:
+1. bump musyx to a commit that has the PC renderer, for example `86851a3`;
+2. keep the pin and write our own DSP-voice renderer and ARAM glue. ADR 0007 rejects reimplementing it.
+
+Party Board's `msm` was written against the pinned API, so a bump also needs a check that `msm` builds against the newer headers.
+
+Once that is decided, MusyX plugs into the `AudioEngine` hook:
+- `render` is `sndPCRender`, rendering silence before `sndInit`;
+- MusyX's statics are registered as state regions;
+- allocation goes through `sndSetHooks` into the game heaps;
+- `hash` covers voice, sequencer, stream and MIDI-controller state by value.
 
 ---
 
