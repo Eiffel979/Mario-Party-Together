@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Windows application manifest for the shell (P1-06).
+  longPathAware lets the process use paths over 260 characters (extracted discs and
+  build caches, P1-09/P1-10) on systems where long paths are enabled
+  (HKLM\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled = 1). Where they
+  are not enabled, Windows still enforces the old limit, so asset-import keeps its own
+  path-length checks and the shell keeps its user folder short.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+    </windowsSettings>
+  </application>
+</assembly>

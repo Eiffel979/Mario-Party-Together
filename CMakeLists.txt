@@ -28,6 +28,19 @@ function(mpt_set_warnings target)
   endif()
 endfunction()
 
+# Title registration for the shell (P1-06 a). A runtime's CMakeLists.txt calls
+#   mpt_register_title(TARGET <library> FUNCTION <name>)
+# where <library> defines `void <name>(mpt::shell::ShellTitles&)` (core/shell/titles.h).
+# The shell's register_titles() is generated from these calls at the end of this file.
+function(mpt_register_title)
+  cmake_parse_arguments(ARG "" "TARGET;FUNCTION" "" ${ARGN})
+  if(NOT ARG_TARGET OR NOT ARG_FUNCTION)
+    message(FATAL_ERROR "mpt_register_title needs TARGET and FUNCTION")
+  endif()
+  set_property(GLOBAL APPEND PROPERTY MPT_TITLE_TARGETS ${ARG_TARGET})
+  set_property(GLOBAL APPEND PROPERTY MPT_TITLE_FUNCTIONS ${ARG_FUNCTION})
+endfunction()
+
 find_package(SDL3 CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
@@ -37,6 +50,9 @@ add_subdirectory(core)
 add_subdirectory(input)
 # GameCube/Wii SDK layer: built with Clang as its own project (ADR 0008 §4).
 add_subdirectory(runtimes/gc_wii)
+
+# Every runtime is added above, so the shell's title list is complete.
+mpt_generate_title_registration(mpt_shell)
 
 if(MPT_BUILD_TESTS)
   enable_testing()
