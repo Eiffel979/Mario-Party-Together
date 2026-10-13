@@ -39,16 +39,26 @@ if(NOT MPT_AURORA_DIR)
 endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/aurora.lock")
 
-function(_mpt_gx_unavailable why)
-  if(MPT_REQUIRE_GX)
-    message(FATAL_ERROR "runtimes/gc_wii/gx: ${why}")
+# The dawn renderer is asked for explicitly, so it is required: anything missing fails the configure.
+# With the default null renderer a missing input is only a warning (contributors who never build it).
+set(_mpt_gx_required ${MPT_REQUIRE_GX})
+if(MPT_GX_BACKEND STREQUAL "dawn")
+  set(_mpt_gx_required ON)
+endif()
+set(_mpt_gx_recipe_hint "Fetch aurora with mpt_fetch_sources --lock runtimes/gc_wii/gx/aurora.lock --cache <MPT_SOURCE_CACHE>, "
+  "and build Dawn into MPT_DAWN_PREFIX with runtimes/gc_wii/gx/tools/build_dawn.cmake (see runtimes/gc_wii/gx/README.md).")
+string(JOIN "" _mpt_gx_recipe_hint ${_mpt_gx_recipe_hint})
+
+function(_mpt_gx_unavailable)
+  string(JOIN "" why ${ARGV})
+  if(_mpt_gx_required)
+    message(FATAL_ERROR "runtimes/gc_wii/gx: ${why} (MPT_GX_BACKEND=${MPT_GX_BACKEND}, MPT_REQUIRE_GX=${MPT_REQUIRE_GX})")
   endif()
   message(WARNING "runtimes/gc_wii/gx: ${why} The GX layer is not built.")
 endfunction()
 
 if(NOT EXISTS "${MPT_AURORA_DIR}/lib/gx/gx.cpp")
-  _mpt_gx_unavailable("no aurora checkout at MPT_AURORA_DIR (${MPT_AURORA_DIR}). Fetch it with "
-    "mpt_fetch_sources --lock runtimes/gc_wii/gx/aurora.lock --cache <MPT_SOURCE_CACHE>.")
+  _mpt_gx_unavailable("no aurora checkout at MPT_AURORA_DIR (${MPT_AURORA_DIR}). " "${_mpt_gx_recipe_hint}")
   return()
 endif()
 

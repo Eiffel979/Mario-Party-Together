@@ -38,7 +38,7 @@ Keep paths short on Windows: MSVC tools fail on paths over 260 characters. Run t
    For the null renderer only, add `-DMPT_DAWN_HEADERS_ONLY=ON`. That takes seconds and needs no compile.
 4. Configure with `windows-clang-debug` or `windows-clang-release` (Linux: `CC=clang CXX=clang++`), adding `-DMPT_GX_BACKEND=dawn` to render.
 
-Without an aurora checkout or a Dawn prefix, the GX layer is skipped with a warning. `MPT_REQUIRE_GX=ON` turns that warning into an error.
+With `MPT_GX_BACKEND=dawn`, a missing aurora checkout or Dawn prefix fails the configure. With the default `null` renderer, it is a warning and the GX layer is skipped; `MPT_REQUIRE_GX=ON` turns that warning into an error too.
 
 ## Tests
 
