@@ -34,7 +34,11 @@ endif()
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   enable_language(C)
+  if(MPT_BUILD_TESTS)
+    enable_testing()  # the root enables testing after its subdirectories; register ours too
+  endif()
   add_subdirectory(sdk)
+  add_subdirectory(gx)
   return()
 endif()
 
@@ -80,6 +84,12 @@ ExternalProject_Add(mpt_gc_wii_clang
     "-DMPT_BUILD_TESTS:BOOL=${MPT_BUILD_TESTS}"
     "-DMPT_WARNINGS_AS_ERRORS:BOOL=${MPT_WARNINGS_AS_ERRORS}"
     "-DMPT_REQUIRE_GC_WII:BOOL=${MPT_REQUIRE_GC_WII}"
+    # GX layer (runtimes/gc_wii/gx, ADR 0007 section 6)
+    "-DMPT_GX_BACKEND:STRING=${MPT_GX_BACKEND}"
+    "-DMPT_DAWN_PREFIX:PATH=${MPT_DAWN_PREFIX}"
+    "-DMPT_REQUIRE_GX:BOOL=${MPT_REQUIRE_GX}"
+    "-DMPT_SOURCE_CACHE:PATH=${MPT_SOURCE_CACHE}"
+    "-DMPT_AURORA_DIR:PATH=${MPT_AURORA_DIR}"
   INSTALL_COMMAND ""
   BUILD_ALWAYS ON
   USES_TERMINAL_BUILD ON)
