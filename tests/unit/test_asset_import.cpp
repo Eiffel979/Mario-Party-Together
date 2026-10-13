@@ -12,7 +12,7 @@
 #include "mpt/asset_import/importer.h"
 #include "mpt/asset_import/known_dumps.h"
 #include "mpt/asset_import/sha1.h"
-#include "mpt/asset_import/sha256.h"
+#include "mpt/core/sha256.h"
 
 using namespace mpt;
 using namespace mpt::asset_import;
@@ -27,7 +27,7 @@ std::span<const std::byte> as_bytes(std::string_view s) { return std::as_bytes(s
 std::string sha256_of(std::span<const std::byte> data) {
   Sha256 h;
   h.update(data);
-  return h.finish_hex();
+  return to_hex(h.finish());
 }
 
 // A fake 1 MiB "cartridge" in z64 order: the N64 magic word, then a byte pattern.
@@ -113,7 +113,7 @@ TEST_CASE("SHA-256 matches FIPS 180-4 test vectors") {
   for (std::size_t pos = 0, step = 1; pos < million_a.size(); pos += step, step = step * 3 % 211 + 1) {
     pieces.update(as_bytes(std::string_view(million_a).substr(pos, step)));
   }
-  CHECK(pieces.finish_hex() == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+  CHECK(to_hex(pieces.finish()) == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
 }
 
 TEST_CASE("formats are detected from their header magic") {

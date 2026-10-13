@@ -17,7 +17,7 @@
 #include "mpt/asset_import/importer.h"
 #include "mpt/asset_import/known_dumps.h"
 #include "mpt/asset_import/sha1.h"
-#include "mpt/asset_import/sha256.h"
+#include "mpt/core/sha256.h"
 #include "asset_import_test_support.h"
 
 using namespace mpt;
@@ -99,7 +99,7 @@ KnownDumps known_mp4(const std::vector<std::byte>& image) {
   const std::string json =
       R"({"version":2,"dumps":[)"
       R"({"title":"mp4","region":"USA","revision":"Rev 0","supported":true,"game_version":"GMPE01_00",)"
-      R"("disc_id":"GMPE01","disc_version":0,"sha256":")" + sha256.finish_hex() + R"(","sha1":")" + sha1.finish_hex() +
+      R"("disc_id":"GMPE01","disc_version":0,"sha256":")" + to_hex(sha256.finish()) + R"(","sha1":")" + sha1.finish_hex() +
       R"(","size":)" + std::to_string(image.size()) + R"(},)"
       R"({"title":"mp4","region":"USA","revision":"Rev 1","supported":false,"game_version":"GMPE01_01",)"
       R"("disc_id":"GMPE01","disc_version":1,"reason":"Synthetic: Rev 1 is not supported."},)"

@@ -20,7 +20,7 @@
 #include "mpt/asset_import/git_tree.h"
 #include "mpt/asset_import/process.h"
 #include "mpt/asset_import/sha1.h"
-#include "mpt/asset_import/sha256.h"
+#include "mpt/core/sha256.h"
 #include "mpt/asset_import/source_lock.h"
 #include "mpt/asset_import/sources.h"
 
@@ -248,7 +248,7 @@ class FakeRecipe final : public BuildRecipe {
 std::string sha256_of(const std::vector<std::byte>& data) {
   Sha256 sha;
   sha.update(data);
-  return sha.finish_hex();
+  return to_hex(sha.finish());
 }
 
 // A cache, a synthetic disc on disk and a synthetic source archive, all in one temp folder.

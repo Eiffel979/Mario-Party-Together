@@ -8,7 +8,7 @@
 #include "mpt/asset_import/byte_source.h"
 #include "mpt/asset_import/gc_disc.h"
 #include "mpt/asset_import/sha1.h"
-#include "mpt/asset_import/sha256.h"
+#include "mpt/core/sha256.h"
 
 namespace mpt::asset_import {
 namespace {
@@ -86,7 +86,7 @@ IdentifyReport Importer::identify(const std::filesystem::path& path) const {
       hasher.update(std::span(chunk).first(static_cast<std::size_t>(file.gcount())));
     }
   }
-  report.sha256 = hasher.sha256.finish_hex();
+  report.sha256 = to_hex(hasher.sha256.finish());
   report.sha1 = hasher.sha1.finish_hex();
 
   // The hash is the identity: a known-good dump is accepted on its hash alone, even
