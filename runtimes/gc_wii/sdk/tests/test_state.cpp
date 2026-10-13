@@ -124,7 +124,7 @@ TEST_CASE("the hash trail is a pure function of seed and inputs") {
     b = trail(*sdk, 120);
   }
   CHECK(a == b);
-  CHECK(a.back() == 10634581663457232457ull);  // golden: must match on every platform
+  CHECK(a.back() == 12072965418954085887ull);  // golden: must match on every platform (P1-13b added the AI/THP/idle areas)
 }
 
 TEST_CASE("the seed and a single input bit both change the trail") {

@@ -369,13 +369,38 @@ s32 OSCheckActiveThreads(void) {
   return n;
 }
 
+// The idle function runs on an SDK thread at the lowest priority, once per
+// frame step: it is made ready at the start of each step and runs when every
+// other thread waits, as the console's idle thread would, but it never runs
+// more than once per step, so a function that returns quickly cannot spin the
+// scheduler. THP decoding (MP4's thpmain) uses it (ADR 0007 §4). The given
+// stack is not used: the thread runs on its arena stack.
 OSThread* OSSetIdleFunction(OSIdleFunction idleFunction, void* param, void* stack, u32 stackSize) {
-  (void)idleFunction;
-  (void)param;
   (void)stack;
   (void)stackSize;
   boundary();
-  return reinterpret_cast<OSThread*>(st().idle_thread_storage);
+  auto& s = st();
+  s.idle_fn = idleFunction;
+  s.idle_param = param;
+  if (!idleFunction) return nullptr;
+  if (s.idle_slot < 0) {
+    for (std::uint32_t i = 1; i < kMaxThreads; ++i) {
+      ThreadSlot& t = s.threads[i];
+      if (t.state != ThreadState::free) continue;
+      t = ThreadSlot{};
+      t.user = reinterpret_cast<OSThread*>(s.idle_thread_storage);
+      t.priority = OS_PRIORITY_IDLE;
+      t.detached = 1;
+      t.state = ThreadState::waiting;
+      t.wait_kind = WaitKind::idle;
+      t.wait_seq = ++s.seq;
+      s.idle_slot = static_cast<std::int32_t>(i);
+      initThreadContext(i);
+      break;
+    }
+    if (s.idle_slot < 0) fatal("thread table full (32 SDK threads) for the idle thread");
+  }
+  return reinterpret_cast<OSThread*>(s.idle_thread_storage);
 }
 
 s32 OSDisableScheduler(void) {

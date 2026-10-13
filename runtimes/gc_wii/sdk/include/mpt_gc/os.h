@@ -91,7 +91,8 @@ void OSYieldThread(void);
 BOOL OSSetThreadPriority(OSThread* thread, OSPriority priority);
 OSPriority OSGetThreadPriority(OSThread* thread);
 s32 OSCheckActiveThreads(void);
-/* Recorded only. Idle work (THP) runs inside the frame step instead (ADR 0007 §4). */
+/* Runs idleFunction on the lowest-priority SDK thread once per frame step, when
+ * every other thread waits (THP decoding, ADR 0007 §4). NULL stops it. */
 OSThread* OSSetIdleFunction(OSIdleFunction idleFunction, void* param, void* stack, u32 stackSize);
 s32 OSDisableScheduler(void);
 s32 OSEnableScheduler(void);
