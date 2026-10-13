@@ -144,7 +144,7 @@ class DawnRenderer final : public Renderer {
     aurora::g_config.msaa = 1;
     aurora::g_config.maxTextureAnisotropy = 16;
     aurora::g_config.logLevel = LOG_WARNING;
-    aurora::g_config.allowCpuAdapter = config.api == GpuApi::dawn_null;
+    aurora::g_config.allowCpuAdapter = config.allow_software_adapter || config.api == GpuApi::dawn_null;
     // Synchronous pipelines in play and in tests (ADR 0007, P1-14 gate amendment): the asynchronous
     // mode skips draws while pipelines compile.
     aurora::gfx::g_synchronousPipelines = true;
@@ -156,7 +156,7 @@ class DawnRenderer final : public Renderer {
 #else
       for (const AuroraBackend b : {BACKEND_VULKAN}) {
 #endif
-        if (aurora::webgpu::initialize(b, false)) {
+        if (aurora::webgpu::initialize(b, aurora::g_config.allowCpuAdapter)) {
           ok = true;
           break;
         }

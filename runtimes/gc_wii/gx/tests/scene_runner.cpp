@@ -4,7 +4,7 @@
 // and, for the last frame of each scene, the probe colours: probe <scene> <x> <y> <r> <g> <b> <a>.
 //
 //   mpt_gx_scenes[_null] --out <dir> [--frames N] [--scale S] [--api automatic|d3d12|vulkan|d3d11|dawn_null]
-//                        [--png] [--check-probes <golden file> [--tolerance T]]
+//                        [--allow-software-adapter] [--png] [--check-probes <golden file> [--tolerance T]]
 //
 // The GX-side columns (gx, stream, bytes) must be identical between the null and dawn renderers (G-c),
 // and between runs. The img column must be identical between two dawn runs on one machine (G-e).
@@ -86,6 +86,7 @@ int main(int argc, char** argv) {
     else if (a == "--scale") config.internal_scale = static_cast<uint32_t>(std::atoi(next().c_str()));
     else if (a == "--api") config.api = parse_api(next());
     else if (a == "--png") png = true;
+    else if (a == "--allow-software-adapter") config.allow_software_adapter = true;
     else if (a == "--check-probes") golden = next();
     else if (a == "--tolerance") tolerance = std::atoi(next().c_str());
     else {

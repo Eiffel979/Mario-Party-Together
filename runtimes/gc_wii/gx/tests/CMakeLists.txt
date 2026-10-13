@@ -9,6 +9,11 @@
 #   gx_dawn_repeatable          G-e: identical images from two processes (synchronous pipelines)
 #   gx_dawn_probes              G-d: probe colours against golden_probes.txt with a tolerance
 set(MPT_GX_TEST_API "automatic" CACHE STRING "GPU API for the dawn scene tests: automatic, d3d12, vulkan, d3d11, dawn_null")
+option(MPT_GX_TEST_SOFTWARE_ADAPTER "Let the dawn scene tests use a software adapter (lavapipe on CI)" OFF)
+set(_api_args --api ${MPT_GX_TEST_API})
+if(MPT_GX_TEST_SOFTWARE_ADAPTER)
+  list(APPEND _api_args --allow-software-adapter)
+endif()
 set(MPT_GX_TEST_GOLDEN "${CMAKE_CURRENT_SOURCE_DIR}/golden_probes.txt" CACHE FILEPATH
   "Golden probe colours for gx_dawn_probes (recorded on the reference machine, D3D12)")
 
@@ -38,8 +43,8 @@ if(MPT_GX_BACKEND STREQUAL "dawn")
   target_compile_definitions(mpt_gx_scenes PRIVATE MPT_GX_TEST_PNG)
   mpt_gx_copy_runtime_dlls(mpt_gx_scenes)
 
-  add_test(NAME gx_scenes_dawn COMMAND mpt_gx_scenes --api ${MPT_GX_TEST_API} --png --out "${_out}/dawn")
-  add_test(NAME gx_scenes_dawn_again COMMAND mpt_gx_scenes --api ${MPT_GX_TEST_API} --out "${_out}/dawn_again")
+  add_test(NAME gx_scenes_dawn COMMAND mpt_gx_scenes ${_api_args} --png --out "${_out}/dawn")
+  add_test(NAME gx_scenes_dawn_again COMMAND mpt_gx_scenes ${_api_args} --out "${_out}/dawn_again")
   set_tests_properties(gx_scenes_dawn gx_scenes_dawn_again PROPERTIES FIXTURES_SETUP gx_dawn)
   add_test(NAME gx_null_vs_dawn
     COMMAND "${CMAKE_COMMAND}" "-DA=${_out}/null/results.txt" "-DB=${_out}/dawn/results.txt"
@@ -52,7 +57,7 @@ if(MPT_GX_BACKEND STREQUAL "dawn")
   if(NOT MPT_GX_TEST_API STREQUAL "dawn_null")
     # Dawn's Null adapter does not rasterize, so it has no colours to check.
     add_test(NAME gx_dawn_probes
-      COMMAND mpt_gx_scenes --api ${MPT_GX_TEST_API} --out "${_out}/dawn_probes" --check-probes "${MPT_GX_TEST_GOLDEN}")
+      COMMAND mpt_gx_scenes ${_api_args} --out "${_out}/dawn_probes" --check-probes "${MPT_GX_TEST_GOLDEN}")
   endif()
 endif()
 

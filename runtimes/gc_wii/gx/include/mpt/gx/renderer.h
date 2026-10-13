@@ -32,6 +32,9 @@ struct RendererConfig {
   uint32_t logical_height = 480;
   uint32_t internal_scale = 1;   // the EFB is internal_scale x the logical size
   GpuApi api = GpuApi::automatic;
+  // Accept a software adapter (Mesa lavapipe, SwiftShader). Off for players; CI machines without a
+  // GPU turn it on. Dawn's Null adapter is always accepted when asked for by name.
+  bool allow_software_adapter = false;
   // Pipeline and Dawn blob caches. User data (contents come from game TEV state): the shell passes
   // its user cache directory, tests a temporary one. Empty: no persistent cache.
   std::string cache_dir;
