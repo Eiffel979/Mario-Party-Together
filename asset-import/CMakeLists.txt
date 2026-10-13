@@ -9,7 +9,6 @@ add_library(mpt_asset_import
   src/known_dumps.cpp
   src/process.cpp
   src/sha1.cpp
-  src/sha256.cpp
   src/source_lock.cpp
   src/sources.cpp
 )

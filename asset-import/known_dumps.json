@@ -1,4 +1,45 @@
 {
-  "version": 1,
-  "dumps": []
+  "version": 2,
+  "dumps": [
+    {
+      "title": "mp4",
+      "region": "USA",
+      "revision": "Rev 0",
+      "supported": true,
+      "game_version": "GMPE01_00",
+      "disc_id": "GMPE01",
+      "disc_version": 0,
+      "size": 1459978240,
+      "sha256": "12da282e1665cec6792d33266a697f5f96eaf0d231f417f321298b748d31f25c",
+      "sha1": "a13a7c6bc47466be7c055dc42a26998f17ef57e7",
+      "md5": "6eda0e31dcf1622ef749c5ce8f1196a3",
+      "note": "SHA-256 computed locally from a verified retail disc. Size, SHA-1 and MD5 match the public Redump record for the USA disc (redump.org disc 6719, serial DL-DOL-GMPE-USA)."
+    },
+    {
+      "title": "mp4",
+      "region": "USA",
+      "revision": "Rev 1",
+      "supported": false,
+      "game_version": "GMPE01_01",
+      "disc_id": "GMPE01",
+      "disc_version": 1,
+      "reason": "This revision is not supported yet. Mario Party Together currently plays the USA Rev 0 disc (GMPE01_00)."
+    },
+    {
+      "title": "mp4",
+      "region": "EUR",
+      "revision": "any revision",
+      "supported": false,
+      "disc_id": "GMPP01",
+      "reason": "European discs are not supported yet, because the game source Mario Party Together builds from does not fully support them. It currently plays the USA Rev 0 disc (GMPE01_00)."
+    },
+    {
+      "title": "mp4",
+      "region": "JPN",
+      "revision": "any revision",
+      "supported": false,
+      "disc_id": "GMPJ01",
+      "reason": "Japanese discs are not supported yet, because the game source Mario Party Together builds from does not support them. It currently plays the USA Rev 0 disc (GMPE01_00)."
+    }
+  ]
 }

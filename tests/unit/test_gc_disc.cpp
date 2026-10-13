@@ -16,7 +16,8 @@
 #include "mpt/asset_import/gc_disc.h"
 #include "mpt/asset_import/importer.h"
 #include "mpt/asset_import/known_dumps.h"
-#include "mpt/asset_import/sha256.h"
+#include "mpt/asset_import/sha1.h"
+#include "mpt/core/sha256.h"
 #include "asset_import_test_support.h"
 
 using namespace mpt;
@@ -87,10 +88,23 @@ void check_contained(const fs::path& dir) {
   }
 }
 
-KnownDumps known_mp4(const std::string& sha256, std::uint64_t size) {
+// A known-dumps list shaped like the shipped one, whose supported MP4 entry is the
+// given synthetic image instead of the real disc.
+KnownDumps known_mp4(const std::vector<std::byte>& image) {
+  Sha256 sha256;
+  sha256.update(image);
+  Sha1 sha1;
+  sha1.update(image);
   std::string error;
-  const std::string json = R"({"version":1,"dumps":[{"title":"mp4","region":"USA","revision":"Rev 0","sha256":")" +
-                           sha256 + R"(","size":)" + std::to_string(size) + "}]}";
+  const std::string json =
+      R"({"version":2,"dumps":[)"
+      R"({"title":"mp4","region":"USA","revision":"Rev 0","supported":true,"game_version":"GMPE01_00",)"
+      R"("disc_id":"GMPE01","disc_version":0,"sha256":")" + to_hex(sha256.finish()) + R"(","sha1":")" + sha1.finish_hex() +
+      R"(","size":)" + std::to_string(image.size()) + R"(},)"
+      R"({"title":"mp4","region":"USA","revision":"Rev 1","supported":false,"game_version":"GMPE01_01",)"
+      R"("disc_id":"GMPE01","disc_version":1,"reason":"Synthetic: Rev 1 is not supported."},)"
+      R"({"title":"mp4","region":"EUR","revision":"any revision","supported":false,"disc_id":"GMPP01",)"
+      R"("reason":"Synthetic: European discs are not supported."}]})";
   auto known = KnownDumps::parse(json, error);
   REQUIRE_MESSAGE(known.has_value(), error);
   return *known;
@@ -543,13 +557,10 @@ TEST_CASE("randomly corrupted FSTs never yield unsafe or overlapping entries") {
 
 TEST_CASE("the importer validates and identifies a synthetic GameCube disc") {
   const BuiltDisc built = build_disc(default_spec());
-  Sha256 hasher;
-  hasher.update(built.image);
-  const std::string sha = hasher.finish_hex();
   const TempDir tmp;
 
   SUBCASE("known disc") {
-    const Importer importer(known_mp4(sha, built.image.size()));
+    const Importer importer(known_mp4(built.image));
     const IdentifyReport report = importer.identify(tmp.write("synthetic.iso", built.image));
     CHECK(report.format == DumpFormat::gc_disc);
     REQUIRE(report.match.has_value());
@@ -561,19 +572,75 @@ TEST_CASE("the importer validates and identifies a synthetic GameCube disc") {
   SUBCASE("unknown revision is named") {
     DiscSpec spec = default_spec();
     spec.version = 1;
-    const Importer importer(known_mp4(sha, built.image.size()));
+    const Importer importer(known_mp4(built.image));
     const IdentifyReport report = importer.identify(tmp.write("rev1.iso", build_disc(spec).image));
     CHECK_FALSE(report.match.has_value());
-    CHECK(report.message.find("GMPE01") != std::string::npos);
-    CHECK(report.message.find("Rev 1") != std::string::npos);
-    CHECK(report.message.find("USA") != std::string::npos);
+    REQUIRE(report.unsupported.has_value());
+    CHECK(report.unsupported->revision == "Rev 1");
+    CHECK(report.message.find("Mario Party 4 (USA, Rev 1, GMPE01_01)") != std::string::npos);
+    CHECK(report.message.find("Synthetic: Rev 1 is not supported.") != std::string::npos);
     CHECK(report.message.find("truncated or trimmed") != std::string::npos);  // synthetic discs are small
+  }
+
+  SUBCASE("a known unsupported region is named") {
+    DiscSpec spec = default_spec();
+    spec.disc_id = "GMPP01";
+    const Importer importer(known_mp4(built.image));
+    const IdentifyReport report = importer.identify(tmp.write("pal.iso", build_disc(spec).image));
+    REQUIRE(report.unsupported.has_value());
+    CHECK(report.message.find("Mario Party 4 (EUR, any revision)") != std::string::npos);
+    CHECK(report.message.find("European discs") != std::string::npos);
+  }
+
+  SUBCASE("the supported version's header with different contents") {
+    BuiltDisc altered = built;
+    altered.image[altered.image.size() - 1] ^= std::byte{1};  // one byte of file data changed
+    const Importer importer(known_mp4(built.image));
+    const IdentifyReport report = importer.identify(tmp.write("altered.iso", altered.image));
+    CHECK_FALSE(report.match.has_value());
+    CHECK_FALSE(report.unsupported.has_value());
+    CHECK(report.message.find("says it is Mario Party 4 (USA, Rev 0, GMPE01_00)") != std::string::npos);
+    CHECK(report.message.find("does not match the verified dump") != std::string::npos);
+  }
+
+  SUBCASE("a disc ID the list does not know") {
+    DiscSpec spec = default_spec();
+    spec.disc_id = "GTSE01";
+    const Importer importer(known_mp4(built.image));
+    const IdentifyReport report = importer.identify(tmp.write("other.iso", build_disc(spec).image));
+    CHECK_FALSE(report.unsupported.has_value());
+    CHECK(report.message.find("This GameCube disc (GTSE01, USA, Rev 0) is not in the known-good list") !=
+          std::string::npos);
+  }
+
+  SUBCASE("the shipped list names MP4 Rev 1, PAL and JP (E11)") {
+    std::string error;
+    const auto shipped = KnownDumps::load(MPT_KNOWN_DUMPS_JSON, error);
+    REQUIRE_MESSAGE(shipped.has_value(), error);
+    const Importer importer(*shipped);
+    const std::pair<const char*, std::uint8_t> cases[] = {{"GMPE01", 1}, {"GMPP01", 0}, {"GMPJ01", 0}};
+    for (const auto& [id, version] : cases) {
+      CAPTURE(std::string(id));
+      DiscSpec spec = default_spec();
+      spec.disc_id = id;
+      spec.version = version;
+      const IdentifyReport report = importer.identify(tmp.write(std::string(id) + ".iso", build_disc(spec).image));
+      CHECK_FALSE(report.match.has_value());
+      REQUIRE(report.unsupported.has_value());
+      CHECK(report.message.starts_with("This is Mario Party 4 ("));
+      CHECK(report.message.find("not supported yet") != std::string::npos);
+      CHECK(report.message.find("GMPE01_00") != std::string::npos);  // says what is supported
+    }
+    // A synthetic disc with the supported header is not the real disc.
+    const IdentifyReport fake = importer.identify(tmp.write("fake_rev0.iso", built.image));
+    CHECK_FALSE(fake.match.has_value());
+    CHECK(fake.message.find("does not match the verified dump") != std::string::npos);
   }
 
   SUBCASE("an unknown damaged disc is explained") {
     auto img = built.image;
     put32(img, built.entry_at(built.index_of("deep.bin")) + 4, 0xFFFFFFF0);
-    const Importer importer(known_mp4(sha, built.image.size()));
+    const Importer importer(known_mp4(built.image));
     const IdentifyReport report = importer.identify(tmp.write("damaged.iso", img));
     CHECK_FALSE(report.match.has_value());
     CHECK_FALSE(report.sha256.empty());
@@ -588,9 +655,7 @@ TEST_CASE("the importer validates and identifies a synthetic GameCube disc") {
     BuiltDisc strict = built;
     put32(strict.image, strict.entry_at(strict.index_of("board.bin")) + 4,
           get32(strict.image, strict.entry_at(strict.index_of("deep.bin")) + 4));
-    Sha256 strict_hasher;
-    strict_hasher.update(strict.image);
-    const Importer importer(known_mp4(strict_hasher.finish_hex(), strict.image.size()));
+    const Importer importer(known_mp4(strict.image));
     const IdentifyReport report = importer.identify(tmp.write("strict.iso", strict.image));
     REQUIRE(report.match.has_value());
     REQUIRE(report.gc_disc.has_value());
@@ -604,7 +669,7 @@ TEST_CASE("the importer validates and identifies a synthetic GameCube disc") {
   SUBCASE("NKit image gets its own message") {
     auto img = built.image;
     put32(img, 0x200, 0x4E4B4954);
-    const Importer importer(known_mp4(sha, built.image.size()));
+    const Importer importer(known_mp4(built.image));
     const IdentifyReport report = importer.identify(tmp.write("game.nkit.iso", img));
     CHECK_FALSE(report.match.has_value());
     CHECK(report.message.find("NKit") != std::string::npos);
@@ -613,7 +678,7 @@ TEST_CASE("the importer validates and identifies a synthetic GameCube disc") {
   SUBCASE("RVZ image gets its own message") {
     std::vector<std::byte> rvz = bytes_of("RVZ\x01 synthetic container header");
     rvz.resize(0x100);
-    const Importer importer(known_mp4(sha, built.image.size()));
+    const Importer importer(known_mp4(built.image));
     const IdentifyReport report = importer.identify(tmp.write("game.rvz", rvz));
     CHECK(report.format == DumpFormat::rvz);
     CHECK(report.message.find("RVZ") != std::string::npos);

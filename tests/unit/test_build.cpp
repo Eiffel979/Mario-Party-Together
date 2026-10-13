@@ -20,7 +20,7 @@
 #include "mpt/asset_import/git_tree.h"
 #include "mpt/asset_import/process.h"
 #include "mpt/asset_import/sha1.h"
-#include "mpt/asset_import/sha256.h"
+#include "mpt/core/sha256.h"
 #include "mpt/asset_import/source_lock.h"
 #include "mpt/asset_import/sources.h"
 
@@ -248,7 +248,7 @@ class FakeRecipe final : public BuildRecipe {
 std::string sha256_of(const std::vector<std::byte>& data) {
   Sha256 sha;
   sha.update(data);
-  return sha.finish_hex();
+  return to_hex(sha.finish());
 }
 
 // A cache, a synthetic disc on disk and a synthetic source archive, all in one temp folder.
@@ -1108,8 +1108,11 @@ TEST_CASE("a recipe with no disc and no sources still caches") {
 TEST_CASE("a VerifiedDump comes only from an identified dump and its build") {
   BuildFixture f;
   std::string error;
-  const auto known = KnownDumps::parse(R"({"version":1,"dumps":[{"title":"mp4","region":"USA","revision":"Rev 0",)"
-                                       R"("sha256":")" + f.request.dump.sha256 + R"(","size":)" +
+  const std::string sha1 = sha1_of(read_text(f.request.dump.path));
+  const auto known = KnownDumps::parse(R"({"version":2,"dumps":[{"title":"mp4","region":"USA","revision":"Rev 0",)"
+                                       R"("supported":true,"game_version":"GMPE01_00","disc_id":"GMPE01",)"
+                                       R"("disc_version":0,"sha1":")" + sha1 +
+                                           R"(","sha256":")" + f.request.dump.sha256 + R"(","size":)" +
                                            std::to_string(f.request.dump.size) + "}]}",
                                        error);
   REQUIRE_MESSAGE(known.has_value(), error);

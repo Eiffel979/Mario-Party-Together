@@ -14,13 +14,15 @@ namespace mpt::asset_import {
 struct IdentifyReport {
   DumpFormat format = DumpFormat::unknown;
   std::string sha256;              // empty if the file was not hashed
-  std::optional<KnownDump> match;  // set when the hash is in known_dumps.json
-  std::optional<GcDiscHeader> gc_disc;  // set for a structurally valid GameCube disc (ID, region, revision)
+  std::string sha1;                // computed in the same read as sha256
+  std::optional<KnownDump> match;  // set when a supported entry matches (sha256, sha1 and size)
+  std::optional<KnownDump> unsupported;  // set when the dump is a known but unsupported version
+  std::optional<GcDiscHeader> gc_disc;  // the disc header (ID, region, revision), if it has one
   std::string message;             // why identification failed, for the user
 };
 
-// Phase 0 pipeline: detect format → normalize → hash → match against known dumps.
-// The local build step (recompile / decomp build) arrives with each runtime.
+// Detect format → normalize → hash (SHA-256 and SHA-1 in one read) → match against
+// known dumps. Building a verified dump is BuildCache's job (build.h).
 class Importer {
  public:
   explicit Importer(KnownDumps known) : known_(std::move(known)) {}

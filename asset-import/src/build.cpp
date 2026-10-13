@@ -7,7 +7,7 @@
 
 #include "mpt/asset_import/byte_source.h"
 #include "mpt/asset_import/gc_disc.h"
-#include "mpt/asset_import/sha256.h"
+#include "mpt/core/sha256.h"
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -225,7 +225,7 @@ std::string build_key(const BuildRecipe& recipe, std::string_view dump_sha256,
   }
   Sha256 sha;
   sha.update(std::as_bytes(std::span(text.data(), text.size())));
-  return sha.finish_hex();
+  return to_hex(sha.finish());
 }
 
 std::optional<DumpForBuild> dump_for_build(const IdentifyReport& report, const fs::path& dump_path,
