@@ -130,3 +130,18 @@ These decisions come from the SDK core branch (`p1-13-sdk-core`) and qa-reviewer
      - `docs/titles/mp4.md` §14 (owned by runtime-gc-wii) is corrected to say so.
      - The other two conditions of §5 stay open: the hard-case `PSVEC*` goldens (P1-14) and the explicit-`fmaf` source grep (P1-22).
 5. **Hash sentinels (§8).** For now, the SDK hashes every function pointer, and every pointer outside the arena, as one presence sentinel. Perturbation tests cannot tell a changed callback or target apart from an unchanged one. P1-16's registration table must replace the sentinel with stable function IDs, and make an out-of-arena pointer a fault or a registered ID. This is a P1-16 acceptance criterion for E4.
+
+## Amendment after P1-06: host side and Clang side (architect, 2026-10-13)
+qa-reviewer's review of P1-06 found a gap. The shell's generated title registration links CMake targets, but `runtimes/gc_wii` is a separate Clang ExternalProject whenever the main compiler is not Clang. So nothing built there can be a registration target. **Decision: split each GameCube/Wii title into a host side and a Clang side. Do not import Clang-built libraries, and do not require clang-cl for the whole tree.**
+- **Clang side** (§4): the SDK layer, the GX front end and MTX, MusyX, and the game sources. All of these are linked into the **game module**, `mp4_game.dll` / `.so`. The module is built by the asset-import recipe (ADR 0009 §3) and, for SDK tests, by the Clang sub-project. It exports **only a narrow C ABI**: plain C types, no C++ classes and no standard-library types across the boundary.
+- **Host side**: `Mp4Runtime : ITitleRuntime`, `Mp4Adapter : ITitleAdapter`, the module loader (§11) and the GX renderer library (ADR 0007 §6, Dawn). These are built by the tree's own compiler, MSVC or GCC, as ordinary targets in a host subdirectory of `runtimes/gc_wii`, which the root adds outside the Clang-only branch. The runtime registers with `mpt_register_title(TARGET <host lib> FUNCTION <fn>)`.
+- **Why:**
+  - A C ABI keeps compiler and standard-library mismatches out of the picture: MSVC against clang-cl on Windows, and GCC's against Clang's library on Linux.
+  - It matches §11, which already loads the module at a fixed base through a narrow ABI.
+  - Game-visible code still gets one compiler (§4), while the shell and core keep theirs.
+  - Importing a Clang-built C++ static library into an MSVC link would put C++ ABI compatibility on the critical path for no benefit.
+  - The whole-tree `windows-clang-*` presets stay a developer convenience (ADR 0007, P1-14 gate amendment), not a requirement.
+- **Enforced by:**
+  - `mpt_register_title`: it now rejects imported targets and accepts only a plain identifier as `FUNCTION`.
+  - P1-16's acceptance criteria.
+- **The C ABI** is defined in P1-15/P1-16 by runtime-gc-wii, with architect review: boot, step, video, audio, save and load state, hash, frame rate, save media, and party reads for the adapter. Each call gets an explicit struct version. It is not a core contract, because only `Mp4Runtime` calls it.
