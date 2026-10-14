@@ -16,6 +16,7 @@ add_executable(mpt_unit_tests
   unit/test_replay.cpp
   unit/test_session.cpp
   unit/test_shell.cpp
+  unit/test_state_hasher.cpp
 )
 target_link_libraries(mpt_unit_tests PRIVATE mpt::core mpt::asset_import mpt::shell_core doctest::doctest)
 target_compile_definitions(mpt_unit_tests PRIVATE
