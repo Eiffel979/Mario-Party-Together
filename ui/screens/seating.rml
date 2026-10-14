@@ -1,0 +1,32 @@
+<rml>
+<head>
+  <title>Players</title>
+  <link type="text/rcss" href="../assets/theme.rcss"/>
+</head>
+<body data-model="ui">
+  <h1>Players</h1>
+  <p class="muted">{{seat_title}}</p>
+
+  <div class="seats">
+    <div class="seat" data-for="p : ports" data-class-seated="p.seated">
+      <p class="label">{{p.label}}</p>
+      <p class="small">{{p.summary}}</p>
+    </div>
+  </div>
+
+  <p class="muted small">Select a controller to change its seat. Press any button on a new controller to join.</p>
+  <div class="list">
+    <div class="btn" data-for="d, i : devices" data-event-click="seat_cycle(i, 1)" autofocus="">{{d.name}}: {{d.port}}</div>
+  </div>
+  <p class="muted small">{{seat_note}}</p>
+
+  <div class="btn" data-if="seat_ready &amp;&amp; !seat_starting" data-event-click="start_party">Start the party</div>
+  <p class="error">{{seat_status}}</p>
+  <div class="btn" data-if="!seat_starting" data-event-click="back">Back</div>
+
+  <div class="hints">
+    <span class="hint"><span class="glyph south"><span class="d n"></span><span class="d w"></span><span class="d e"></span><span class="d s"></span></span>Select</span>
+    <span class="hint"><span class="glyph east"><span class="d n"></span><span class="d w"></span><span class="d e"></span><span class="d s"></span></span>Back</span>
+  </div>
+</body>
+</rml>

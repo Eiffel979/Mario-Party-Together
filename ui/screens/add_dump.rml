@@ -1,0 +1,23 @@
+<rml>
+<head>
+  <title>Add a game dump</title>
+  <link type="text/rcss" href="../assets/theme.rcss"/>
+</head>
+<body data-model="ui">
+  <h1>Add a game dump</h1>
+  <div class="brand-bar"></div>
+  <div class="panel">
+    <p>Choose the plain .iso image of a disc you own. Compressed images (RVZ, WIA, GCZ, WBFS, CISO) are not supported yet.</p>
+    <p class="muted">Your file is only read, never changed or copied, and nothing leaves this computer.</p>
+  </div>
+
+  <div class="btn" data-event-click="browse_list" autofocus="">Pick from a list</div>
+  <div class="btn" data-event-click="browse_native">Open the file dialog</div>
+  <div class="btn" data-event-click="back">Back</div>
+
+  <div class="hints">
+    <span class="hint"><span class="glyph south"><span class="d n"></span><span class="d w"></span><span class="d e"></span><span class="d s"></span></span>Select</span>
+    <span class="hint"><span class="glyph east"><span class="d n"></span><span class="d w"></span><span class="d e"></span><span class="d s"></span></span>Back</span>
+  </div>
+</body>
+</rml>

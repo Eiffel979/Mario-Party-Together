@@ -1,0 +1,20 @@
+<rml>
+<head>
+  <title>Paused</title>
+  <link type="text/rcss" href="../assets/theme.rcss"/>
+</head>
+<body class="overlay" data-model="ui">
+  <div class="panel center">
+    <h1>Paused</h1>
+    <p class="muted">{{pause_title}}</p>
+    <div class="btn wide" data-event-click="resume" autofocus="">Resume</div>
+    <div class="btn wide" data-event-click="quit_library">Quit to library</div>
+    <div class="btn wide" data-event-click="exit_app">Exit Mario Party Together</div>
+    <p class="muted small" data-if="pause_resuming">Let go of all buttons to resume.</p>
+    <div class="hints">
+      <span class="hint"><span class="glyph south"><span class="d n"></span><span class="d w"></span><span class="d e"></span><span class="d s"></span></span>Select</span>
+      <span class="hint"><span class="glyph east"><span class="d n"></span><span class="d w"></span><span class="d e"></span><span class="d s"></span></span>Resume</span>
+    </div>
+  </div>
+</body>
+</rml>
