@@ -38,6 +38,9 @@ namespace {
 
 constexpr std::uint64_t kFrames = 500;
 constexpr std::uint64_t kTickNs = 16'666'667;
+// Small, so the software renderer keeps the test quick; the layout scales with height.
+constexpr int kWidth = 640;
+constexpr int kHeight = 360;
 
 struct SdlVideo {
   SDL_Window* window = nullptr;
@@ -46,7 +49,7 @@ struct SdlVideo {
     SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
     SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
     REQUIRE(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD));
-    REQUIRE(SDL_CreateWindowAndRenderer("ui test", 1280, 720, 0, &window, &renderer));
+    REQUIRE(SDL_CreateWindowAndRenderer("ui test", kWidth, kHeight, 0, &window, &renderer));
   }
   ~SdlVideo() {
     SDL_DestroyRenderer(renderer);
@@ -149,6 +152,7 @@ struct Harness {
   input::PortAssigner ports;
   std::filesystem::path user_dir;
   std::unique_ptr<IOverlay> overlay;
+  std::size_t bright_pixels = 0;  // from the last draw() with read-back
 
   explicit Harness(SdlVideo& v) : video(v) {
     ports.device_added(input::DeviceInfo{input::kKeyboardDevice, "Keyboard", "keyboard"});
@@ -173,17 +177,30 @@ struct Harness {
 
   // One presented frame of the launcher: clear, overlay pass, read back. Returns the
   // number of distinct colours drawn.
-  std::size_t draw() {
+  std::size_t draw(bool read_back = true) {
     SDL_SetRenderDrawColor(video.renderer, 0, 0, 0, 255);
     SDL_RenderClear(video.renderer);
-    overlay->render(video.renderer, 1280, 720);
+    overlay->render(video.renderer, kWidth, kHeight);
+    if (!read_back) {
+      SDL_RenderPresent(video.renderer);
+      return 0;
+    }
     SDL_Surface* shot = SDL_RenderReadPixels(video.renderer, nullptr);
     std::set<std::uint32_t> colours;
+    bright_pixels = 0;
     if (shot) {
+      // For a manual look at the layout: MPT_UI_SCREENSHOT=<file.bmp>.
+      if (const char* out = SDL_getenv("MPT_UI_SCREENSHOT")) SDL_SaveBMP(shot, out);
       SDL_Surface* rgba = SDL_ConvertSurface(shot, SDL_PIXELFORMAT_RGBA32);
       for (int y = 0; rgba && y < rgba->h; y += 3) {
         const auto* row = reinterpret_cast<const std::uint32_t*>(static_cast<const std::uint8_t*>(rgba->pixels) + y * rgba->pitch);
-        for (int x = 0; x < rgba->w; x += 3) colours.insert(row[x]);
+        for (int x = 0; x < rgba->w; x += 3) {
+          colours.insert(row[x]);
+          // Text is the only near-white ink in the theme (#f2efe6): bright pixels mean
+          // the font loaded and glyph textures were drawn.
+          const auto* px = reinterpret_cast<const std::uint8_t*>(&row[x]);
+          if (px[0] > 190 && px[1] > 190 && px[2] > 190) ++bright_pixels;
+        }
       }
       SDL_DestroySurface(rgba);
       SDL_DestroySurface(shot);
@@ -261,7 +278,7 @@ std::vector<ReplayCheckpoint> play(const Replay& replay, Harness* ui,
     const FrameLoop::Tick result = loop.tick(focus);
     if (overlay) {
       overlay->update(tick * kTickNs);
-      ui->draw();
+      ui->draw(/*read_back=*/false);
     }
     if (frames_at_tick) frames_at_tick->push_back(loop.frames_stepped());
     if (result == FrameLoop::Tick::input_ended) break;
@@ -286,6 +303,7 @@ TEST_CASE("bring-up gate: the launcher renders, is gamepad-navigable and leaves 
     // Background, panel, focus ring and anti-aliased text give many colours; an
     // interface that drew nothing would leave one.
     CHECK(ui.draw() > 20);
+    CHECK(ui.bright_pixels > 10);
   }
 
   SUBCASE("pause with Esc, navigate with the D-pad, resume with south: same trail") {

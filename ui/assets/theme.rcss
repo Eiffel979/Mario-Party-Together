@@ -24,7 +24,7 @@ body, div, p, h1, h2, span, scrollbarvertical, sliderbar, sliderarrowdec, slider
 span { display: inline; }
 
 body {
-  font-family: Lato;
+  font-family: LatoLatin;
   font-weight: normal;
   font-style: normal;
   font-size: 22dp;

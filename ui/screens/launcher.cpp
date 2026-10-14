@@ -71,7 +71,7 @@ struct View {
   Rml::String imp_phase;    // "busy", "done", "rejected"
   Rml::String imp_file;
   Rml::String imp_stage;
-  Rml::String imp_width;    // progress bar width, e.g. "42%"
+  Rml::String imp_width = "0%";  // progress bar width, e.g. "42%"
   Rml::String imp_heading;
   Rml::String imp_message;
 
