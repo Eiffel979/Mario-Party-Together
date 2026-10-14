@@ -11,8 +11,14 @@
  *   (that comes from the pinned game source, ADR 0009 §2), and MTX/VEC/QUAT come
  *   from aurora's MTX at the pin (ADR 0007 §6), not from this library.
  *
+ * - mpt_powf/mpt_pow, mpt_sin/mpt_cos (double): the transcendental functions
+ *   musyx calls (ADR 0009, amendment after P1-13b), same construction: IEEE
+ *   add/multiply/divide plus exact frexp/ldexp/floor, no host libm.
+ *
  * gc_math_redirect.h maps fmaf onto mpt_fmaf for code compiled into the game
- * module (a forced include in P1-15).
+ * module (a forced include in P1-15). libm_redirect.h additionally maps the
+ * transcendental functions above, for third-party code that would otherwise
+ * call the host libm (musyx).
  */
 #ifndef MPT_GC_GC_MATH_H
 #define MPT_GC_GC_MATH_H
@@ -29,6 +35,13 @@ f32 mpt_tanf(f32 x);
 f32 mpt_acosf(f32 x);
 f32 mpt_atan2f(f32 y, f32 x);
 f32 mpt_sqrtf(f32 x);
+
+/* IEEE 754 pow semantics for the special cases (signed zeros, infinities, NaN,
+ * negative bases with integer exponents); otherwise exp2(y * log2(x)) in double. */
+f32 mpt_powf(f32 x, f32 y);
+f64 mpt_pow(f64 x, f64 y);
+f64 mpt_sin(f64 x);
+f64 mpt_cos(f64 x);
 
 MPT_GC_EXTERN_C_END
 

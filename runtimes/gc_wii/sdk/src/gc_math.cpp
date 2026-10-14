@@ -134,6 +134,76 @@ double atan2D(double y, double x) {
   return yneg ? a - kPi : a + kPi;
 }
 
+constexpr double kLn2 = 6.93147180559945286227e-01;
+
+// log2(x) for finite x > 0: x = m * 2^e with m in [sqrt(1/2), sqrt(2)),
+// ln(m) = 2 atanh(s), s = (m - 1) / (m + 1), |s| < 0.172 (series error < 1e-25).
+double log2D(double x) {
+  int e = 0;
+  double m = std::frexp(x, &e);  // m in [0.5, 1), exact
+  if (m < 0.70710678118654752440) {
+    m *= 2.0;
+    --e;
+  }
+  const double s = (m - 1.0) / (m + 1.0);
+  const double s2 = s * s;
+  double t = 0.0;
+  for (int n = 31; n >= 3; n -= 2) t = 1.0 / n + t * s2;
+  const double ln = 2.0 * (s + s * s2 * t);
+  return static_cast<double>(e) + ln / kLn2;
+}
+
+// 2^t: t = n + f with |f| <= 1/2, e^(f ln 2) by Taylor series (error < 1e-18),
+// scaled by the exact ldexp.
+double exp2D(double t) {
+  if (t > 1100.0) return std::numeric_limits<double>::infinity();
+  if (t < -1100.0) return 0.0;
+  const double n = std::floor(t + 0.5);
+  const double r = (t - n) * kLn2;
+  double sum = 1.0, term = 1.0;
+  for (int k = 1; k <= 22; ++k) {
+    term = term * r / k;
+    sum += term;
+  }
+  return std::ldexp(sum, static_cast<int>(n));
+}
+
+bool isOddInteger(double y) {
+  if (std::floor(y) != y || std::fabs(y) >= 9007199254740992.0) return false;
+  return std::fmod(std::fabs(y), 2.0) == 1.0;
+}
+
+// pow with the C99/IEEE special cases, then exp2(y log2 |x|).
+double powD(double x, double y) {
+  if (y == 0.0) return 1.0;
+  if (x == 1.0) return 1.0;
+  if (std::isnan(x) || std::isnan(y)) return x + y;
+  const bool odd = isOddInteger(y);
+  if (x == 0.0) {
+    if (y < 0) return odd ? std::copysign(std::numeric_limits<double>::infinity(), x)
+                          : std::numeric_limits<double>::infinity();
+    return odd ? x : 0.0;
+  }
+  if (std::isinf(y)) {
+    const double ax = std::fabs(x);
+    if (ax == 1.0) return 1.0;
+    return (ax > 1.0) == (y > 0) ? std::numeric_limits<double>::infinity() : 0.0;
+  }
+  if (std::isinf(x)) {
+    if (x > 0) return y > 0 ? x : 0.0;
+    const double r = y > 0 ? std::numeric_limits<double>::infinity() : 0.0;
+    return odd ? -r : r;
+  }
+  bool negate = false;
+  if (x < 0) {
+    if (std::floor(y) != y) return std::numeric_limits<double>::quiet_NaN();
+    negate = odd;
+    x = -x;
+  }
+  const double r = exp2D(y * log2D(x));
+  return negate ? -r : r;
+}
+
 }  // namespace
 
 extern "C" {
@@ -183,5 +253,18 @@ f32 mpt_acosf(f32 x) {
 }
 
 f32 mpt_sqrtf(f32 x) { return std::sqrt(x); }
+
+f32 mpt_powf(f32 x, f32 y) { return static_cast<f32>(powD(x, y)); }
+f64 mpt_pow(f64 x, f64 y) { return powD(x, y); }
+
+f64 mpt_sin(f64 x) {
+  if (!std::isfinite(x)) return x - x;
+  return sinD(x, false);
+}
+
+f64 mpt_cos(f64 x) {
+  if (!std::isfinite(x)) return x - x;
+  return sinD(x, true);
+}
 
 }  // extern "C"

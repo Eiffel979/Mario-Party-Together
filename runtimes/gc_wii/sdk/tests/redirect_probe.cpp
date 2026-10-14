@@ -1,5 +1,5 @@
 // Uses fmaf and std::fmaf the way game code will, through the redirect header
-// (forced-included in the game module, P1-15). check_no_host_fma.cmake verifies this
+// (forced-included in the game module, P1-15). check_no_host_math.cmake verifies this
 // object has no undefined fmaf; test_math.cpp checks the results.
 #include <cmath>
 #include <math.h>

@@ -53,6 +53,9 @@ if(MPT_BUILD_TESTS)
   # code will. The nm check below proves it references mpt_fmaf, not the CRT's fmaf.
   add_library(mpt_gc_redirect_probe OBJECT tests/redirect_probe.cpp)
   target_link_libraries(mpt_gc_redirect_probe PRIVATE mpt::gc_sdk)
+  # The same for the transcendental functions third-party C code calls (musyx).
+  add_library(mpt_gc_libm_redirect_probe OBJECT tests/libm_redirect_probe.c)
+  target_link_libraries(mpt_gc_libm_redirect_probe PRIVATE mpt::gc_sdk)
 
   # Synthetic data only: no game files, no disc images, no save images from a console.
   add_executable(mpt_gc_sdk_tests
@@ -71,6 +74,7 @@ if(MPT_BUILD_TESTS)
     tests/test_thp.cpp
     tests/thp_encoder.h
     $<TARGET_OBJECTS:mpt_gc_redirect_probe>
+    $<TARGET_OBJECTS:mpt_gc_libm_redirect_probe>
   )
   target_link_libraries(mpt_gc_sdk_tests PRIVATE mpt::gc_sdk doctest::doctest)
   target_compile_options(mpt_gc_sdk_tests PRIVATE ${MPT_GC_WARN_FLAGS})
@@ -79,22 +83,28 @@ if(MPT_BUILD_TESTS)
   add_test(NAME gc_sdk_unit COMMAND mpt_gc_sdk_tests)
 
   if(MPT_GC_NM)
-    add_test(NAME gc_sdk_no_host_fma
-      COMMAND "${CMAKE_COMMAND}" "-DNM=${MPT_GC_NM}"
-              "-DFILES=$<TARGET_FILE:mpt_gc_sdk>;$<TARGET_OBJECTS:mpt_gc_redirect_probe>"
-              -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_no_host_fma.cmake")
-    set_tests_properties(gc_sdk_no_host_fma PROPERTIES COMMAND_EXPAND_LISTS ON)
-    # The check must catch a plain fmaf call (no redirect): this one is expected to fail.
-    add_library(mpt_gc_fma_negative_probe OBJECT tests/fma_negative_probe.cpp)
-    target_link_libraries(mpt_gc_fma_negative_probe PRIVATE mpt::gc_sdk)
-    add_test(NAME gc_sdk_no_host_fma_detects_fmaf
-      COMMAND "${CMAKE_COMMAND}" "-DNM=${MPT_GC_NM}" "-DFILES=$<TARGET_OBJECTS:mpt_gc_fma_negative_probe>"
-              -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_no_host_fma.cmake")
-    set_tests_properties(gc_sdk_no_host_fma_detects_fmaf PROPERTIES WILL_FAIL ON)
-    # Object libraries are only built when something depends on them.
+    set(MPT_GC_NO_HOST_MATH_FILES "$<TARGET_FILE:mpt_gc_sdk>;$<TARGET_OBJECTS:mpt_gc_redirect_probe>;$<TARGET_OBJECTS:mpt_gc_libm_redirect_probe>")
+    add_test(NAME gc_sdk_no_host_math
+      COMMAND "${CMAKE_COMMAND}" "-DNM=${MPT_GC_NM}" "-DFILES=${MPT_GC_NO_HOST_MATH_FILES}"
+              -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_no_host_math.cmake")
+    set_tests_properties(gc_sdk_no_host_math PROPERTIES COMMAND_EXPAND_LISTS ON)
+    # The check must catch plain host calls (no redirect): these are expected to fail.
     add_custom_target(mpt_gc_probes ALL)
-    add_dependencies(mpt_gc_probes mpt_gc_fma_negative_probe)
+    foreach(_probe fma powf log2)
+      if(_probe STREQUAL "fma")
+        set(_src tests/fma_negative_probe.cpp)
+      else()
+        set(_src tests/${_probe}_negative_probe.c)
+      endif()
+      add_library(mpt_gc_${_probe}_negative_probe OBJECT ${_src})
+      target_link_libraries(mpt_gc_${_probe}_negative_probe PRIVATE mpt::gc_sdk)
+      add_test(NAME gc_sdk_no_host_math_detects_${_probe}
+        COMMAND "${CMAKE_COMMAND}" "-DNM=${MPT_GC_NM}" "-DFILES=$<TARGET_OBJECTS:mpt_gc_${_probe}_negative_probe>"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_no_host_math.cmake")
+      set_tests_properties(gc_sdk_no_host_math_detects_${_probe} PROPERTIES WILL_FAIL ON)
+      add_dependencies(mpt_gc_probes mpt_gc_${_probe}_negative_probe)
+    endforeach()
   elseif(MPT_REQUIRE_GC_WII)
-    message(FATAL_ERROR "runtimes/gc_wii: llvm-nm/nm not found for the fma link check")
+    message(FATAL_ERROR "runtimes/gc_wii: llvm-nm/nm not found for the host-math link check")
   endif()
 endif()
