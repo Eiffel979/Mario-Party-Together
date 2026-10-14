@@ -19,7 +19,11 @@
       ]
     },
     "nlohmann-json",
-    "doctest"
+    "doctest",
+    {
+      "name": "rmlui",
+      "$comment": "Player-facing UI in ui/ (ADR 0010 section 1). Default feature freetype only: no lua, svg or lottie in Phase 1."
+    }
   ],
   "features": {
     "gc-wii": {
