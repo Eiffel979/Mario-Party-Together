@@ -5,6 +5,7 @@
 #include <string>
 
 #include "app.h"
+#include "mpt/ui/launcher.h"
 #include "titles.h"
 
 int main(int argc, char** argv) {
@@ -19,5 +20,7 @@ int main(int argc, char** argv) {
   }
   mpt::shell::ShellTitles titles;
   mpt::shell::register_titles(titles);  // generated from the enabled runtime targets
-  return mpt::shell::run(*options, titles);
+  // The launcher (ui/, ADR 0010). run() creates it only for a windowed live run.
+  return mpt::shell::run(*options, titles,
+                         [](const mpt::shell::UiHost& host) { return mpt::ui::make_launcher(host); });
 }

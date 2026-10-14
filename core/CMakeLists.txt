@@ -57,7 +57,8 @@ if(WIN32)
   target_sources(mpt_shell PRIVATE shell/mario-party-together.manifest)  # longPathAware
   set_target_properties(mpt_shell PROPERTIES WIN32_EXECUTABLE OFF)
 endif()
-target_link_libraries(mpt_shell PRIVATE mpt::shell_app)
+# mpt::ui (ui/, ADR 0010) is the launcher; main.cpp hands its factory to run().
+target_link_libraries(mpt_shell PRIVATE mpt::shell_app mpt::ui)
 set_target_properties(mpt_shell PROPERTIES OUTPUT_NAME "mario-party-together")
 mpt_set_warnings(mpt_shell)
 mpt_copy_known_dumps(mpt_shell)
