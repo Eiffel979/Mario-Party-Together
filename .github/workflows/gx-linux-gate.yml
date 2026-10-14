@@ -16,23 +16,34 @@ on:
         type: boolean
         default: false
   push:
+    branches: [main]
     paths:
       - "runtimes/gc_wii/gx/**"
+      - "runtimes/gc_wii/sdk/**"
       - "runtimes/gc_wii/CMakeLists.txt"
+      - "asset-import/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
       - "vcpkg.json"
+      - "vcpkg-configuration.json"
       - ".github/workflows/gx-linux-gate.yml"
   pull_request:
     paths:
       - "runtimes/gc_wii/gx/**"
+      - "runtimes/gc_wii/sdk/**"
       - "runtimes/gc_wii/CMakeLists.txt"
+      - "asset-import/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
       - "vcpkg.json"
+      - "vcpkg-configuration.json"
       - ".github/workflows/gx-linux-gate.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: gx-linux-gate-${{ github.ref }}
+  group: gx-linux-gate-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -90,7 +101,9 @@ jobs:
           echo "VCPKG_ROOT=$MPT_VCPKG_DIR" >> "$GITHUB_ENV"
 
       # The whole tree with Clang, so runtimes/gc_wii builds in-tree and its tests are visible here.
-      # Warnings are not errors here: the main CI builds the rest of the tree with GCC and owns that.
+      # Warnings are not errors here: this job builds the whole tree with Clang, which the main CI does
+      # not, and its job is the gate, not warning policy. The main ci.yml builds the GX layer
+      # (headers-only Dawn) under -Werror from P1-21.
       - name: Configure (null renderer first, to build the source fetcher)
         run: |
           cmake --preset ci-linux -B "$BUILD_DIR" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
@@ -135,7 +148,8 @@ jobs:
             -DMPT_GX_TEST_API=vulkan -DMPT_GX_TEST_SOFTWARE_ADAPTER=ON
 
       - name: Build the GX layer and its tests
-        run: cmake --build "$BUILD_DIR" --target mpt_gx_scenes mpt_gx_scenes_null mpt_gx_mtx_tests mpt_gc_sdk_tests
+        id: build
+        run: cmake --build "$BUILD_DIR" --target mpt_gx_scenes mpt_gx_scenes_null mpt_gx_mtx_tests mpt_gc_sdk_tests mpt_gx_probes
 
       # G-b on lavapipe, G-c (null against real), G-e (two runs), MTX goldens, the libm link check.
       - name: Test (G-b, G-c, G-e)
@@ -143,6 +157,7 @@ jobs:
 
       # G-b's device and pipeline path on Dawn's Null adapter (no rasterization, so no probes).
       - name: Scenes on Dawn's Null adapter
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           "$BUILD_DIR/runtimes/gc_wii/gx/tests/mpt_gx_scenes" --api dawn_null --out "$BUILD_DIR/gx-dawn-null"
           cmake -DA="$BUILD_DIR/runtimes/gc_wii/gx/tests/out/null/results.txt" \
@@ -152,8 +167,30 @@ jobs:
       # G-d with a tolerance: the goldens come from a Windows GPU, so a lavapipe mismatch is reported
       # for review (a patch, not a gate failure) rather than failing the job.
       - name: Probe colours against the goldens (informational on lavapipe)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         continue-on-error: true
-        run: ctest --test-dir "$BUILD_DIR" -R '^gx_dawn_probes$' --output-on-failure
+        run: |
+          set +e
+          ctest --test-dir "$BUILD_DIR" -R '^gx_dawn_probes$' --output-on-failure > probes.log 2>&1
+          rc=$?
+          cat probes.log
+          {
+            echo "### GX golden probes on lavapipe (G-d, informational)"
+            echo
+            echo '```'
+            grep -E '^probe |probes checked|Passed|Failed' probes.log || echo "no probe output"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+      # Raw MTX values for diffing against the reference machine (B1 diagnosis): NaNs canonical,
+      # each value labelled with its inputs.
+      - name: Dump the MTX test values
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          MPT_GX_MTX_DUMP="$BUILD_DIR/mtx_values.txt" \
+            "$BUILD_DIR/runtimes/gc_wii/gx/tests/mpt_gx_mtx_tests" || true
+          gzip -kf "$BUILD_DIR/mtx_values.txt"
 
       - name: Upload the synthetic scene images and trails
         if: always()
@@ -161,6 +198,7 @@ jobs:
         with:
           name: gx-linux-scenes
           path: |
+            ${{ env.BUILD_DIR }}/mtx_values.txt.gz
             ${{ env.BUILD_DIR }}/runtimes/gc_wii/gx/tests/out/*/results.txt
             ${{ env.BUILD_DIR }}/runtimes/gc_wii/gx/tests/out/dawn/*.png
           retention-days: 14
