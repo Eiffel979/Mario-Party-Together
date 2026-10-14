@@ -1,5 +1,6 @@
 # The SDK replacement layer core (P1-13). Built only with Clang (see ../CMakeLists.txt).
 add_library(mpt_gc_sdk STATIC
+  src/ai.cpp
   src/ar.cpp
   src/card.cpp
   src/context.cpp
@@ -9,6 +10,7 @@ add_library(mpt_gc_sdk STATIC
   src/heap.cpp
   src/os.cpp
   src/sdk.cpp
+  src/thp.cpp
   src/vi_pad.cpp
 )
 add_library(mpt::gc_sdk ALIAS mpt_gc_sdk)
@@ -56,6 +58,7 @@ if(MPT_BUILD_TESTS)
   add_executable(mpt_gc_sdk_tests
     tests/main.cpp
     tests/harness.h
+    tests/test_audio.cpp
     tests/test_card.cpp
     tests/test_clock.cpp
     tests/test_context.cpp
@@ -65,6 +68,8 @@ if(MPT_BUILD_TESTS)
     tests/test_pad_vi.cpp
     tests/test_scheduler.cpp
     tests/test_state.cpp
+    tests/test_thp.cpp
+    tests/thp_encoder.h
     $<TARGET_OBJECTS:mpt_gc_redirect_probe>
   )
   target_link_libraries(mpt_gc_sdk_tests PRIVATE mpt::gc_sdk doctest::doctest)

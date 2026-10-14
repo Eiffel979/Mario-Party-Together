@@ -12,6 +12,12 @@
 #include <variant>
 #include <vector>
 
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
 #include "../shell/fake_title.h"
 #include "../support/fake_party_script.h"
 #include "frame_loop.h"
@@ -27,6 +33,14 @@ using namespace mpt::shell;
 namespace {
 
 constexpr std::uint64_t kFrames = 500;
+
+std::uint64_t test_process_id() {
+#ifdef _WIN32
+  return _getpid();
+#else
+  return static_cast<std::uint64_t>(getpid());
+#endif
+}
 
 TitleRegistry fake_registry() {
   TitleRegistry registry;
@@ -49,8 +63,10 @@ std::unique_ptr<Session> start_ok(const TitleRegistry& registry, const SessionCo
   return std::move(std::get<std::unique_ptr<Session>>(started));
 }
 
+// Per process, so parallel test runs (or two build trees) never share files.
 std::filesystem::path scratch_dir(const char* name) {
-  const std::filesystem::path dir = std::filesystem::temp_directory_path() / "mpt_shell_tests" / name;
+  const std::filesystem::path dir = std::filesystem::temp_directory_path() /
+                                    ("mpt_shell_tests_" + std::to_string(test_process_id())) / name;
   std::filesystem::remove_all(dir);
   std::filesystem::create_directories(dir);
   return dir;
@@ -158,8 +174,11 @@ TEST_CASE("letterbox keeps the aspect and centres the frame") {
   CHECK(letterbox(1280, 720, Aspect{16, 9}) == PixelRect{0, 0, 1280, 720});
   CHECK(letterbox(800, 800, Aspect{16, 9}) == PixelRect{0, 175, 800, 450});
   CHECK(letterbox(0, 720, Aspect{4, 3}) == PixelRect{});
-  CHECK(display_aspect(640, 480, false).num == 640);
-  CHECK(display_aspect(640, 480, true).num == 16);
+  CHECK(display_aspect(false).num == 4);
+  CHECK(display_aspect(false).den == 3);
+  CHECK(display_aspect(true).num == 16);
+  // A 640x448 frame is still shown 4:3.
+  CHECK(letterbox(1280, 720, display_aspect(false)) == PixelRect{160, 0, 960, 720});
 }
 
 TEST_CASE("save slots: paths, atomic writes and round trips") {
@@ -184,6 +203,53 @@ TEST_CASE("save slots: paths, atomic writes and round trips") {
   REQUIRE(write_file_atomic(slot, std::vector<std::byte>(2)).ok());
   CHECK_FALSE(load_save_media(slot, error).has_value());
   CHECK_FALSE(error.empty());
+
+  // No temporary files are left behind.
+  for (const auto& entry : std::filesystem::directory_iterator(slot.parent_path())) {
+    CHECK(display_path(entry.path().filename()) == "slot0.mptsave");
+  }
+}
+
+TEST_CASE("an unreadable save slot is kept, never overwritten") {
+  const std::filesystem::path root = scratch_dir("unreadable");
+  const std::filesystem::path slot = save_slot_path(root, TitleId::mp4, "USA");
+
+  SUBCASE("missing: blank card, saves allowed") {
+    const SlotOpen opened = open_save_slot(slot);
+    CHECK_FALSE(opened.initial.has_value());
+    CHECK(opened.persist);
+    CHECK(opened.warning.empty());
+  }
+  SUBCASE("readable: loaded") {
+    REQUIRE(store_save_media(slot, test::FakeRuntime::make_save_media(3)).ok());
+    const SlotOpen opened = open_save_slot(slot);
+    CHECK(opened.initial == test::FakeRuntime::make_save_media(3));
+    CHECK(opened.persist);
+  }
+  SUBCASE("unreadable: moved to .bak, then .bak2, and the session starts blank") {
+    const std::vector<std::byte> damaged{std::byte{1}, std::byte{2}};
+    REQUIRE(write_file_atomic(slot, damaged).ok());
+    SlotOpen opened = open_save_slot(slot);
+    CHECK_FALSE(opened.initial.has_value());
+    CHECK(opened.persist);
+    CHECK(opened.warning.find("slot0.mptsave.bak") != std::string::npos);
+    CHECK_FALSE(std::filesystem::exists(slot));
+    CHECK(std::filesystem::file_size(slot.string() + ".bak") == 2);
+
+    REQUIRE(write_file_atomic(slot, damaged).ok());
+    opened = open_save_slot(slot);
+    CHECK(std::filesystem::exists(slot.string() + ".bak2"));
+    CHECK(std::filesystem::file_size(slot.string() + ".bak") == 2);  // the first backup is untouched
+  }
+}
+
+TEST_CASE("save files work under a folder whose name is not ASCII") {
+  const std::filesystem::path root = scratch_dir("unicode") / std::filesystem::path(u8"Jos\u00e9 \u5c71\u7530");
+  const std::filesystem::path slot = save_slot_path(root, TitleId::mp4, "USA");
+  REQUIRE(store_save_media(slot, test::FakeRuntime::make_save_media(9)).ok());
+  std::string error;
+  CHECK(load_save_media(slot, error) == test::FakeRuntime::make_save_media(9));
+  CHECK(display_path(slot).find("Jos\xc3\xa9") != std::string::npos);  // UTF-8, no exception
 }
 
 TEST_CASE("FrameLoop does not sample or step while paused or while the UI has focus") {
