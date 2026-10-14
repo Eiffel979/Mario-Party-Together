@@ -18,6 +18,8 @@
 
 #include "mpt_gc/gc_math_redirect.h"
 
+/* No parentheses around the arguments: the macros must also rewrite
+ * declarations such as `extern float powf(float, float);` (synth_adsr.c). */
 #undef powf
 #undef pow
 #undef sin
@@ -27,14 +29,14 @@
 #undef tanf
 #undef acosf
 #undef atan2f
-#define powf(x, y) mpt_powf((x), (y))
-#define pow(x, y) mpt_pow((x), (y))
-#define sin(x) mpt_sin((x))
-#define cos(x) mpt_cos((x))
-#define sinf(x) mpt_sinf((x))
-#define cosf(x) mpt_cosf((x))
-#define tanf(x) mpt_tanf((x))
-#define acosf(x) mpt_acosf((x))
-#define atan2f(y, x) mpt_atan2f((y), (x))
+#define powf(x, y) mpt_powf(x, y)
+#define pow(x, y) mpt_pow(x, y)
+#define sin(x) mpt_sin(x)
+#define cos(x) mpt_cos(x)
+#define sinf(x) mpt_sinf(x)
+#define cosf(x) mpt_cosf(x)
+#define tanf(x) mpt_tanf(x)
+#define acosf(x) mpt_acosf(x)
+#define atan2f(y, x) mpt_atan2f(y, x)
 
 #endif /* MPT_GC_LIBM_REDIRECT_H */

@@ -41,6 +41,7 @@ else()
   endif()
 endif()
 target_compile_options(mpt_gc_sdk PUBLIC ${MPT_GC_FP_FLAGS} PRIVATE ${MPT_GC_WARN_FLAGS})
+set(MPT_GC_WARN_FLAGS "${MPT_GC_WARN_FLAGS}" PARENT_SCOPE)  # for ../musyx
 
 # llvm-nm for the link-time fma check (ADR 0008 §5 condition 1).
 get_filename_component(_mpt_gc_cc_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)

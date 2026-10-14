@@ -526,6 +526,9 @@ void report(const char* text) {
 
 using namespace detail;
 
+std::uint64_t hashGamePointer(const void* p) { return hashPointer(p); }
+std::uint64_t hashGameFunction(const void* f) { return hashFunction(f); }
+
 Sdk::Sdk(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 
 Sdk::~Sdk() {
