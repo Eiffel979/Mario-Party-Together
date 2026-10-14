@@ -1,0 +1,34 @@
+Apply order 0008 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+THP: the SDK's decoder and a defined return
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+diff --git a/src/game/THPSimple.c b/src/game/THPSimple.c
+index 675d9e9aab48c58adb92482ac02e4d651cfed069..4b5e65dd8667bb3acfe18114517a6c5d3c21f3e0 100755
+--- a/src/game/THPSimple.c
++++ b/src/game/THPSimple.c
+@@ -1,6 +1,9 @@
+ #include "game/THPSimple.h"
+ #include "game/THPDraw.h"
+ #include <string.h>
++#ifdef MPT_PC
++#include "mpt_gc/thp.h" /* THPInit and the decoders: the SDK's own (ADR 0007 section 4) */
++#endif
+ 
+ #define ALIGN32(val) (((val) + 0x1F) & ~0x1F)
+ 
+diff --git a/src/game/thpmain.c b/src/game/thpmain.c
+index ad131f7256d9ae079fe3d9a2ea0c2cdbe91c6b81..d978696359731c18222a8e9a778181e58f93f162 100755
+--- a/src/game/thpmain.c
++++ b/src/game/thpmain.c
+@@ -63,7 +63,11 @@ s16 HuTHP3DCreateVol(char *path, s16 loop, float volume)
+     s16 temp_r31;
+ 
+     if (THPProc) {
++#ifdef MPT_PC
++        return -1; /* the console returned whatever r3 held; nothing in the game calls this */
++#else
+         return;
++#endif
+     }
+     THPStart = 0;
+     THPProc = HuPrcCreate(THPTestProc, 0x64, 0x3000, 0);

@@ -83,7 +83,8 @@ endfunction()
 
 set(MPT_MP4_PB "${CMAKE_CURRENT_BINARY_DIR}/partyboard")
 _mpt_mp4_patched_copy(partyboard "${MPT_MP4_PARTYBOARD_DIR}" "${MPT_MP4_PB}"
-  "${CMAKE_CURRENT_SOURCE_DIR}/patches/partyboard" files.cmake include src/game src/REL src/libhu src/msm src/port)
+  "${CMAKE_CURRENT_SOURCE_DIR}/patches/partyboard" files.cmake include src/game src/REL src/libhu src/msm src/port
+  libs/dolphin/include/dolphin/thp)
 
 # Party Board's own lists of game and REL sources (files.cmake only sets variables).
 include("${MPT_MP4_PB}/files.cmake")
@@ -95,7 +96,8 @@ file(GLOB MPT_MP4_MSM_FILES RELATIVE "${MPT_MP4_PB}" "${MPT_MP4_PB}/src/msm/*.c"
 # Game code: Party Board's PC macros (byteswapping, 64-bit layouts) plus MPT_PC, our target macro,
 # where its TARGET_PC code assumes Party Board's own port layer. Strict FP and the math redirect come
 # from mpt::gc_sdk and mpt::gx_math_redirect (ADR 0008 sections 4 and 5).
-set(MPT_MP4_GAME_DEFS TARGET_PC MPT_PC NON_MATCHING OPTIMIZED_TEXTURE_LOADING BYTESWAPPING TARGET_DOL VERSION=1)
+set(MPT_MP4_GAME_DEFS TARGET_PC MPT_PC NON_MATCHING OPTIMIZED_TEXTURE_LOADING BYTESWAPPING TARGET_DOL VERSION=0)
+# VERSION=0 is GMPE01_00, the only revision Phase 1 supports (plan D3). Party Board builds VERSION=1.
 if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
   set(MPT_MP4_NOWARN /w)
 else()
@@ -107,7 +109,9 @@ add_library(mpt_mp4_game_flags INTERFACE)
 target_compile_definitions(mpt_mp4_game_flags INTERFACE ${MPT_MP4_GAME_DEFS})
 target_include_directories(mpt_mp4_game_flags SYSTEM INTERFACE
   "${MPT_MP4_PB}/include" "${MPT_GX_AURORA_PATCHED}/include" "${MPT_GX_AURORA_PATCHED}/include/dolphin"
-  "${CMAKE_CURRENT_SOURCE_DIR}/include" "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  "${CMAKE_CURRENT_SOURCE_DIR}/include" "${CMAKE_CURRENT_BINARY_DIR}/generated"
+  # Only the decomp's THP file-format headers (THPSimple.h); the rest of its SDK is ours.
+  "${MPT_MP4_PB}/libs/dolphin/include")
 target_compile_options(mpt_mp4_game_flags INTERFACE ${MPT_MP4_NOWARN})
 target_link_libraries(mpt_mp4_game_flags INTERFACE mpt::gc_sdk mpt::gx_math_redirect mpt_gx_frontend mpt_musyx_core)
 
@@ -178,7 +182,8 @@ foreach(_rel IN LISTS MPT_MP4_RELS)
             "-DOBJCOPY=${MPT_MP4_OBJCOPY}" "-DAR=${MPT_MP4_AR}" "-DOBJECTS=$<JOIN:$<TARGET_OBJECTS:mpt_mp4_rel_${_rel}>,|>"
             "-DOUT_LIB=${_lib}" "-DOUT_INFO=${_info}" -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/isolate_rel.cmake"
     DEPENDS mpt_mp4_rel_${_rel} $<TARGET_OBJECTS:mpt_mp4_rel_${_rel}> "${CMAKE_CURRENT_SOURCE_DIR}/tools/isolate_rel.cmake"
-    COMMENT "Isolating REL ${_rel}")
+    COMMENT "Isolating REL ${_rel}"
+    VERBATIM) # quotes the "|"-joined object list for the shell
   list(APPEND MPT_MP4_REL_LIBS "${_lib}")
   list(APPEND MPT_MP4_REL_INFOS "${_info}")
   string(APPEND _table_decls "extern const MptMp4RelInfo mpt_rel_info_${_rel};

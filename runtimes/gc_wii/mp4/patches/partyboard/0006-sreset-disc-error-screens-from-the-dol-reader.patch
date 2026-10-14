@@ -1,0 +1,60 @@
+Apply order 0006 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+sreset: disc-error screens from the DOL reader
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+diff --git a/src/game/sreset.c b/src/game/sreset.c
+index 1179c57f3b42f52c2d50f7c37fb2e98355216d74..3eadef437260f63d3a375312aa488281a7485eeb 100644
+--- a/src/game/sreset.c
++++ b/src/game/sreset.c
+@@ -8,6 +8,10 @@
+ #include "game/gamework_data.h"
+ 
+ #include "version.h"
++#ifdef MPT_PC
++#include "game/msm.h"
++#include "msm/msmsys.h" /* msmSysCheckInit: declared only here */
++#endif
+ 
+ #define SR_DVD_LOADING 0
+ #define SR_DVD_COVER_OPEN 1
+@@ -27,7 +31,10 @@ static s32 SR_PreRstChk[4] = {0, 0, 0, 0};
+ static s32 padding[4] = {0, 0, 0, 0};
+ #endif
+ 
+-#if VERSION_ENG
++#ifdef MPT_PC
++/* The disc-error screens are read from the user's main.dol at run time (ADR 0009 section 3). */
++#include "port/dolassets.h"
++#elif VERSION_ENG
+ 
+ #include "coveropen_en.inc"
+ #include "fatalerror_en.inc"
+@@ -301,7 +308,17 @@ static void ToeDispCheck(void)
+ 
+ static void _HuDvdErrDispXFB(s32 error)
+ {
+-	#if VERSION_ENG
++	#if defined(MPT_PC) && VERSION_ENG
++	/* Filled when the screen is drawn, from the DOL reader. Explicit indices: dolassets.h maps
++	   retryerror_en to the French entry and has no wrongdisc_en. */
++	void *bmpMes[][6] = {
++		{ GetDolIncludeData(DOL_INCLUDE_LOADING_EN), GetDolIncludeData(DOL_INCLUDE_COVEROPEN_EN),
++		  GetDolIncludeData(DOL_INCLUDE_NODISC_EN), GetDolIncludeData(DOL_INCLUDE_WRONGDISC_EN),
++		  GetDolIncludeData(DOL_INCLUDE_RETRYERROR_EN), GetDolIncludeData(DOL_INCLUDE_FATALERROR_EN) }
++	};
++	#elif defined(MPT_PC)
++	#error "the game module supports GMPE01 only (Phase 1 plan D3)"
++	#elif VERSION_ENG
+ 	static void *bmpMes[][6] = {
+ 		 loading_en, coveropen_en, nodisc_en, wrongdisc_en, retryerror_en, fatalerror_en
+ 	};
+@@ -471,7 +488,9 @@ void HuRestartSystem(void)
+ 		}
+ 	}
+ 	OSReport("Timeout Count=%d\n", retrace[0]);
++#ifndef MPT_PC /* no PE copy is ever in flight on the host GX; OSResetSystem faults the runtime */
+ 	__GXAbortWaitPECopyDone();
++#endif
+ 	OSResetSystem(0, 0, 0);
+ }
+ 
