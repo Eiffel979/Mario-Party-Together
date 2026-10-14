@@ -194,5 +194,34 @@ class GraphicsArtifactsTest(unittest.TestCase):
                 self.assertEqual(reasons(name), [])
 
 
+class LauncherFontAllowlistTest(unittest.TestCase):
+    """ADR 0010 Review 4: the one OFL font is the only binary ui/ may add, by exact path."""
+
+    FONT = "ui/assets/fonts/LatoLatin-Regular.ttf"
+
+    def setUp(self):
+        from check_repo import load_allowlist
+        self.allowlist = load_allowlist()
+
+    def test_exact_path_is_allowlisted(self):
+        self.assertIn(self.FONT, self.allowlist)
+        self.assertEqual(reasons(self.FONT, b"\x00\x01\x00\x00\x00", allowlist=self.allowlist), [])
+
+    def test_no_other_binary_under_ui_passes(self):
+        for name in ["ui/assets/fonts/Other-Regular.ttf", "ui/assets/fonts/LatoLatin-Bold.ttf",
+                     "ui/assets/logo.png", "ui/screens/LatoLatin-Regular.ttf"]:
+            with self.subTest(name=name):
+                self.assertNotEqual(reasons(name, b"\x00\x01\x00\x00\x00", allowlist=self.allowlist), [])
+
+    def test_font_is_a_truetype_file_with_its_licence(self):
+        font = REPO_ROOT / self.FONT
+        self.assertTrue(font.is_file(), "the allowlisted font is missing")
+        data = font.read_bytes()
+        self.assertEqual(data[:4], b"\x00\x01\x00\x00", "not a TrueType font")
+        self.assertLessEqual(len(data), MAX_FILE_BYTES)
+        licence = (font.parent / "OFL.txt").read_text(encoding="utf-8")
+        self.assertIn("SIL Open Font License, Version 1.1", licence)
+
+
 if __name__ == "__main__":
     unittest.main()
