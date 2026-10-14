@@ -23,6 +23,7 @@ endif()
 
 set(MPT_MUSYX_DIR "" CACHE PATH "musyx checkout at the commit in runtimes/gc_wii/mp4/decomp.lock (see musyx/CMakeLists.txt)")
 option(MPT_REQUIRE_MUSYX "Fail the configure if MPT_MUSYX_DIR is not a pinned musyx checkout" OFF)
+option(MPT_BUILD_MP4_GAME_MODULE "Build the MP4 game module from the pinned sources in mp4/decomp.lock (compile-only without a dump)" OFF)
 option(MPT_REQUIRE_GC_WII "Fail the configure if the GameCube SDK layer cannot be built (no Clang); CI sets this" OFF)
 
 set(MPT_CORE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../core/include" CACHE PATH
@@ -42,6 +43,9 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   add_subdirectory(sdk)
   add_subdirectory(gx)
   add_subdirectory(musyx)
+  if(MPT_BUILD_MP4_GAME_MODULE)
+    add_subdirectory(mp4)
+  endif()
   return()
 endif()
 
@@ -99,6 +103,7 @@ ExternalProject_Add(mpt_gc_wii_clang
     "-DMPT_AURORA_DIR:PATH=${MPT_AURORA_DIR}"
     "-DMPT_MUSYX_DIR:PATH=${MPT_MUSYX_DIR}"
     "-DMPT_REQUIRE_MUSYX:BOOL=${MPT_REQUIRE_MUSYX}"
+    "-DMPT_BUILD_MP4_GAME_MODULE:BOOL=${MPT_BUILD_MP4_GAME_MODULE}"
   INSTALL_COMMAND ""
   BUILD_ALWAYS ON
   USES_TERMINAL_BUILD ON)
