@@ -13,6 +13,7 @@
 
 #include "mpt/core/input.h"
 #include "mpt/input/device.h"
+#include "mpt/input/held_mask.h"
 #include "mpt/input/mapper.h"
 #include "mpt/input/ports.h"
 #include "mpt/input/reserved.h"
@@ -39,8 +40,16 @@ class SdlInput {
   // Reads all devices once and maps them. Call exactly once per emulated frame,
   // after polling events; the returned InputFrame is the only output. Reserved
   // keys and buttons (Esc, Guide) are cleared before mapping, so holding one
-  // never sets a bit in the frame.
+  // never sets a bit in the frame, and the held-input mask is applied.
   InputFrame sample(std::uint64_t frame);
+
+  // Every key and gamepad button held right now stays clear in the frames
+  // sample() returns until it is released; it works normally from its next
+  // press. Axes are not masked (held_mask.h). The shell calls this whenever
+  // game input resumes after host-side input: resume from pause, a UI screen
+  // losing focus, session start, and the window regaining focus.
+  void mask_held_until_release();
+  const HeldMask& held_mask() const { return held_; }
 
   // Snapshot of every connected device (used by sample(); exposed for the UI).
   std::vector<DeviceSnapshot> snapshot() const;
@@ -61,6 +70,7 @@ class SdlInput {
   std::vector<OpenPad> pads_;
   PortAssigner ports_;
   Mapper mapper_;
+  HeldMask held_;
 };
 
 }  // namespace mpt::input

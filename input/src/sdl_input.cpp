@@ -133,7 +133,10 @@ std::optional<HostAction> SdlInput::host_action(const SDL_Event& event) {
 InputFrame SdlInput::sample(std::uint64_t frame) {
   std::vector<DeviceSnapshot> devices = snapshot();
   strip_reserved(devices);
+  held_.apply(devices);
   return mapper_.map(frame, devices, ports_.layout());
 }
+
+void SdlInput::mask_held_until_release() { held_.capture(snapshot()); }
 
 }  // namespace mpt::input
