@@ -91,7 +91,16 @@ foreach(_pkg jinja2 markupsafe)
 endforeach()
 file(SHA256 "${_lock}" _lock_sha)
 
-file(REMOVE_RECURSE "${MPT_DAWN_PREFIX}")
+# Only ever delete a prefix this recipe made (it holds our stamp) or an empty folder: a mistyped
+# MPT_DAWN_PREFIX must not wipe an unrelated directory.
+if(EXISTS "${MPT_DAWN_PREFIX}")
+  file(GLOB _prefix_entries "${MPT_DAWN_PREFIX}/*")
+  if(_prefix_entries AND NOT EXISTS "${MPT_DAWN_PREFIX}/mpt_dawn_stamp.cmake")
+    message(FATAL_ERROR "build_dawn.cmake: ${MPT_DAWN_PREFIX} is not empty and is not a Dawn prefix made by this "
+                        "recipe (no mpt_dawn_stamp.cmake). Refusing to delete it; choose another MPT_DAWN_PREFIX.")
+  endif()
+  file(REMOVE_RECURSE "${MPT_DAWN_PREFIX}")
+endif()
 file(MAKE_DIRECTORY "${MPT_DAWN_PREFIX}/include")
 
 if(MPT_DAWN_HEADERS_ONLY)

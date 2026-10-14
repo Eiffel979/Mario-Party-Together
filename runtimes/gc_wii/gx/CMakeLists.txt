@@ -76,8 +76,14 @@ if(GIT_EXECUTABLE)
   endif()
 endif()
 if(NOT MPT_GX_AURORA_PINNED)
-  message(WARNING "runtimes/gc_wii/gx: ${MPT_AURORA_DIR} is not a clean checkout of the pinned aurora "
-                  "${_aurora_commit}. The build is unpinned (ADR 0009 section 1).")
+  # An unpinned build never produces goldens or gate evidence (ADR 0009 section 1).
+  set(_unpinned_msg "runtimes/gc_wii/gx: ${MPT_AURORA_DIR} is not a clean checkout of the pinned aurora "
+                    "${_aurora_commit}. The build is unpinned (ADR 0009 section 1).")
+  string(JOIN "" _unpinned_msg ${_unpinned_msg})
+  if(MPT_REQUIRE_GX)
+    message(FATAL_ERROR "${_unpinned_msg} MPT_REQUIRE_GX needs the pinned checkout.")
+  endif()
+  message(WARNING "${_unpinned_msg} Golden values cannot be recorded from it.")
 endif()
 
 # ---- Source lists (explicit; a pin bump that moves a file fails here) ---------------------------

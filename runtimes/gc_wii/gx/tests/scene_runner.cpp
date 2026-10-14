@@ -112,7 +112,9 @@ int main(int argc, char** argv) {
   g_stream = XXH3_createState();
 
   std::ofstream res(out / "results.txt", std::ios::binary | std::ios::trunc);
-  res << "# " << renderer->description() << " scale=" << config.internal_scale << " frames=" << frames << "\n";
+  // aurora_pinned=0 marks a run that must not be used to record golden_probes.txt (ADR 0009 section 1).
+  res << "# " << renderer->description() << " scale=" << config.internal_scale << " frames=" << frames
+      << " aurora_pinned=" << MPT_GX_AURORA_PINNED << "\n";
   std::map<ProbeKey, Rgba> measured;
   for (const Scene& scene : scenes()) {
     for (int f = 0; f < frames; ++f) {
