@@ -1,0 +1,23 @@
+Apply order 0015 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc: ADR 0007 section 6 patch 2.
+GXLoadLightObjImm finds the light index with std::countr_zero instead of std::log2 (host libm on Linux).
+Contains code from aurora (MIT; see LICENSE-aurora in this folder). Applied in order by
+runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+
+diff --git a/lib/dolphin/gx/GXLighting.cpp b/lib/dolphin/gx/GXLighting.cpp
+index 6a42b7280753b983790d0f66ffd4b3dd713157f0..0b217b48b4a9c7633b9502f3af9bbb2a7a6b4063 100644
+--- a/lib/dolphin/gx/GXLighting.cpp
++++ b/lib/dolphin/gx/GXLighting.cpp
+@@ -1,3 +1,4 @@
++#include <bit>
+ #include "gx.hpp"
+ #include "__gx.h"
+ 
+@@ -131,7 +132,7 @@ void GXInitLightColor(GXLightObj* light_, GXColor col) {
+ }
+ 
+ void GXLoadLightObjImm(GXLightObj* light_, GXLightID id) {
+-  u32 idx = std::log2<u32>(id);
++  u32 idx = static_cast<u32>(std::countr_zero(static_cast<u32>(id))); // GXLightID is one bit: exact, no libm
+   auto* light = reinterpret_cast<const GXLightObj_*>(light_);
+ 
+   // XF bulk write: 16 values at light base address
