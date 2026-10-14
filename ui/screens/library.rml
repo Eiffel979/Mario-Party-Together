@@ -1,0 +1,31 @@
+<rml>
+<head>
+  <title>Library</title>
+  <link type="text/rcss" href="../assets/theme.rcss"/>
+</head>
+<body data-model="ui">
+  <h1>Mario Party Together</h1>
+  <div class="brand-bar"></div>
+  <h2>Your games</h2>
+
+  <div class="panel" data-if="!has_titles">
+    <p>No games yet. Add a dump of a disc you own: it is checked against the known-good list and built on this computer. Nothing is uploaded.</p>
+  </div>
+
+  <div class="btn title-row" data-for="t, i : titles" data-event-click="play(i)" autofocus="">
+    <p class="name">{{t.name}}</p>
+    <p class="detail">{{t.detail}}</p>
+    <p class="status">{{t.status}}</p>
+  </div>
+
+  <div class="btn" data-event-click="add_dump" autofocus="">Add game dump</div>
+  <div class="btn" data-event-click="exit_app">Exit</div>
+
+  <p class="error">{{library_message}}</p>
+  <p class="muted small">You can also drop a dump file onto this window.</p>
+
+  <div class="hints">
+    <span class="hint"><span class="glyph south"><span class="d n"></span><span class="d w"></span><span class="d e"></span><span class="d s"></span></span>Select</span>
+  </div>
+</body>
+</rml>
