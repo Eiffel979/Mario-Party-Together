@@ -28,6 +28,7 @@
 #include "pacer.h"
 #include "presenter.h"
 #include "save_store.h"
+#include "ui_host.h"
 
 namespace mpt::shell {
 namespace {
@@ -122,11 +123,14 @@ TitleRegistry make_registry(const ShellTitles& titles) {
   return registry;
 }
 
-std::optional<asset_import::KnownDumps> load_known_dumps(std::string& error) {
-  // known_dumps.json is copied next to the executable at build time.
+// known_dumps.json is copied next to the executable at build time.
+std::filesystem::path known_dumps_path() {
   const char* base = SDL_GetBasePath();
-  const std::filesystem::path db_path = std::filesystem::path(base ? base : "") / "data" / "known_dumps.json";
-  return asset_import::KnownDumps::load(db_path, error);
+  return std::filesystem::path(base ? base : "") / "data" / "known_dumps.json";
+}
+
+std::optional<asset_import::KnownDumps> load_known_dumps(std::string& error) {
+  return asset_import::KnownDumps::load(known_dumps_path(), error);
 }
 
 int identify(const std::filesystem::path& path) {
@@ -196,9 +200,10 @@ std::uint64_t pick_seed() {
 }
 
 template <typename T>
-std::optional<T> take_or_print(std::variant<T, Result> v, const char* context) {
+std::optional<T> take_or_print(std::variant<T, Result> v, const char* context, std::string* error = nullptr) {
   if (Result* failure = std::get_if<Result>(&v)) {
     std::fprintf(stderr, "%s: %s\n", context, failure->error().c_str());
+    if (error) *error = failure->error();
     return std::nullopt;
   }
   return std::get<T>(std::move(v));
@@ -266,6 +271,32 @@ class Shell final : public IShellCommands {
 
   void set_overlay(IOverlay* overlay) { overlay_ = overlay; }
 
+  // What the launcher may see and use (ui_host.h). The pointers stay valid for the
+  // Shell's lifetime.
+  UiHost ui_host(SDL_Window* window) {
+    UiHost host;
+    host.commands = this;
+    host.window = window;
+    host.ports = &input_.ports();
+    for (const ShellTitle& t : titles_) host.titles.push_back(t.id);
+    host.recipe = [this](TitleId id) -> std::unique_ptr<asset_import::BuildRecipe> {
+      const ShellTitle* title = find_title(titles_, id);
+      return title && title->recipe ? title->recipe() : nullptr;
+    };
+    host.user_dir = dirs_.root;
+    host.cache_dir = dirs_.cache;
+    host.known_dumps = known_dumps_path();
+    host.status = [this] {
+      SessionStatus s;
+      s.running = session_ != nullptr;
+      s.paused = loop_ && loop_->paused();
+      s.start_failures = start_failures_;
+      s.last_error = last_error_;
+      return s;
+    };
+    return host;
+  }
+
   // Starts the session the command line asks for. False on failure (already printed).
   bool start_from_options() {
     if (options_.replay) return start_replay(*options_.replay);
@@ -326,8 +357,12 @@ class Shell final : public IShellCommands {
 
  private:
   bool start_live(const VerifiedDump& dump, std::optional<std::uint64_t> seed) {
+    last_error_.clear();
     const ShellTitle* title = find_title(titles_, dump.title);
-    if (!title) return false;
+    if (!title) {
+      last_error_ = std::string(to_string(dump.title)) + " is not available in this build";
+      return false;
+    }
     slot_ = save_slot_path(dirs_.saves, dump.title, dump.region);
     // An unreadable slot is moved aside, never overwritten (save_store.h).
     SlotOpen opened = open_save_slot(*slot_);
@@ -342,7 +377,7 @@ class Shell final : public IShellCommands {
 
     if (options_.record) {
       std::optional<ReplayHeader> header =
-          take_or_print(make_replay_header(config, options_.embed_save), "record");
+          take_or_print(make_replay_header(config, options_.embed_save), "record", &last_error_);
       if (!header) return false;
       recorder_.emplace(std::move(*header));
     }
@@ -395,7 +430,8 @@ class Shell final : public IShellCommands {
   }
 
   bool start_session(const SessionConfig& config, FrameLoopHooks hooks, ReplayRecorder* recorder) {
-    std::optional<std::unique_ptr<Session>> started = take_or_print(Session::start(registry_, config), "session");
+    std::optional<std::unique_ptr<Session>> started =
+        take_or_print(Session::start(registry_, config), "session", &last_error_);
     if (!started) return false;
     session_ = std::move(*started);
     hooks.minigame_changed = [this](const std::optional<MinigameId>& id) {
@@ -468,7 +504,13 @@ class Shell final : public IShellCommands {
       const StartRequest request = std::move(*pending_start_);
       pending_start_.reset();
       end_session();
-      if (!start_live(request.dump, request.seed)) exit_code_ = 1;
+      if (!start_live(request.dump, request.seed)) {
+        // A start the launcher asked for that fails returns to the launcher with the
+        // reason, and the shell keeps running (P1-23).
+        ++start_failures_;
+        if (last_error_.empty()) last_error_ = "the session could not start";
+        if (!overlay_) exit_code_ = 1;
+      }
     }
     if (pending_pause_) {
       pending_pause_ = false;
@@ -547,6 +589,8 @@ class Shell final : public IShellCommands {
   FramePacer pacer_;
   IOverlay* overlay_ = nullptr;
   GameInputGate input_gate_;
+  std::uint64_t start_failures_ = 0;  // failed requestStart calls (ui_host.h SessionStatus)
+  std::string last_error_;            // why the last start failed, for the launcher
 
   std::unique_ptr<Session> session_;
   std::unique_ptr<FrameLoop> loop_;
@@ -644,7 +688,7 @@ std::optional<AppOptions> parse_args(int argc, char** argv, std::string& message
   return options;
 }
 
-int run(const AppOptions& options, const ShellTitles& titles) {
+int run(const AppOptions& options, const ShellTitles& titles, const OverlayFactory& make_overlay) {
   if (options.identify_path) return identify(*options.identify_path);
   if (options.verify_replay) return run_verify_replay(options, titles);
 
@@ -680,7 +724,16 @@ int run(const AppOptions& options, const ShellTitles& titles) {
   int code = 0;
   {
     Shell shell(options, titles, std::move(*dirs), renderer);
+    // The launcher exists only for a windowed live run: headless and replay runs never
+    // create it (ADR 0010 §3.5). It is destroyed before the renderer.
+    std::unique_ptr<IOverlay> overlay;
+    if (make_overlay && !options.headless && !options.replay) {
+      overlay = make_overlay(shell.ui_host(window));
+      if (!overlay) std::fprintf(stderr, "ui: the launcher could not start; running without it\n");
+      shell.set_overlay(overlay.get());
+    }
     code = shell.start_from_options() ? shell.loop() : 1;
+    shell.set_overlay(nullptr);
   }
   SDL_DestroyRenderer(renderer);
   SDL_DestroyWindow(window);
