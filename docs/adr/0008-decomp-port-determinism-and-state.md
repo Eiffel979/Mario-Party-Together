@@ -146,3 +146,23 @@ qa-reviewer's review of P1-06 found a gap. The shell's generated title registrat
   - `mpt_register_title`: it now rejects imported targets and accepts only a plain identifier as `FUNCTION`.
   - P1-16's acceptance criteria.
 - **The C ABI** is defined in P1-15/P1-16 by runtime-gc-wii, with architect review: boot, step, video, audio, save and load state, hash, frame rate, save media, and party reads for the adapter. Each call gets an explicit struct version. It is not a core contract, because only `Mp4Runtime` calls it.
+
+## Amendment after P1-14: NaN in the state hash (architect, 2026-10-13)
+### Context
+P1-14's MTX goldens failed on Linux on **NaN sign and payload bits** (`docs/titles/mp4.md`, d983f0a).
+- IEEE 754 leaves the sign and payload of a NaN result unspecified. On x86, an operation with two NaN operands returns the one the compiler placed first, and compilers may swap the operands of commutative operations even under strict FP (§4).
+- On the reference machine, `-Od` and `-O2` already disagree on 38 NaN signs in one golden group.
+- Game state can hold NaN floats. §8 hashes fields by value, so a NaN could split the state hash between builds or platforms when behaviour is identical.
+
+### Decision: canonicalize NaNs when hashing floats
+1. **`StateHasher` gains `update_f32` and `update_f64`.** They hash the IEEE 754 bits little-endian: 4 bytes for f32, 8 bytes for f64. Every NaN (quiet or signalling, any sign, any payload) is first replaced by the canonical quiet NaN: `0x7fc00000` for f32, `0x7ff8000000000000` for f64. All other values are hashed exactly, including `+0`/`-0`, infinities and subnormals.
+2. **Every float field in a hash manifest goes through these functions**, never through `update` on raw bytes or `update_u64` on bit-cast values. This applies to the SDK's hash area, the title manifests and `FakeRuntime` if it ever gains floats. runtime-gc-wii moves the SDK's existing float fields over in its next SDK change. P1-18 states the rule for the MP4 manifest.
+3. **Why this is safe:**
+   - A NaN's sign and payload can only change behaviour through four paths: `copysign`/`signbit` on the NaN, a bit cast to an integer, formatting it, or a float-to-int conversion.
+   - Comparisons are false for every NaN, arithmetic just propagates "a NaN", and our fast casts map every NaN to 0 (§5).
+   - On any of the four paths, the payload difference becomes a different **non-NaN** value, an integer or a branch. That value is hashed exactly. So canonicalizing only delays detection to the first frame where the payload has an effect, which is exactly where we want a desync to show.
+   - A payload that never has an effect should not split the trail. Otherwise the trail would depend on optimisation level, which ADR 0002 rule 4 forbids.
+4. **What canonicalizing hides:** two runs whose only difference is a NaN's bits, with no effect yet. The perturbation tests (E4) still cover every manifest area, because each perturbation changes a non-NaN value.
+5. **Signed zero stays exact.** Under strict FP (no fast-math, `-ffp-contract=off`), the sign of a zero result is fully specified by IEEE 754, so a difference there is a real divergence. `1/x` and `atan2` already make it behaviour.
+6. **`SaveState` is unaffected.** It keeps the raw bytes (§10), so `loadState` restores every NaN bit for bit, and the run continues exactly as the producer's would on the same build. The hash after a load still equals the producer's (ADR 0002 rule 5), because the same canonical hashing applies to both. The deep-hash debug mode (§9) hashes raw memory. It can show NaN-bit differences between two builds, and that is expected; it is only ever compared on one machine and one build.
+7. **Contract version.** The two functions are added to `state.h`, and every existing digest (`update`, `update_u64`) is unchanged. So no recorded hash, replay or golden trail changes, and `kCoreContractVersion` stays 1 (ADR 0002, amendment 16).
