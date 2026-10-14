@@ -1,6 +1,7 @@
-MPT patch 8 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc (ADR 0007 section 6).
+Apply order 0006 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc: ADR 0007 section 6 patch 8.
 fifo::g_processObserver sees every buffer handed to the command processor (tests only).
-Applied in order by runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+Contains code from aurora (MIT; see LICENSE-aurora in this folder). Applied in order by
+runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
 
 diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
 index 974855624db82dd29cc29264b1780344b4168cf1..dbaafa4e9d4ee78b830cdb6ddeeab0161179ce83 100644

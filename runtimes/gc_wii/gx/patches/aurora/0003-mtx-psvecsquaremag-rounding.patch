@@ -1,6 +1,7 @@
-MPT patch 2 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc (ADR 0007 section 6).
+Apply order 0003 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc: ADR 0007 section 6 patch 2.
 Backport of upstream f8573d3: PSVECSquareMag rounding.
-Applied in order by runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+Contains code from aurora (MIT; see LICENSE-aurora in this folder). Applied in order by
+runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
 
 diff --git a/lib/dolphin/mtx/vec.c b/lib/dolphin/mtx/vec.c
 index 6dc14670554593fb01b5698b0b2af0b580750330..54ac1281148133e0174cefe730de14257402a0f4 100644

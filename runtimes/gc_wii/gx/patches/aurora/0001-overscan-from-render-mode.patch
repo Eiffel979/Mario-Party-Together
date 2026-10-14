@@ -1,6 +1,7 @@
-MPT patch 1 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc (ADR 0007 section 6).
+Apply order 0001 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc: ADR 0007 section 6 patch 1.
 Backport of upstream e2fc845: GXAdjustForOverscan computes from the render mode, never the window.
-Applied in order by runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+Contains code from aurora (MIT; see LICENSE-aurora in this folder). Applied in order by
+runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
 
 diff --git a/lib/dolphin/gx/GXFrameBuffer.cpp b/lib/dolphin/gx/GXFrameBuffer.cpp
 index c196cf67c4999c1117bc30e5061d47bd085ccbbd..43e8d890427febaeb44ec62b37a48d71cf77103c 100644

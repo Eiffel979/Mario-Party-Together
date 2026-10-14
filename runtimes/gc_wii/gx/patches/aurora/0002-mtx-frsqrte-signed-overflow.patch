@@ -1,6 +1,7 @@
-MPT patch 2 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc (ADR 0007 section 6).
+Apply order 0002 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc: ADR 0007 section 6 patch 2.
 Backport of upstream 4143fc1: signed-overflow UB in the frsqrte emulation.
-Applied in order by runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+Contains code from aurora (MIT; see LICENSE-aurora in this folder). Applied in order by
+runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
 
 diff --git a/include/dolphin/ppc_math.h b/include/dolphin/ppc_math.h
 index db12db5f11af92d2a162193b784405563b0d7a3f..c8f4cb5800deae389b329a7fa789e4b47d7f0dd2 100644

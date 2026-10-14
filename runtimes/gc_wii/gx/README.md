@@ -1,12 +1,13 @@
 # runtimes/gc_wii/gx: the GX layer
 
-aurora's GX front end, MTX and WebGPU renderer at a pinned commit, built without `aurora_core`, on a headless Dawn device (ADR 0007 §6, P1-14). Nothing from aurora or Dawn is committed: the locks pin them, and they are fetched and built on your machine.
+aurora's GX front end, MTX and WebGPU renderer at a pinned commit, built without `aurora_core`, on a headless Dawn device (ADR 0007 §6, P1-14). The sources are not committed: the locks pin them, and they are fetched and built on your machine. What the repository does hold from aurora is the patch set in `patches/aurora/`, whose context and moved lines are aurora code (MIT). aurora's copyright and license notice is in `patches/aurora/LICENSE-aurora`, as MIT requires.
 
 | File | What it is |
 |---|---|
 | `aurora.lock` | aurora pinned by commit and tree (MIT). |
 | `dawn.lock` | Dawn and the 8 `DEPS` entries our build uses, pinned by commit and tree (lock v2). The other 73 `DEPS` entries are listed in `skipped_deps` with a reason. DXC is skipped: D3D12 uses FXC. |
-| `patches/aurora/*.patch` | Our patch set against the pin, applied in order to a copy in the build tree. Each file names its ADR 0007 patch number. |
+| `patches/aurora/*.patch` | Our patch set against the pin, applied in order (file number = apply order) to a copy in the build tree. Each header names its ADR 0007 §6 patch number, which differs from the apply order. |
+| `patches/aurora/LICENSE-aurora` | aurora's MIT notice, for the aurora code the patches contain. |
 | `tools/fetch_sources.cpp` | `mpt_fetch_sources`, which fetches and verifies a lock with asset-import's resolver (commit, tree, and Dawn's `DEPS` cross-check). |
 | `tools/build_dawn.cmake` | The Dawn recipe. It builds a shared `webgpu_dawn` into an install prefix, or only the generated WebGPU headers. |
 | `tools/gen_dawn_lock.py` | Regenerates `dawn.lock` from a Dawn checkout when the pin is bumped. |

@@ -1,6 +1,7 @@
-MPT patch 3 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc (ADR 0007 section 6).
+Apply order 0004 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc: ADR 0007 section 6 patch 3.
 Without an SDL window, create no surface: the EFB is an offscreen RGBA8Unorm texture.
-Applied in order by runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+Contains code from aurora (MIT; see LICENSE-aurora in this folder). Applied in order by
+runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
 
 diff --git a/lib/webgpu/gpu.cpp b/lib/webgpu/gpu.cpp
 index a9694652c0a54100ca87f1356276eab058371be6..b655200e944bdfce316a6fe4692da4c82f9ff85e 100644

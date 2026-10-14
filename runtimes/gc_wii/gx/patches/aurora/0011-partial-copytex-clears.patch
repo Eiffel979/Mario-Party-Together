@@ -1,6 +1,7 @@
-MPT patch 7b against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc (ADR 0007 section 6).
+Apply order 0011 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc: ADR 0007 section 6 patch 7b.
 GXCopyTex(..., GX_TRUE) clears only the copied rectangle (our port of the idea in upstream 9c0bf66).
-Applied in order by runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+Contains code from aurora (MIT; see LICENSE-aurora in this folder). Applied in order by
+runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
 
 diff --git a/lib/gfx/clear.cpp b/lib/gfx/clear.cpp
 index d0b4c7862f8b8a9d2d4d866db55478cd07d6ee99..c78823218aa313474324022d58b6932d3f5d2eb9 100644

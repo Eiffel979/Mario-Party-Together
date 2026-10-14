@@ -1,6 +1,7 @@
-MPT patch 8b against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc (ADR 0007 section 6).
+Apply order 0009 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc: ADR 0007 section 6 patch 8b.
 Move the vertex-size helpers from the renderer into the command processor, so null and real share them.
-Applied in order by runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+Contains code from aurora (MIT; see LICENSE-aurora in this folder). Applied in order by
+runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
 
 diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
 index dbaafa4e9d4ee78b830cdb6ddeeab0161179ce83..ce9a494b1d438aaacca77419bed2e0e29d65a21f 100644

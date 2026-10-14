@@ -1,6 +1,7 @@
-MPT patch 7 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc (ADR 0007 section 6).
+Apply order 0012 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc: ADR 0007 section 6 patch 7.
 GXSetZTexture: BP registers, shader config, frag_depth from the last TEV stage texel, Z8/Z16/Z24X8 static decode and EFB depth copies.
-Applied in order by runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+Contains code from aurora (MIT; see LICENSE-aurora in this folder). Applied in order by
+runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
 
 diff --git a/lib/dolphin/gx/GXTev.cpp b/lib/dolphin/gx/GXTev.cpp
 index 5b88284326e50e2613738dba294be25fab9f3ff5..57b2657722fbdb70088ef14e8b3eaed7670bcdf4 100644
