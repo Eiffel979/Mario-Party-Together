@@ -384,6 +384,19 @@ Dawn is pinned at `13abc3bc8ea2d3c2050f9e77a12d012108ceee24` by `gx/dawn.lock`, 
 - the perf-metric calls (0);
 - `GXNtsc480Prog`.
 
+**Determinism notes from P1-14:**
+- **MTX goldens hash NaN results as one canonical quiet NaN.** IEEE 754 leaves a NaN's sign and payload unspecified, and x86 returns the NaN of whichever operand the compiler placed first. On the reference machine, `-Od` and `-O2` already disagree on 38 NaN signs in the `vec_c` group, and the first Linux run of the gate failed on that group. Game state may contain NaN floats, and the hash manifest hashes fields by value. **Architect must decide whether `StateHasher` canonicalizes NaN floats** (ADR 0008 §8). If it does not, a NaN in game state can split the hash between builds or platforms.
+- `std::log2` in `GXLoadLightObjImm` reached the host libm (patch 0015 replaces it with `std::countr_zero`). The libm link check now also recognises `__imp_` DLL imports; it had been blind on Windows.
+
+**For P1-16 (save states and the manifest).** Front-end state outside the arena must become registered `SaveState` globals and manifest areas:
+- `__gx` (the shadow registers);
+- the CPU-side `g_gxState`. It holds game-visible state such as the viewport, the projection, matrices, vertex formats, `zTex*` and the copy settings, next to renderer handles that must not be saved;
+- the FIFO buffer between drains;
+- the draw-sync callback and its last token (`sdk_additions.cpp`);
+- the texture/TLUT object ID counters.
+
+Decide whether the ID counters are hashed. They are stored in game memory (`GXTexObj`), so they are game state; the earlier plan was "saved, not hashed". The callback pointer needs P1-16's function-ID table.
+
 **Still open:**
 - `GXGetYScaleFactor` is not implemented. It is used on the PAL path only, and we target `GMPE01_00`.
 - The copy-destination debug trap with its m415 allow-list belongs with P1-15/P1-16, where game memory exists.

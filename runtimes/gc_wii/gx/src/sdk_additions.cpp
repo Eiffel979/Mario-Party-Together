@@ -5,7 +5,9 @@
 //   There is no GPU to wait for, so "the GPU reached the token" is immediate and deterministic.
 // - GXWaitDrawDone, GXResetWriteGatherPipe: no-ops.
 // - Performance metrics: always 0.
-// - GXNtsc480Prog: the SDK's progressive NTSC render mode object.
+// - GXNtsc480Prog: the SDK's progressive NTSC render mode object. Values as in the pinned game source's
+//   SDK (Party Board 98ac07f, libs/dolphin/src/gx/GXFrameBuf.c, CC0): tvmode 2 (NTSC progressive),
+//   640x480 EFB and XFB, single-field XFB, no AA, the default sample pattern and vertical filter.
 #include <dolphin/gx.h>
 #include <dolphin/vi.h>
 
