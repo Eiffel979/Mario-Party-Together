@@ -1,0 +1,26 @@
+{
+  "lock_version": 1,
+  "sources": [
+    {
+      "name": "partyboard",
+      "repo": "https://github.com/mariopartyrd/partyboard",
+      "commit": "98ac07fd1e8f7ab938bbb6fe75789fad99419010",
+      "license": "CC0-1.0",
+      "submodules": [
+        {
+          "path": "extern/musyx",
+          "source": "musyx",
+          "gitlink": "2a0e01aeff0d06a9ee9e12966c435cb75144af9e",
+          "reason": "pull-mode PC renderer (9fc772d) and CC0 (8cb588d) postdate Party Board's pin (ADR 0009, amendment after P1-13b)"
+        }
+      ]
+    },
+    {
+      "name": "musyx",
+      "repo": "https://github.com/AxioDL/musyx",
+      "commit": "86851a3a8d51788d166ea42d137b49526f570400",
+      "tree": "7177c167f5a5b1e5f63ab927e44d412982f96588",
+      "license": "CC0-1.0"
+    }
+  ]
+}
