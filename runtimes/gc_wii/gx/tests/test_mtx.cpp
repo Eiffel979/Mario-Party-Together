@@ -4,10 +4,17 @@
 // Each group runs a deterministic set of inputs, including the hard cases for the PSVEC reciprocal
 // square root (bit-exact frsqrte table plus explicit fmaf): values next to powers of two, a dense
 // sweep around 1, subnormals, signed zeros, huge values, infinities and NaN. The outputs' bit
-// patterns are hashed per group. The same hashes must come out on every platform and compiler.
+// patterns are hashed per group, and per chunk of 256 values. The same hashes must come out on every
+// platform and compiler. On a mismatch the test names the diverging chunks and prints their inputs
+// and outputs; MPT_GX_MTX_DUMP=<file> writes every group's raw values for diffing between machines.
 //
-// To re-record after an intended change (a pin bump or a patch to MTX), run with
-// MPT_GX_MTX_PRINT=1 and paste the printed table into kGolden.
+// NaN results are hashed as one canonical quiet NaN. IEEE 754 leaves the sign and payload of a NaN
+// result unspecified, and x86 returns the NaN of whichever operand the compiler put first, so they
+// change with the compiler version and optimisation level (on the reference machine, -Od and -O2
+// already disagree on 38 NaN signs in vec_c). Whether a result is NaN is still checked.
+//
+// The golden values are in mtx_golden.txt. To re-record after an intended change (a pin bump or a
+// patch to MTX), run with MPT_GX_MTX_PRINT=1 and replace that file with the output.
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
@@ -15,20 +22,33 @@
 
 #include <xxhash.h>
 
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <limits>
+#include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
 namespace {
 
 struct Bits {
+  static constexpr size_t kChunk = 256;
   std::vector<uint32_t> v;
-  void add(float f) { v.push_back(std::bit_cast<uint32_t>(f)); }
+  std::vector<uint32_t> value_case;  // index into labels, per value
+  std::vector<std::string> labels;   // one per case: what went in
+  void begin_case(std::string label) { labels.push_back(std::move(label)); }
+  void add(float f) {
+    uint32_t bits = std::bit_cast<uint32_t>(f);
+    if (std::isnan(f)) bits = 0x7FC00000u;  // see the header comment
+    v.push_back(bits);
+    value_case.push_back(labels.empty() ? 0u : static_cast<uint32_t>(labels.size() - 1));
+  }
   void add(const Vec& x) {
     add(x.x);
     add(x.y);
@@ -49,7 +69,21 @@ struct Bits {
       for (int c = 0; c < 4; ++c) add(m[r][c]);
   }
   uint64_t hash() const { return XXH3_64bits(v.data(), v.size() * sizeof(uint32_t)); }
+  std::vector<uint64_t> chunk_hashes() const {
+    std::vector<uint64_t> out;
+    for (size_t i = 0; i < v.size(); i += kChunk) {
+      out.push_back(XXH3_64bits(v.data() + i, std::min(kChunk, v.size() - i) * sizeof(uint32_t)));
+    }
+    return out;
+  }
 };
+
+std::string hex(float f) {
+  char buf[16];
+  std::snprintf(buf, sizeof buf, "%08x", std::bit_cast<uint32_t>(f));
+  return buf;
+}
+std::string hex(const Vec& v) { return "(" + hex(v.x) + " " + hex(v.y) + " " + hex(v.z) + ")"; }
 
 float f_from_bits(uint32_t b) { return std::bit_cast<float>(b); }
 
@@ -93,32 +127,36 @@ std::vector<Vec> hard_vectors() {
   return out;
 }
 
-uint64_t group_vec_rsqrt() {
+Bits group_vec_rsqrt() {
   Bits b;
   for (const Vec& v : hard_vectors()) {
+    b.begin_case("v=" + hex(v) + " -> PSVECNormalize xyz, PSVECMag, PSVECSquareMag");
     Vec n{};
     PSVECNormalize(&v, &n);
     b.add(n);
     b.add(PSVECMag(&v));
     b.add(PSVECSquareMag(&v));
   }
-  return b.hash();
+  return b;
 }
 
-uint64_t group_vec_distance() {
+Bits group_vec_distance() {
   Bits b;
   const auto vs = hard_vectors();
   for (size_t i = 0; i + 1 < vs.size(); ++i) {
+    b.begin_case("a=" + hex(vs[i]) + " b=" + hex(vs[i + 1]) + " -> PSVECDistance, PSVECSquareDistance");
     b.add(PSVECDistance(&vs[i], &vs[i + 1]));
     b.add(PSVECSquareDistance(&vs[i], &vs[i + 1]));
   }
-  return b.hash();
+  return b;
 }
 
-uint64_t group_vec_c() {
+Bits group_vec_c() {
   Bits b;
   const auto vs = hard_vectors();
   for (size_t i = 0; i + 1 < vs.size(); ++i) {
+    b.begin_case("a=" + hex(vs[i]) + " b=" + hex(vs[i + 1]) +
+                 " -> Normalize(a) xyz, Mag(a), Cross xyz, Dot, HalfAngle xyz, Reflect xyz");
     Vec r{};
     C_VECNormalize(&vs[i], &r);
     b.add(r);
@@ -131,13 +169,14 @@ uint64_t group_vec_c() {
     C_VECReflect(&vs[i], &vs[i + 1], &r);
     b.add(r);
   }
-  return b.hash();
+  return b;
 }
 
-uint64_t group_mtx_trig() {
+Bits group_mtx_trig() {
   Bits b;
   for (int i = -720; i <= 720; i += 7) {
     const float deg = static_cast<float>(i) * 0.5f;
+    b.begin_case("deg=" + hex(deg) + " -> RotDeg x, RotRad y, RotAxisRad (12 each)");
     Mtx m;
     MTXRotDeg(m, 'x', deg);
     b.add(m);
@@ -148,6 +187,7 @@ uint64_t group_mtx_trig() {
     b.add(m);
   }
   for (int i = 1; i < 179; i += 3) {
+    b.begin_case("fovy=" + std::to_string(i) + " -> Perspective (16), LightPerspective (12)");
     Mtx44 p;
     MTXPerspective(p, static_cast<float>(i), 4.0f / 3.0f, 0.1f, 1000.0f);
     b.add44(p);
@@ -155,14 +195,15 @@ uint64_t group_mtx_trig() {
     MTXLightPerspective(l, static_cast<float>(i), 1.0f, 0.5f, -0.5f, 0.5f, 0.5f);
     b.add(l);
   }
-  return b.hash();
+  return b;
 }
 
-uint64_t group_mtx_linear() {
+Bits group_mtx_linear() {
   Bits b;
   Mtx a, c, inv, t;
   MTXIdentity(a);
   for (int i = 0; i < 64; ++i) {
+    b.begin_case("step " + std::to_string(i) + " -> Concat, Inverse result, Inverse, Transpose, LookAt, MultVec");
     MTXRotDeg(t, 'z', static_cast<float>(i) * 11.25f);
     MTXConcat(t, a, c);
     MTXTrans(t, i * 0.5f, -i * 0.25f, i * 3.0f);
@@ -181,18 +222,20 @@ uint64_t group_mtx_linear() {
     MTXMultVec(c, &v, &r);
     b.add(r);
   }
+  b.begin_case("Ortho, Frustum");
   Mtx44 o;
   MTXOrtho(o, 0.0f, 480.0f, 0.0f, 640.0f, 0.0f, 8000.0f);
   b.add44(o);
   MTXFrustum(o, 1.0f, -1.0f, -1.33f, 1.33f, 1.0f, 100.0f);
   b.add44(o);
-  return b.hash();
+  return b;
 }
 
-uint64_t group_quat() {
+Bits group_quat() {
   Bits b;
   for (int i = 0; i < 90; ++i) {
     const float t = static_cast<float>(i) / 89.0f;
+    b.begin_case("t=" + hex(t) + " -> Slerp, RotAxisRad, MTXQuat (12), QUATMtx, LogN, Exp");
     Quaternion p{0.1f, 0.2f, 0.3f, 0.927f}, q{-0.5f, 0.5f, 0.5f, 0.5f}, r{};
     C_QUATNormalize(&p, &p);
     C_QUATSlerp(&p, &q, &r, t);
@@ -211,38 +254,112 @@ uint64_t group_quat() {
     C_QUATExp(&r, &back);
     b.add(back);
   }
-  return b.hash();
+  return b;
 }
 
-struct Golden {
+struct Group {
   const char* name;
-  uint64_t (*run)();
-  uint64_t expected;
+  Bits (*run)();
+};
+const Group kGroups[] = {
+    {"vec_rsqrt", group_vec_rsqrt},   {"vec_distance", group_vec_distance}, {"vec_c", group_vec_c},
+    {"mtx_trig", group_mtx_trig},     {"mtx_linear", group_mtx_linear},     {"quat", group_quat},
 };
 
-// Recorded on the reference machine (Windows, clang-cl 22.1.3) at aurora 5143394 with patches 0002,
-// 0003 and 0013 and the math redirect. Linux CI must give the same values.
-Golden kGolden[] = {
-    {"vec_rsqrt", group_vec_rsqrt, 0x9841105f6a2e641aull},
-    {"vec_distance", group_vec_distance, 0x6631a78045d8f6fbull},
-    {"vec_c", group_vec_c, 0xac7d59123c73486bull},
-    {"mtx_trig", group_mtx_trig, 0x8b91adbf6bd4ef25ull},
-    {"mtx_linear", group_mtx_linear, 0xa1f002add80d51cbull},
-    {"quat", group_quat, 0x26779f06e8569519ull},
+struct GoldenGroup {
+  uint64_t hash = 0;
+  size_t count = 0;
+  std::vector<uint64_t> chunks;
 };
+
+// mtx_golden.txt: "group <name> <hash> <value count>" then "chunk <name> <index> <hash>" lines.
+std::map<std::string, GoldenGroup> load_golden() {
+  std::map<std::string, GoldenGroup> out;
+  std::ifstream in(MPT_GX_MTX_GOLDEN_FILE);
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.empty() || line[0] == '#') continue;
+    std::istringstream ls(line);
+    std::string kind, name;
+    if (!(ls >> kind >> name)) continue;
+    if (kind == "group") {
+      ls >> std::hex >> out[name].hash >> std::dec >> out[name].count;
+    } else if (kind == "chunk") {
+      size_t index = 0;
+      uint64_t h = 0;
+      ls >> std::dec >> index >> std::hex >> h;
+      auto& chunks = out[name].chunks;
+      if (chunks.size() <= index) chunks.resize(index + 1);
+      chunks[index] = h;
+    }
+  }
+  return out;
+}
+
+void report_divergence(const char* name, const Bits& got, const GoldenGroup& want) {
+  std::printf("group %s: got %016llx over %zu values, golden %016llx over %zu values\n", name,
+              static_cast<unsigned long long>(got.hash()), got.v.size(), static_cast<unsigned long long>(want.hash),
+              want.count);
+  const auto chunks = got.chunk_hashes();
+  int shown = 0;
+  for (size_t c = 0; c < chunks.size(); ++c) {
+    if (c < want.chunks.size() && chunks[c] == want.chunks[c]) continue;
+    std::printf("  chunk %zu (values %zu..%zu) differs\n", c, c * Bits::kChunk,
+                std::min(got.v.size(), (c + 1) * Bits::kChunk) - 1);
+    if (shown++ >= 2) continue;  // print the values of the first two diverging chunks only
+    uint32_t lastCase = UINT32_MAX;
+    for (size_t i = c * Bits::kChunk; i < std::min(got.v.size(), (c + 1) * Bits::kChunk); ++i) {
+      if (got.value_case[i] != lastCase) {
+        lastCase = got.value_case[i];
+        std::printf("    case %u: %s\n", lastCase, got.labels.empty() ? "" : got.labels[lastCase].c_str());
+      }
+      std::printf("      [%zu] %08x %.9g\n", i, got.v[i], static_cast<double>(std::bit_cast<float>(got.v[i])));
+    }
+  }
+}
+
+void dump_raw(const char* path) {
+  FILE* f = std::fopen(path, "w");
+  if (f == nullptr) return;
+  for (const Group& g : kGroups) {
+    const Bits b = g.run();
+    for (size_t i = 0; i < b.v.size(); ++i) {
+      std::fprintf(f, "%s %zu %08x %s\n", g.name, i, b.v[i], b.labels.empty() ? "" : b.labels[b.value_case[i]].c_str());
+    }
+  }
+  std::fclose(f);
+}
 
 }  // namespace
 
 TEST_CASE("aurora MTX matches its golden values") {
-  const bool print = std::getenv("MPT_GX_MTX_PRINT") != nullptr;
-  for (const Golden& g : kGolden) {
-    const uint64_t got = g.run();
-    if (print) {
-      std::printf("    {\"%s\", group_%s, 0x%016llxull},\n", g.name, g.name, static_cast<unsigned long long>(got));
-      continue;
+  if (const char* dump = std::getenv("MPT_GX_MTX_DUMP")) {
+    dump_raw(dump);
+  }
+  if (std::getenv("MPT_GX_MTX_PRINT") != nullptr) {
+    // Goldens come only from the pinned aurora (ADR 0009 section 1).
+    REQUIRE_MESSAGE(MPT_GX_AURORA_PINNED, "refusing to record goldens from an unpinned aurora checkout");
+    std::printf("# Golden values for test_mtx.cpp (see its header). Recorded on the reference machine.\n");
+    for (const Group& g : kGroups) {
+      const Bits b = g.run();
+      std::printf("group %s %016llx %zu\n", g.name, static_cast<unsigned long long>(b.hash()), b.v.size());
+      const auto chunks = b.chunk_hashes();
+      for (size_t c = 0; c < chunks.size(); ++c) {
+        std::printf("chunk %s %zu %016llx\n", g.name, c, static_cast<unsigned long long>(chunks[c]));
+      }
     }
+    return;
+  }
+  const auto golden = load_golden();
+  REQUIRE_MESSAGE(!golden.empty(), "cannot read " MPT_GX_MTX_GOLDEN_FILE);
+  for (const Group& g : kGroups) {
+    const Bits b = g.run();
+    const auto it = golden.find(g.name);
+    REQUIRE_MESSAGE(it != golden.end(), "no golden for group " << g.name);
+    const bool same = b.hash() == it->second.hash && b.v.size() == it->second.count;
+    if (!same) report_divergence(g.name, b, it->second);
     INFO("group " << g.name);
-    CHECK(got == g.expected);
+    CHECK(same);
   }
 }
 
