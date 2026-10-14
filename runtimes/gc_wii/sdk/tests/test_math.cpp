@@ -246,3 +246,96 @@ TEST_CASE("golden: trig outputs") {
   hashF(h, mpt_cosf(-3e7f));
   CHECK(h.digest() == 13900187656750823100ull);  // golden: identical on every platform
 }
+
+// ---- pow and double sin/cos for musyx (ADR 0009, amendment after P1-13b) ----------------
+
+extern "C" float mpt_gc_libm_probe_powf(float x, float y);
+extern "C" double mpt_gc_libm_probe_sin(double x);
+
+namespace {
+int ulpDiff(f32 a, f32 b) {
+  const std::int64_t d = static_cast<std::int64_t>(static_cast<std::int32_t>(B(a))) -
+                         static_cast<std::int64_t>(static_cast<std::int32_t>(B(b)));
+  return static_cast<int>(d < 0 ? -d : d);
+}
+}  // namespace
+
+TEST_CASE("powf is within 1 ulp of the double reference over musyx's ranges") {
+  int worst = 0;
+  // adsrConvertTimeCents: 1000 * 2^(1.2715658e-08 * tc), time cents up to +-2^31.
+  for (std::int64_t tc = -(std::int64_t{1} << 31); tc <= (std::int64_t{1} << 31); tc += 1 << 18) {
+    const f32 y = 1.2715658e-08f * static_cast<f32>(tc);
+    worst = std::max(worst, ulpDiff(mpt_powf(2.0f, y), static_cast<f32>(std::pow(2.0, static_cast<double>(y)))));
+  }
+  // Reverb comb coefficients: 10^(-3 len / (32000 time)), len up to 4096, time 0.01..10 s.
+  for (int len = 1; len <= 4096; len += 37)
+    for (int t = 1; t <= 1000; t += 13) {
+      const f32 y = static_cast<f32>(len * -3) / (static_cast<f32>(t) * 0.01f * 32000.f);
+      worst = std::max(worst, ulpDiff(mpt_powf(10.0f, y), static_cast<f32>(std::pow(10.0, static_cast<double>(y)))));
+    }
+  // General positive bases and exponents.
+  for (int i = 1; i <= 400; ++i)
+    for (int j = -40; j <= 40; ++j) {
+      const f32 x = static_cast<f32>(i) * 0.25f, y = static_cast<f32>(j) * 0.2f;
+      const double ref = std::pow(static_cast<double>(x), static_cast<double>(y));
+      if (std::isfinite(ref) && ref > 1e-37 && ref < 1e37)
+        worst = std::max(worst, ulpDiff(mpt_powf(x, y), static_cast<f32>(ref)));
+    }
+  CHECK(worst <= 1);
+}
+
+TEST_CASE("powf special cases follow IEEE 754 pow") {
+  CHECK(mpt_powf(0.0f, 0.0f) == 1.0f);
+  CHECK(mpt_powf(NAN, 0.0f) == 1.0f);
+  CHECK(mpt_powf(1.0f, NAN) == 1.0f);
+  CHECK(std::isnan(mpt_powf(NAN, 1.0f)));
+  CHECK(std::isnan(mpt_powf(-2.0f, 0.5f)));
+  CHECK(mpt_powf(-2.0f, 3.0f) == -8.0f);
+  CHECK(mpt_powf(-2.0f, 2.0f) == 4.0f);
+  CHECK(mpt_powf(2.0f, 10.0f) == 1024.0f);
+  CHECK(mpt_powf(2.0f, -1.0f) == 0.5f);
+  CHECK(mpt_powf(10.0f, 2.0f) == 100.0f);
+  CHECK(std::signbit(mpt_powf(-0.0f, 3.0f)));
+  CHECK(!std::signbit(mpt_powf(-0.0f, 2.0f)));
+  CHECK(mpt_powf(0.0f, -1.0f) == INFINITY);
+  CHECK(mpt_powf(-0.0f, -1.0f) == -INFINITY);
+  CHECK(mpt_powf(2.0f, INFINITY) == INFINITY);
+  CHECK(mpt_powf(0.5f, INFINITY) == 0.0f);
+  CHECK(mpt_powf(-1.0f, INFINITY) == 1.0f);
+  CHECK(mpt_powf(INFINITY, -2.0f) == 0.0f);
+  CHECK(mpt_powf(-INFINITY, 3.0f) == -INFINITY);
+  CHECK(mpt_powf(2.0f, 200.0f) == INFINITY);
+  CHECK(mpt_powf(2.0f, -200.0f) == 0.0f);
+}
+
+TEST_CASE("double sin/cos (musyx's resampler tables) are within 1e-15") {
+  double worst = 0;
+  for (int i = -4000; i <= 4000; ++i) {
+    const double x = i * 0.0031415926535;
+    worst = std::max(worst, std::fabs(mpt_sin(x) - std::sin(x)));
+    worst = std::max(worst, std::fabs(mpt_cos(x) - std::cos(x)));
+  }
+  CHECK(worst < 1e-15);
+}
+
+TEST_CASE("the libm redirect reaches our functions") {
+  CHECK(B(mpt_gc_libm_probe_powf(opaque(2.0f), opaque(0.37f))) == B(mpt_powf(2.0f, 0.37f)));
+  CHECK(mpt_gc_libm_probe_sin(opaque(0.5)) == mpt_sin(0.5));
+}
+
+TEST_CASE("golden: pow and double trig outputs") {
+  StateHasher h;
+  for (std::int64_t tc = -(std::int64_t{1} << 31); tc <= (std::int64_t{1} << 31); tc += 1 << 20)
+    hashF(h, mpt_powf(2.0f, 1.2715658e-08f * static_cast<f32>(tc)));
+  for (int len = 1; len <= 4096; len += 97)
+    for (int t = 1; t <= 1000; t += 71) hashF(h, mpt_powf(10.0f, static_cast<f32>(len * -3) / (static_cast<f32>(t) * 320.f)));
+  for (int i = 1; i <= 200; ++i)
+    for (int j = -20; j <= 20; ++j) hashF(h, mpt_powf(static_cast<f32>(i) * 0.37f, static_cast<f32>(j) * 0.31f));
+  for (int i = -2000; i <= 2000; ++i) {
+    const double x = i * 0.00981;
+    h.update_u64(std::bit_cast<std::uint64_t>(mpt_sin(x)));
+    h.update_u64(std::bit_cast<std::uint64_t>(mpt_cos(x)));
+    h.update_u64(std::bit_cast<std::uint64_t>(mpt_pow(1.0 + i * 1e-3 * (i > -1000), 0.5 + i * 1e-3)));
+  }
+  CHECK(h.digest() == 4493003601874101094ull);  // golden: identical on every platform
+}

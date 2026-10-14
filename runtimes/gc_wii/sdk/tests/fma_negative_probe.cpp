@@ -1,4 +1,4 @@
-// Negative probe for check_no_host_fma.cmake: a plain fmaf call without the redirect
+// Negative probe for check_no_host_math.cmake: a plain fmaf call without the redirect
 // header leaves an undefined fmaf, which the check must report. Never linked.
 #include <math.h>
 

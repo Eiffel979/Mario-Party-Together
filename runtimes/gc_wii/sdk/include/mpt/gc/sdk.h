@@ -85,6 +85,13 @@ inline constexpr std::int64_t kWatchdogTicks = 60ll * kTimerClockHz;  // a frame
 inline constexpr std::uint64_t kStableCardSerial = 0x4D50'5447'4352'4431ull;  // "MPTGCRD1", ADR 0004 rule 7
 inline constexpr std::uint32_t kMaxThreads = 32;  // SDK threads incl. the root; game processes use their own
 
+// How the SDK's manifest hashes pointers, for engines and title manifests that
+// hash their own state (ADR 0008 §8): a data pointer as its arena offset (null and
+// out-of-arena as sentinels), a function pointer as a stable ID (a presence
+// sentinel until P1-16's registration table). Need a live Sdk.
+std::uint64_t hashGamePointer(const void* p);
+std::uint64_t hashGameFunction(const void* f);
+
 class Sdk {
  public:
   using MainFn = void (*)(void* arg);

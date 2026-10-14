@@ -15,7 +15,7 @@ This note was written by reading the community decomp and its PC-port fork in pl
 |---|---|---|---|
 | `https://github.com/mariopartyrd/marioparty4` | Matching decomp (the reference) | `main` = `147b165a83187ac9e6cfdc3bf52f2e73437b1ffd` (2026-06-04, "Backport mp5 macros") | **None on `main`.** A CC0 1.0 license is proposed in open PR #663 (branch `license-change`, `db93f095a90dcc2e5fc27e1a66e313e752a3a06d`, 2026-09-24), not merged. |
 | `https://github.com/mariopartyrd/partyboard` | Upstream's own PC port ("Party Board"). Same organisation, game sources forked from the decomp. | `main` = `98ac07fd1e8f7ab938bbb6fe75789fad99419010` (2026-09-29) | **CC0 1.0** (`LICENSE` at the root) |
-| `https://github.com/AxioDL/musyx` | MusyX sound-library decomp (submodule `extern/musyx` of both repos) | Party Board pins `2a0e01aeff0d06a9ee9e12966c435cb75144af9e`. Upstream HEAD is `86851a3a8d51788d166ea42d137b49526f570400`. | **MIT** at the pin. CC0 1.0 only from `8cb588d` ("Release to CC0 public domain"), after the pin (found in P1-13b, §15). |
+| `https://github.com/AxioDL/musyx` | MusyX sound-library decomp (submodule `extern/musyx` of both repos) | **We pin `86851a3a8d51788d166ea42d137b49526f570400`** (upstream `main`, tree `7177c167f5a5b1e5f63ab927e44d412982f96588`, ADR 0009 amendment after P1-13b). Party Board's gitlink stays `2a0e01aeff0d06a9ee9e12966c435cb75144af9e`; the lock records the override. | CC0 1.0 at our pin (checked in its `LICENSE`). `2a0e01a` is MIT; CC0 starts at `8cb588d`. |
 | `https://github.com/encounter/aurora` | GameCube/Wii source-level compatibility layer used by Party Board. **Adopted after S1: its GX front end, Dawn renderer, MTX and headers, without `aurora_core`** (ADR 0007 §6, ADR 0009 §1). | Party Board pins `514339438178ef2bed1b14e5149d90ece0c6e0cc`. Upstream HEAD on 2026-10-08 is `50e5be30ec12cc72768bc564bc016b55e82be868`, 132 commits later. | MIT |
 | `https://github.com/higan-emu/libco` | Coroutines used by Party Board for game processes | Party Board pins `e18e09d634d612a01781168ad4d76be10a7e3bad` | ISC (check during P1-15) |
 
@@ -29,14 +29,14 @@ The decomp also has branches `port` (now a stub whose README points to the Party
 - A user-supplied zip is accepted only if its computed git tree hash equals the tree of the locked commit. Otherwise the recipe asks for a git checkout.
 - To bump a pin, a PR changes `decomp.lock` and `docs/titles/mp4.md` together and must pass the dump lane.
 
-**Decided (ADR 0009, Phase 1 plan A1):** the game source is **Party Board** at `98ac07fd1e8f7ab938bbb6fe75789fad99419010`, with musyx at `2a0e01aeff0d06a9ee9e12966c435cb75144af9e`, and aurora at `514339438178ef2bed1b14e5149d90ece0c6e0cc` and libco at `e18e09d634d612a01781168ad4d76be10a7e3bad` only if adopted (S1, P1-13). `marioparty4` is a read-only reference. Pinning it after PR #663 merges is the documented fallback.
+**Decided (ADR 0009, Phase 1 plan A1):** the game source is **Party Board** at `98ac07fd1e8f7ab938bbb6fe75789fad99419010`, with musyx at `86851a3a8d51788d166ea42d137b49526f570400` (bumped from Party Board's `2a0e01a` by the ADR 0009 amendment after P1-13b), and aurora at `514339438178ef2bed1b14e5149d90ece0c6e0cc` and libco at `e18e09d634d612a01781168ad4d76be10a7e3bad` only if adopted (S1, P1-13). `marioparty4` is a read-only reference. Pinning it after PR #663 merges is the documented fallback.
 
 ## 2. License status
 
 - `marioparty4` `main`: **no license file anywhere** (verified in the local copy and on GitHub, where `license: null`). By default that means all rights are reserved by the contributors. Reading it is fine. Building and distributing anything derived from it is not covered until a license lands.
 - Upstream intends to use CC0: a maintainer opened PR #663 on 2026-09-24. It has no review comments yet.
 - `partyboard` is CC0 1.0 today. It contains the same game sources (adapted for PC), so it is the only MP4 game-source tree with a clear license right now.
-- musyx is MIT at the pinned commit and CC0 from `8cb588d` on. aurora is MIT. All are compatible with this project. (ADR 0009 lists musyx as CC0 at the pin. P1-13b found that the pin's `LICENSE` is MIT, §15.)
+- musyx is CC0 at our pin `86851a3` (MIT before `8cb588d`, including Party Board's `2a0e01a`). aurora is MIT. All are compatible with this project.
 - CC0 only covers the contributors' own rights. It does not touch Nintendo's rights in the game itself. That is why ADR 0001/0009 still apply: no game data in the repo, and the build depends on the user's dump.
 
 ## 3. Matching revision and the user's dump
@@ -115,7 +115,7 @@ Interrupt masking (`OSDisableInterrupts`/`OSRestoreInterrupts`) appears in `pad.
 - They go in the hash manifest.
 - A "null audio" mode may drop the PCM, but it **must still run the synth/sequencer**, or E6 breaks.
 
-AxioDL musyx has a PC backend with a pull API (`sndPCRender(out, frames)`) and a null host backend, which fits exactly. Its SDL backend renders on its own SDL thread and **must not be used**. **Correction (P1-13b, §15):** that renderer exists only on upstream `main` (from `9fc772d`, after the pin). The pinned commit `2a0e01a` has no PC renderer.
+AxioDL musyx has a PC backend with a pull API (`sndPCRender(out, frames)`) and a null host backend, which fits exactly. Its SDL backend renders on its own SDL thread and **must not be used**. **Correction (P1-13b, §15):** that renderer exists only from `9fc772d` on, not at Party Board's `2a0e01a`. Our pin moved to `86851a3`, which has it (§17).
 
 ## 8. GPU readbacks and GX state read back by the CPU
 
@@ -337,7 +337,7 @@ The `InputFrame` is latched at the post-retrace point: the pre-retrace callback 
 
 **Save states and hash.** `saveState()` is the whole arena (SDK state, 24 MB main RAM, 16 MB ARAM, the card, stacks and register contexts) plus a header. `loadState` rejects a different build, configuration, arena base or code base. `hashState()` is the SDK's manifest area, by value: pointers as arena offsets, function pointers as a presence sentinel until P1-16's registration table, register contexts excluded. Game memory is the title manifest's job (P1-18).
 
-**Math.** `mpt_fmaf` is a correctly rounded software fmaf (round-to-odd over an exact two-sum in binary64). It matches hardware FMA3 on 2M random and adversarial inputs (where the CPU and OS support FMA3). `gc_math_redirect.h`, forced-included into the game module, includes `<math.h>`/`<cmath>` itself and then maps `fmaf` and `std::fmaf` onto it. A link-time check (`check_no_host_fma.cmake`, `llvm-nm`) fails if any object leaves `fma`/`fmaf` undefined; it runs on the SDK, on a probe that uses the redirect, and (expected to fail) on a probe that does not. P1-15 runs it on the game module. This meets ADR 0008 §5 condition 1. `mpt_sinf/cosf/tanf/acosf/atan2f` are evaluated in double with no host transcendental and are within 2 ulp. **MTX/VEC/QUAT are not in the SDK:** aurora's MTX at the pin (with patch 2) is the only `PS*`/`C_*` implementation (architect ruling, ADR 0007 §6), and its goldens are P1-14's. Fast casts truncate, saturate, and map NaN to 0. Golden hashes pin trig/fmaf and a synthetic-game trail.
+**Math.** `mpt_fmaf` is a correctly rounded software fmaf (round-to-odd over an exact two-sum in binary64). It matches hardware FMA3 on 2M random and adversarial inputs (where the CPU and OS support FMA3). `gc_math_redirect.h`, forced-included into the game module, includes `<math.h>`/`<cmath>` itself and then maps `fmaf` and `std::fmaf` onto it. A link-time check (`check_no_host_math.cmake`, `llvm-nm`) fails if any object leaves `fma`/`fmaf` or a host transcendental undefined (§17); it runs on the SDK, on a probe that uses the redirect, and (expected to fail) on a probe that does not. P1-15 runs it on the game module. This meets ADR 0008 §5 condition 1. `mpt_sinf/cosf/tanf/acosf/atan2f` are evaluated in double with no host transcendental and are within 2 ulp. **MTX/VEC/QUAT are not in the SDK:** aurora's MTX at the pin (with patch 2) is the only `PS*`/`C_*` implementation (architect ruling, ADR 0007 §6), and its goldens are P1-14's. Fast casts truncate, saturate, and map NaN to 0. Golden hashes pin trig/fmaf and a synthetic-game trail.
 
 **Faults.** A fatal error in game code records the message and stops the runtime: the faulting thread is never resumed and `stepFrame` returns `StepStatus::faulted`. The frame step's own host-side code never calls the fatal path, and nothing in the SDK aborts the process. Calling the C API from host code instead of game code is a programming error, reported with `std::logic_error`.
 
@@ -345,7 +345,7 @@ The `InputFrame` is latched at the post-retrace point: the pre-retrace callback 
 
 ## 15. SDK audio and movies (P1-13b, `runtimes/gc_wii/sdk/`)
 
-**Status:** the AI layer, engine stepping, null audio, idle-function scheduling and THP decoding are done and tested on synthetic data. **MusyX itself is not integrated yet. It is blocked on the musyx pin** (see the end of this section).
+**Status:** the AI layer, engine stepping, null audio, idle-function scheduling and THP decoding are done and tested on synthetic data. MusyX is integrated at the bumped pin (§17).
 
 **AI and virtual AI ticks** (`mpt_gc/ai.h`, `src/ai.cpp`).
 - There is one virtual interrupt (source `ai`, event `ai_dma`) per DMA block.
@@ -419,7 +419,7 @@ These additions changed the SDK's golden trail in `test_state.cpp`.
   - walking the container;
   - playback through the idle function with movie audio in the AI stream, across save states and with null audio.
 
-**MusyX: blocked on the pin.** ADR 0009 pins musyx at `2a0e01aeff0d06a9ee9e12966c435cb75144af9e` (Party Board's submodule commit). At that commit:
+**MusyX at Party Board's pin (historical; resolved by the ADR 0009 amendment after P1-13b, §17).** ADR 0009 first pinned musyx at `2a0e01aeff0d06a9ee9e12966c435cb75144af9e` (Party Board's submodule commit). At that commit:
 - There is **no PC renderer and no `sndPCRender`**.
   - `hw_pc.c` builds the DSP command list but never mixes it.
   - Nothing advances the DSP voices, so voices never end and `SAMPLE_END` messages never reach the synth. Voice status the game polls would be wrong.
@@ -431,13 +431,13 @@ These additions changed the SDK's golden trail in `test_state.cpp`.
   - the host libm imports are `powf` (reverb), and `floorf` and `fmodf` (sequencer and volume conversion). `floorf` and `fmodf` are exactly specified, but `powf` would need our math library (ADR 0008 §5).
 - The pull-mode renderer the ADRs describe landed upstream in `9fc772d` ("Sdl3 (#14)", 2026-09-23). It brings `sndPCRender`, `sndPCConfigure`, a null host backend (`hw_pc_null.c`) and integer 5 ms control cycles. Upstream `main` is at `86851a3a8d51788d166ea42d137b49526f570400`, and that tree is also CC0.
 
-**Decision needed (architect, an ADR 0009 pin bump).** The two options are:
+**Decision (architect, 2026-10-13): option 1, bump to `86851a3`.** The two options were:
 1. bump musyx to a commit that has the PC renderer, for example `86851a3`;
 2. keep the pin and write our own DSP-voice renderer and ARAM glue. ADR 0007 rejects reimplementing it.
 
 Party Board's `msm` was written against the pinned API, so a bump also needs a check that `msm` builds against the newer headers.
 
-Once that is decided, MusyX plugs into the `AudioEngine` hook:
+MusyX now plugs into the `AudioEngine` hook as planned (§17):
 - `render` is `sndPCRender`, rendering silence before `sndInit`;
 - MusyX's statics are registered as state regions;
 - allocation goes through `sndSetHooks` into the game heaps;
@@ -501,6 +501,64 @@ Decide whether the ID counters are hashed. They are stored in game memory (`GXTe
 - `GXGetYScaleFactor` is not implemented. It is used on the PAL path only, and we target `GMPE01_00`.
 - The copy-destination debug trap with its m415 allow-list belongs with P1-15/P1-16, where game memory exists.
 - The object ID counters become registered `SaveState` globals in P1-16 (the accessors are `mpt::gx::object_id_counters()` and `set_object_id_counters()`).
+
+---
+
+## 17. MusyX on the SDK (P1-13b part 2, `runtimes/gc_wii/musyx/`)
+
+**Pin.** musyx `86851a3a8d51788d166ea42d137b49526f570400`, tree `7177c167f5a5b1e5f63ab927e44d412982f96588`, CC0 1.0 (ADR 0009 amendment after P1-13b). The pin is recorded in `runtimes/gc_wii/mp4/decomp.lock`. That lock also has Party Board's entry, whose `extern/musyx` gitlink stays at `2a0e01a` with the override reason. Party Board's tree hash is added when P1-15 first fetches it.
+
+**Getting the source.** Run `mpt_fetch_sources --lock runtimes/gc_wii/mp4/decomp.lock --cache <MPT_SOURCE_CACHE>`. The source lands in `<MPT_SOURCE_CACHE>/musyx/<commit>`, which is the default `MPT_MUSYX_DIR` and the same layout aurora uses. P1-13b fetched it with a musyx-only copy of the lock, because Party Board was not to be fetched yet. Configure checks that the checkout is clean and at the locked commit (`MPT_MUSYX_ALLOW_UNPINNED` is for development only). Without a checkout, the target is skipped, unless `MPT_REQUIRE_MUSYX` is ON. **CI does not fetch musyx yet**, so the musyx tests run only on developer machines until qa-reviewer adds the fetch step and sets `MPT_REQUIRE_MUSYX` in the `ci-*` presets.
+
+**What is linked** (`mpt_musyx_core`, all C, compiled with Clang under the SDK's strict-FP flags):
+- upstream's runtime source list at the pin, with the null host backend (`hw_pc_null.c`);
+- **not** linked: `hw_pc_sdl.c` (an SDL device on its own thread) and the debugger (`src/musyx/debugger`). The runtime calls the debugger's instrumentation hooks unconditionally, so `musyx_debugger_stubs.c` supplies them as no-ops (never paused, nothing recorded);
+- wrappers that `#include` upstream files unchanged:
+  - `snd_midictrl.c` and `stream.c`, so the hash can read their file-scope MIDI-controller and stream tables;
+  - `synthdata.c` with `malloc`/`free` mapped to `salMalloc`/`salFree`, so `sndConvert32BitSDIRTo64BitSDIR` allocates through the game's hooks;
+- `hw_memory.c` replaced by `musyx_memory.c`, which is upstream's code without its host-heap fallback. If MusyX allocates before `sndSetHooks`, that is a game fault (`OSPanic`).
+
+`MPT_MUSYX_VERSION` defaults to 2.0.0, upstream's default. **P1-15 confirms the version MP4's `msm` needs.**
+
+**Compiler flags and math.** Every musyx unit is force-included with `musyx_state_section.h`, which pulls in `mpt_gc/libm_redirect.h`. That header sends `powf`, `pow`, `sin`, `cos`, `sinf`, `cosf`, `tanf`, `acosf` and `atan2f` to `mpt_*`:
+- The audit of the linked sources found `powf` (the ADSR time-cents curve and reverb comb coefficients), `sin`/`cos` (the resampler's polyphase table) and `cos` (`sndCos`).
+- `floorf`, `fmodf`, `lround`, `sqrt`/`sqrtf` and `fabs` are exactly specified, so the host versions stay (ADR 0008 §5).
+- `mpt_powf` uses IEEE pow special cases, then `exp2(y log2 x)` in double from exact frexp/ldexp and series. It is within 1 ulp of the double reference over musyx's ranges: 2^(1.27e-8 tc) for time cents up to ±2^31, and 10^(-3 len / (32000 t)) for reverb.
+- `mpt_sin`/`mpt_cos` (double) are within 1e-15. Goldens pin all three (`test_math.cpp`).
+- The upstream `aramUploadData` declaration conflict is already fixed at this pin (condition (c) on Windows).
+
+**Link checks** (llvm-nm, on `mpt_musyx_core.lib`):
+- `gc_musyx_no_host_math` uses `sdk/tests/check_no_host_math.cmake`. It rejects every non-exact libm function in float, double and long-double forms, `*_finite` and `sincos`, with or without the `__imp_` DLL-import prefix. The P1-13a pattern missed `__imp_` imports in C objects, and the GX check found the same gap (#27). Negative probes check that it catches host `fmaf`, `powf` and `log2`.
+- `gc_musyx_no_host_services` uses `musyx/check_no_host_services.cmake`. It rejects pthread/C11/Win32 thread, mutex, condition-variable, event, SRW and sleep calls, SDL, the host clocks, `rand`, and the host heap (`malloc`/`calloc`/`realloc`/`free`). `qsort` (used by the asset decoder) is allowed: its comparator plus the conflict check make the result independent of the sort order.
+
+**Attachment** (`mpt/gc/musyx_engine.h`). Before each `Sdk::create`, the runtime calls `MusyxEngine::reset()`, which restores musyx's statics to their process-start image and sets the PC renderer to 32 kHz stereo. It then puts `MusyxEngine::engine()` in `SdkConfig::audio_engine` and `MusyxEngine::stateRegions()` in `state_regions`.
+- `render` calls `sndPCRender(out, 160)`, one 5 ms control cycle per AI tick, or writes silence while `!sndActive`. It is called only from the SDK's AI tick inside `stepFrame` (condition (b)). Before any audio device exists, the null backend makes `hwDisableIrq` and the other critical-section calls no-ops.
+- **State regions.** The section pragmas put every writable global and static of the musyx units into `.mpxd$m`/`.mpxb$m` on COFF, or `mpt_musyx_data`/`mpt_musyx_bss` on ELF. Linker-sorted markers bound them on COFF, and `__start_`/`__stop_` symbols bound them on ELF. Data and bss need separate groups on COFF, because the linker moves uninitialized contributions to the end of a section. Both link.exe and lld-link were checked, and ELF emission was checked with a cross-compile. The regions hold about 1.7 MB (2.5 KB of it initialised data), mostly the resampler table and mix buffers. They are saved with the arena and never hashed raw.
+- **Hash manifest v1** (`musyx_glue.c`, by value):
+  - engine flags, real time, global variables and track volumes, `synthInfo`, and the PC render clock;
+  - per synth voice: macro state and addresses (as arena offsets), ids, flags, notes, pitch, volume and envelope, timers, local variables and message counters;
+  - per DSP voice: state, sample id and position, pitch, volumes and ADSR;
+  - per sequencer: state, ids, mutes, volume groups and flags;
+  - the MIDI-controller tables per sequencer channel and per SFX voice, last notes and dirty flags;
+  - the stream table.
+
+  PCM and mix and resampler history are presentation only and are left out. P1-18 reviews the manifest against MP4's `msm` queries.
+
+**Tests** (`musyx/tests`, synthetic data generated at test time by `synthetic_sound.h`). The data is a project with an SFX group and a song group, a pool of three macros, PCM16 samples, and a looping song with notes and controller-16 events. A synthetic board sets hooks on an arena heap, initialises MusyX, pushes both groups, plays the song, polls the controller and the song's validity every frame, and spins on SFX the way `SNDGRP_WAIT` does. The tests check:
+- the spin terminates after about the 50 ms sample;
+- the controller follows the song;
+- **null and real output give identical hash trails, controller values and wait times** (condition (d));
+- two runs match;
+- the engine advances only inside `stepFrame` (`sndPCGetRenderInfo`);
+- save states restore musyx mid-song;
+- the hash reacts to a MIDI controller and to a sequencer pause;
+- goldens pin the PCM and the trail.
+
+**Merge conditions** (ADR 0009 amendment after P1-13b):
+- (a) Party Board's `msm` builds against the pin: **P1-15**.
+- (b) met: render on the game thread only, and the services link check passes.
+- (c) clang-cl: met. **Linux Clang: not yet run** (there is no Linux machine here, and CI does not fetch musyx).
+- (d) met on synthetic data.
 
 ---
 
