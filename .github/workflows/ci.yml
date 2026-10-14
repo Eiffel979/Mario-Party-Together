@@ -153,6 +153,33 @@ jobs:
           [ -f "$tool.exe" ] && tool="$tool.exe"
           "$tool" --lock runtimes/gc_wii/gx/aurora.lock --cache "$MPT_GX_SOURCES"
 
+      - name: Restore the verified musyx checkout
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MPT_GX_SOURCES }}/musyx
+          key: gc-musyx-${{ matrix.os }}-${{ hashFiles('runtimes/gc_wii/mp4/decomp.lock') }}
+
+      # MusyX only (ADR 0009, amendment after P1-13b). decomp.lock also pins Party Board, the
+      # MP4 game source, which public CI does not download. The fetcher reads a lock holding
+      # just the musyx entry, derived from decomp.lock here so the pin stays in one place, and
+      # verifies its commit and tree (also on a cache hit).
+      - name: Fetch and verify musyx (decomp.lock, musyx only)
+        shell: bash
+        run: |
+          py=$(command -v python3 || command -v python)
+          lock="$RUNNER_TEMP/musyx.lock"
+          "$py" - runtimes/gc_wii/mp4/decomp.lock "$lock" <<'PY'
+          import json, sys
+          lock = json.load(open(sys.argv[1], encoding="utf-8"))
+          lock["sources"] = [s for s in lock["sources"] if s["name"] == "musyx"]
+          if len(lock["sources"]) != 1:
+              sys.exit("decomp.lock has no single musyx entry")
+          json.dump(lock, open(sys.argv[2], "w", encoding="utf-8"), indent=2)
+          PY
+          tool="build/${{ matrix.preset }}/runtimes/gc_wii/gx/tools/mpt_fetch_sources"
+          [ -f "$tool.exe" ] && tool="$tool.exe"
+          "$tool" --lock "$lock" --cache "$MPT_GX_SOURCES"
+
       - name: Restore the headers-only Dawn prefix
         id: dawn-headers
         uses: actions/cache@v4
@@ -171,11 +198,12 @@ jobs:
           cmake "-DMPT_FETCH_TOOL=$tool" "-DMPT_SOURCE_CACHE=$MPT_GX_SOURCES" "-DMPT_DAWN_PREFIX=$MPT_GX_DAWN" \
                 -DMPT_DAWN_HEADERS_ONLY=ON -P runtimes/gc_wii/gx/tools/build_dawn.cmake
 
-      # MPT_REQUIRE_GC_WII and MPT_REQUIRE_GX: a missing Clang, aurora checkout or Dawn prefix
-      # fails the configure instead of silently skipping the layer (P1-21, E10).
+      # MPT_REQUIRE_GC_WII, MPT_REQUIRE_GX and MPT_REQUIRE_MUSYX: a missing Clang, aurora or
+      # musyx checkout, or Dawn prefix fails the configure instead of silently skipping the
+      # layer (P1-21, E10).
       - name: Configure
         run: >-
-          cmake --preset ${{ matrix.preset }} -DMPT_REQUIRE_GC_WII=ON -DMPT_REQUIRE_GX=ON
+          cmake --preset ${{ matrix.preset }} -DMPT_REQUIRE_GC_WII=ON -DMPT_REQUIRE_GX=ON -DMPT_REQUIRE_MUSYX=ON
           "-DMPT_SOURCE_CACHE=${{ env.MPT_GX_SOURCES }}" "-DMPT_DAWN_PREFIX=${{ env.MPT_GX_DAWN }}"
 
       - name: Build
