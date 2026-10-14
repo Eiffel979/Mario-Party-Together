@@ -7,6 +7,7 @@
 
 #include "mpt/core/title_id.h"
 #include "titles.h"
+#include "ui_host.h"
 
 namespace mpt::shell {
 
@@ -35,7 +36,8 @@ struct AppOptions {
 std::optional<AppOptions> parse_args(int argc, char** argv, std::string& message, int& exit_code);
 
 // Runs the shell until the window closes, max_frames is reached or a replay ends.
-// `titles` comes from register_titles() (or a test registration). Returns the exit code.
-int run(const AppOptions& options, const ShellTitles& titles);
+// `titles` comes from register_titles() (or a test registration). `make_overlay`, if set,
+// creates the launcher for a windowed live run (ui_host.h). Returns the exit code.
+int run(const AppOptions& options, const ShellTitles& titles, const OverlayFactory& make_overlay = {});
 
 }  // namespace mpt::shell
