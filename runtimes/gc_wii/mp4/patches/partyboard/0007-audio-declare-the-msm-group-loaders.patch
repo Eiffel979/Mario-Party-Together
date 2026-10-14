@@ -1,0 +1,30 @@
+Apply order 0007 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+audio: declare the msm group loaders
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+diff --git a/src/game/audio.c b/src/game/audio.c
+index b5b83171b1cad8aa1744e8ec880832f921c02cb1..ddc5e00e986bae0ade76df938babb64f680de4e3 100644
+--- a/src/game/audio.c
++++ b/src/game/audio.c
+@@ -4,6 +4,9 @@
+ #include "game/gamework.h"
+ #include "game/armem.h"
+ #include "game/msm.h"
++#ifdef MPT_PC
++#include "msm/msmsys.h" /* msmSysLoadGroup*: declared only here */
++#endif
+ #include "game/object.h"
+ #include "game/wipe.h"
+ #include "game/gamework_data.h"
+@@ -519,7 +522,11 @@ void HuAudSndGrpSet(s16 grpId) {
+     void *buf;
+ 
+     buf = HuMemDirectMalloc(HEAP_DATA, msmSysGetSampSize(grpId));
++#ifdef MPT_PC
++    msmSysLoadGroup(grpId, buf); /* msm takes two arguments; the third was ignored on the console */
++#else
+     msmSysLoadGroup(grpId, buf, FALSE);
++#endif
+     HuMemDirectFree(buf);
+ }
+ 

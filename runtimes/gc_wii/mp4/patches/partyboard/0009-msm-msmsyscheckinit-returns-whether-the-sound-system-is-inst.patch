@@ -1,0 +1,44 @@
+Apply order 0009 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+msm: msmSysCheckInit returns whether the sound system is installed
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+diff --git a/include/msm/msmsys.h b/include/msm/msmsys.h
+index 6a55a4c66696542b859226ec6e75cbf3c436b3dc..35a104d98593fe82e625afc6db652d1a6c7ba786 100755
+--- a/include/msm/msmsys.h
++++ b/include/msm/msmsys.h
+@@ -78,7 +78,12 @@ s32 msmSysDelGroupAll(void);
+ s32 msmSysDelGroupBase(s32 grpNum);
+ s32 msmSysLoadGroupBase(s32 arg0, void *arg1);
+ s32 msmSysLoadGroupSet(s32 arg0, void *arg1);
++#ifdef MPT_PC
++BOOL msmSysCheckInit(void);
++s32 msmSysLoadGroup(s32 grpId, void *buf);
++#else
+ void msmSysCheckInit(void);
++#endif
+ s32 msmSysInit(MSM_INIT *init, MSM_ARAM *aram);
+ 
+ #endif
+diff --git a/src/msm/msmsys.c b/src/msm/msmsys.c
+index 3462e989f4d7ba4f7b33a285109ca28bf054d4ba..86acd79e6236e4b2c868af1de26e4e3d91b3f460 100644
+--- a/src/msm/msmsys.c
++++ b/src/msm/msmsys.c
+@@ -770,10 +770,18 @@ s32 msmSysLoadGroup(s32 grpId, void *buf)
+     return result;
+ }
+ 
++#ifdef MPT_PC
++/* The console returns sndIsInstalled()'s result in r3 and sreset tests it; make that explicit. */
++BOOL msmSysCheckInit(void)
++{
++    return sndIsInstalled();
++}
++#else
+ void msmSysCheckInit(void)
+ {
+     sndIsInstalled();
+ }
++#endif
+ 
+ #ifdef MPT_PC
+ static void *msmSndMalloc(size_t size)
