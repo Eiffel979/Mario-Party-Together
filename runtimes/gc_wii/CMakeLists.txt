@@ -83,6 +83,10 @@ ExternalProject_Add(mpt_gc_wii_clang
     "-DCMAKE_MAKE_PROGRAM:FILEPATH=${CMAKE_MAKE_PROGRAM}"
     "-DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}"
     "-DCMAKE_PREFIX_PATH:PATH=${_mpt_gc_prefix}"
+    # Without vcpkg's toolchain nothing maps RelWithDebInfo/MinSizeRel onto vcpkg's release
+    # packages, and CMake falls back to the debug ones (fmtd.lib): _ITERATOR_DEBUG_LEVEL mismatch.
+    "-DCMAKE_MAP_IMPORTED_CONFIG_RELWITHDEBINFO:STRING=Release"
+    "-DCMAKE_MAP_IMPORTED_CONFIG_MINSIZEREL:STRING=Release"
     "-DMPT_CORE_INCLUDE_DIR:PATH=${MPT_CORE_INCLUDE_DIR}"
     "-DMPT_BUILD_TESTS:BOOL=${MPT_BUILD_TESTS}"
     "-DMPT_WARNINGS_AS_ERRORS:BOOL=${MPT_WARNINGS_AS_ERRORS}"
