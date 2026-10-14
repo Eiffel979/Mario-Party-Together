@@ -8,6 +8,7 @@ add_library(mpt_input
   src/names.cpp
   src/ports.cpp
   src/profile.cpp
+  src/reserved.cpp
 )
 add_library(mpt::input ALIAS mpt_input)
 target_include_directories(mpt_input PUBLIC include)
@@ -34,6 +35,7 @@ if(MPT_BUILD_TESTS)
     tests/test_names.cpp
     tests/test_ports.cpp
     tests/test_profile.cpp
+    tests/test_reserved.cpp
   )
   target_link_libraries(mpt_input_tests PRIVATE mpt::input doctest::doctest)
   mpt_set_warnings(mpt_input_tests)

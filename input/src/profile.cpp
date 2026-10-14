@@ -11,6 +11,7 @@
 
 #include "mpt/core/content_id.h"
 #include "mpt/input/names.h"
+#include "mpt/input/reserved.h"
 
 namespace mpt::input {
 namespace {
@@ -90,6 +91,9 @@ Result parse_source_list(const json& j, const std::string& path, std::vector<Sou
     const auto text = item.get<std::string>();
     const auto source = source_from_string(text);
     if (!source) return fail(path, "unknown source '" + text + "'");
+    if (is_reserved(*source)) {
+      return fail(path, "'" + text + "' is reserved for the host pause action and cannot be bound");
+    }
     for (const Source& s : sources) {
       if (s == *source) return fail(path, "duplicate source '" + text + "'");
     }
@@ -123,7 +127,8 @@ ordered_json sources_json(const std::vector<Source>& sources) {
 // GameCube-style layout. Keyboard: WASD stick (left shift = half), arrows d-pad,
 // TFGH C-stick, K/J/L/I = A/B/X/Y, Q/E = L/R (full analog press), U = Z, Enter = Start.
 // Gamepad: positional face buttons by label on an Xbox pad, sticks pass through,
-// analog triggers with the digital click at ~90%.
+// analog triggers with the digital click at ~90%. Esc and Guide are host-reserved
+// (reserved.h), so Home is unbound.
 constexpr std::string_view kBuiltinProfileJson = R"json({
   "format": "mpt.input_profile",
   "version": 1,
@@ -145,7 +150,6 @@ constexpr std::string_view kBuiltinProfileJson = R"json({
     "z": ["key:u", "button:right_shoulder"],
     "start": ["key:enter", "button:start"],
     "select": ["key:backspace", "button:back"],
-    "home": ["button:guide"],
     "dpad_up": ["key:up", "button:dpad_up"],
     "dpad_down": ["key:down", "button:dpad_down"],
     "dpad_left": ["key:left", "button:dpad_left"],

@@ -12,6 +12,8 @@ namespace mpt::input {
 // Our names and enums mirror SDL's numbering so snapshots are plain copies.
 static_assert(SDL_SCANCODE_A == 4 && SDL_SCANCODE_Z == 29 && SDL_SCANCODE_0 == 39);
 static_assert(SDL_SCANCODE_SPACE == 44 && SDL_SCANCODE_UP == 82 && SDL_SCANCODE_KP_8 == 96);
+static_assert(SDL_SCANCODE_ESCAPE == kHostPauseKey);
+static_assert(SDL_GAMEPAD_BUTTON_GUIDE == static_cast<int>(kHostPauseButton));
 static_assert(SDL_SCANCODE_LCTRL == 224 && SDL_SCANCODE_LSHIFT == 225 && SDL_SCANCODE_RGUI == 231);
 static_assert(static_cast<std::size_t>(SDL_SCANCODE_COUNT) <= kKeyCount);
 static_assert(SDL_GAMEPAD_BUTTON_SOUTH == static_cast<int>(PadButton::south));
@@ -115,8 +117,22 @@ std::vector<DeviceSnapshot> SdlInput::snapshot() const {
   return out;
 }
 
+std::optional<HostAction> SdlInput::host_action(const SDL_Event& event) {
+  if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
+    const auto code = static_cast<int>(event.key.scancode);
+    if (code < 0 || code >= static_cast<int>(kKeyCount)) return std::nullopt;
+    return host_action_for_key(static_cast<std::uint16_t>(code));
+  }
+  if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+    if (static_cast<std::size_t>(event.gbutton.button) >= kPadButtonCount) return std::nullopt;
+    return host_action_for_button(static_cast<PadButton>(event.gbutton.button));
+  }
+  return std::nullopt;
+}
+
 InputFrame SdlInput::sample(std::uint64_t frame) {
-  const std::vector<DeviceSnapshot> devices = snapshot();
+  std::vector<DeviceSnapshot> devices = snapshot();
+  strip_reserved(devices);
   return mapper_.map(frame, devices, ports_.layout());
 }
 
