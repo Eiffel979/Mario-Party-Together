@@ -1,0 +1,36 @@
+Apply order 0006 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc: ADR 0007 section 6 patch 8.
+fifo::g_processObserver sees every buffer handed to the command processor (tests only).
+Contains code from aurora (MIT; see LICENSE-aurora in this folder). Applied in order by
+runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+
+diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
+index 974855624db82dd29cc29264b1780344b4168cf1..dbaafa4e9d4ee78b830cdb6ddeeab0161179ce83 100644
+--- a/lib/gx/command_processor.cpp
++++ b/lib/gx/command_processor.cpp
+@@ -372,8 +372,13 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian);
+ static void handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndian);
+ static void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian);
+ 
++ProcessObserver g_processObserver = nullptr;
++
+ void process(const u8* data, u32 size, bool bigEndian) {
+   ZoneScoped;
++  if (g_processObserver != nullptr) {
++    g_processObserver(data, size, bigEndian);
++  }
+   u32 pos = 0;
+ 
+   while (pos < size) {
+diff --git a/lib/gx/command_processor.hpp b/lib/gx/command_processor.hpp
+index 93feba116d158c61b47a5b15346af70fe39b217c..a30788bf366714930843a4cdf743ce140c7bdaff 100644
+--- a/lib/gx/command_processor.hpp
++++ b/lib/gx/command_processor.hpp
+@@ -7,4 +7,8 @@ namespace aurora::gx::fifo {
+ // Process a buffer of GX FIFO commands
+ void process(const uint8_t* data, uint32_t size, bool bigEndian);
+ 
++// Test hook: called with every buffer handed to the command processor (null by default).
++using ProcessObserver = void (*)(const uint8_t* data, uint32_t size, bool bigEndian);
++extern ProcessObserver g_processObserver;
++
+ } // namespace aurora::gx::fifo

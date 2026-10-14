@@ -1,0 +1,18 @@
+Apply order 0013 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc: ADR 0007 section 6 patch 2.
+GXInitLightSpot calls cosf, so the forced-include math redirect (ADR 0008 section 5) reaches it.
+Contains code from aurora (MIT; see LICENSE-aurora in this folder). Applied in order by
+runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+
+diff --git a/lib/dolphin/gx/GXLighting.cpp b/lib/dolphin/gx/GXLighting.cpp
+index 254d87c48f902bc31a92a6715571f86407e81bd7..6a42b7280753b983790d0f66ffd4b3dd713157f0 100644
+--- a/lib/dolphin/gx/GXLighting.cpp
++++ b/lib/dolphin/gx/GXLighting.cpp
+@@ -31,7 +31,7 @@ void GXInitLightSpot(GXLightObj* light_, float cutoff, GXSpotFn spotFn) {
+     spotFn = GX_SP_OFF;
+   }
+ 
+-  float cr = std::cos((cutoff * M_PIF) / 180.f);
++  float cr = cosf((cutoff * M_PIF) / 180.f); // cosf, so the forced-include math redirect covers it
+   float a0 = 1.f;
+   float a1 = 0.f;
+   float a2 = 0.f;

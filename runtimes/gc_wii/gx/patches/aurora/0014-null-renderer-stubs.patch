@@ -1,0 +1,32 @@
+Apply order 0014 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc: the null backend, which has no ADR 0007 patch number.
+tests/gx_test_stubs.cpp becomes the null renderer: real vertex-size helpers (patch 8b), cache reset no-op.
+Contains code from aurora (MIT; see LICENSE-aurora in this folder). Applied in order by
+runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+
+diff --git a/tests/gx_test_stubs.cpp b/tests/gx_test_stubs.cpp
+index 9908075b77140e1584483083d52e35d996197673..c16913eabe4fa983280fa14c4868a6ed393a5b8c 100644
+--- a/tests/gx_test_stubs.cpp
++++ b/tests/gx_test_stubs.cpp
+@@ -1,4 +1,4 @@
+-// Stub implementations for renderer symbols that the GX/FIFO/command_processor code
++// Null renderer: stub implementations for renderer symbols that the GX/FIFO/command_processor code
+ // references but that live in the full renderer (common.cpp, gx.cpp, model/shader.cpp, etc.).
+ // These allow the test binary to link without pulling in WebGPU runtime.
+ 
+@@ -88,6 +88,7 @@ void evict_copy_texture(const void* dest) noexcept {
+   }
+ }
+ void shutdown() noexcept {}
++void reset_caches_for_load_state() noexcept {}
+ Vec2<uint32_t> logical_fb_size() noexcept { return {640, 480}; }
+ gfx::Viewport map_logical_viewport(const gfx::Viewport& logicalViewport) noexcept { return logicalViewport; }
+ gfx::ClipRect map_logical_scissor(const gfx::ClipRect& logicalScissor) noexcept { return logicalScissor; }
+@@ -115,8 +116,6 @@ gfx::Range build_uniform(const ShaderInfo& info, uint32_t vtxStart, const BindGr
+ }
+ void resolve_sampled_textures(const ShaderInfo& info) noexcept {}
+ u8 color_channel(GXChannelID id) noexcept { return 0; }
+-u8 comp_type_size(GXAttr attr, GXCompType type) noexcept { return 0; }
+-u8 comp_cnt_count(GXAttr attr, GXCompCnt cnt) noexcept { return 0; }
+ } // namespace aurora::gx
+ 
+ // --- Buffer push stubs ---

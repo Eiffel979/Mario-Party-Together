@@ -1,0 +1,48 @@
+# Golden probe colours for gx_dawn_probes: probe <scene> <x> <y> <r> <g> <b> <a> (logical pixels).
+# Recorded 2026-10-13 on the reference machine: Windows 11, Radeon RX 5700, Dawn D3D12 (FXC), scale 1,
+# aurora 5143394 with runtimes/gc_wii/gx/patches. Checked with a tolerance (default 8 per channel),
+# because GPU output is not bit-identical across GPUs and drivers. Re-record only for an intended change.
+probe clear_and_quads 120 120 255 0 0 255
+probe clear_and_quads 320 120 0 255 0 255
+probe clear_and_quads 520 120 0 0 255 255
+probe clear_and_quads 20 20 0 0 100 255
+probe clear_and_quads 320 350 127 0 128 255
+probe tev_swap_konst_s10 170 130 255 128 0 255
+probe tev_swap_konst_s10 470 130 0 0 255 255
+probe tev_swap_konst_s10 170 350 0 255 64 255
+probe tev_swap_konst_s10 470 350 0 255 192 255
+probe tev_swap_konst_s10 20 20 20 20 20 255
+probe fog 64 240 255 0 0 255
+probe fog 192 240 242 46 58 255
+probe fog 320 240 228 97 124 255
+probe fog 448 240 214 149 189 255
+probe fog 576 240 200 200 255 255
+probe lights_spot_specular 164 240 234 234 208 255
+probe lights_spot_specular 476 240 171 171 191 255
+probe lights_spot_specular 100 140 20 20 40 255
+probe lights_spot_specular 20 20 0 0 0 255
+probe ci8_tlut 96 80 255 0 0 255
+probe ci8_tlut 160 80 0 255 0 255
+probe ci8_tlut 224 80 0 0 255 255
+probe ci8_tlut 288 80 255 255 0 255
+probe ci8_tlut 72 152 255 255 255 255
+probe ci8_tlut 88 152 255 255 255 255
+probe display_list 45 65 255 255 0 255
+probe display_list 100 120 126 0 129 255
+probe display_list 295 125 255 255 0 255
+probe display_list 20 300 30 0 30 255
+probe copy_tex_partial 80 60 0 0 255 255
+probe copy_tex_partial 360 30 0 60 0 255
+probe copy_tex_partial 330 5 0 60 0 255
+probe copy_tex_partial 160 360 0 0 255 255
+probe copy_tex_partial 480 360 255 0 0 255
+probe indirect_warp_tile 100 150 40 40 40 40
+probe indirect_warp_tile 200 300 40 40 40 40
+probe indirect_warp_tile 400 150 255 255 255 255
+probe indirect_warp_tile 500 300 255 255 255 255
+probe ztexture 160 240 255 0 0 255
+probe ztexture 480 240 0 255 0 255
+probe ztexture 160 100 255 0 0 255
+probe depth_copy_ztexture 160 240 255 255 255 255
+probe depth_copy_ztexture 480 240 255 255 0 255
+probe depth_copy_ztexture 160 100 255 255 255 255

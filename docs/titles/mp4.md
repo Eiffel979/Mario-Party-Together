@@ -443,6 +443,65 @@ Once that is decided, MusyX plugs into the `AudioEngine` hook:
 - allocation goes through `sndSetHooks` into the game heaps;
 - `hash` covers voice, sequencer, stream and MIDI-controller state by value.
 
+## 16. GX layer (P1-14, `runtimes/gc_wii/gx/`)
+
+**What is built.** aurora at `514339438178ef2bed1b14e5149d90ece0c6e0cc` (`gx/aurora.lock`) supplies three libraries, built from explicit source lists and without `aurora_core`:
+- the GX front end plus MTX, which is game code;
+- a null renderer;
+- the Dawn renderer, on a headless device with `cpu_rgba8` readback.
+
+Dawn is pinned at `13abc3bc8ea2d3c2050f9e77a12d012108ceee24` by `gx/dawn.lock`, with 8 `DEPS` entries pinned and 73 skipped (DXC among them). It is built by `gx/tools/build_dawn.cmake`. Details are in `runtimes/gc_wii/gx/README.md`.
+
+**Patch set** (`gx/patches/aurora/`):
+
+| ADR 0007 patch | What it does |
+|---|---|
+| 1 | Overscan from the render mode (backport of `e2fc845`). |
+| 2 | MTX fixes (backports of `4143fc1` and `f8573d3`), and `cosf` in `GXInitLightSpot`. |
+| 3 | Headless device. |
+| 4 | Synchronous pipelines, always on in play and in tests. |
+| 5 | `GXPeekZ` traps. |
+| 6 | `gx::reset_caches_for_load_state()`, and save-state access to the texture/TLUT object ID counters. |
+| 7 | `GXSetZTexture`: BP registers, shader `frag_depth` from the last TEV stage's texel, Z8/Z16/Z24X8 static decode, and Z8/Z24X8 EFB depth copies. |
+| 7b | Partial `GXCopyTex` clears, our port of the idea in `9c0bf66`. |
+| 8 | FIFO observer. |
+| 8b | Vertex-size helpers moved into the front end. |
+| 9 | FXC: `use_dxc` is not enabled. |
+| (none) | Null renderer stub table. |
+
+**MP4-specific status.**
+- m419's pattern (copy EFB depth as Z24X8, then `GXSetZTexture(GX_ZT_REPLACE, GX_TF_Z24X8, 0)` on the last TEV stage) renders correctly in the synthetic `depth_copy_ztexture` scene.
+- m427's partial copy clear is fixed (scene `copy_tex_partial`).
+- Both still need the dump lane for m419 and m427 themselves.
+
+**Front-end math.** Front-end and MTX trig goes through the SDK's `mpt_*` functions (forced include `mpt_gx/math_redirect.h`), and `fmaf` through `mpt_fmaf`. `gx_frontend_no_host_math` checks this at link level.
+
+**MTX goldens** (`gx_mtx_golden`) are recorded against aurora's MTX. They cover the `PSVEC` reciprocal-square-root hard cases: powers of two ±1 ulp, a mantissa sweep across the `frsqrte` table, subnormals, signed zeros, overflow, infinities and NaN. They also cover trig, linear algebra and quaternions. This is ADR 0008 §5 condition 2.
+
+**Added SDK entry points:**
+- `GXSetDrawSync` (the callback fires synchronously) and `GXReadDrawSync`;
+- `GXWaitDrawDone` and `GXResetWriteGatherPipe` (no-ops);
+- the perf-metric calls (0);
+- `GXNtsc480Prog`.
+
+**Determinism notes from P1-14:**
+- **MTX goldens hash NaN results as one canonical quiet NaN.** IEEE 754 leaves a NaN's sign and payload unspecified, and x86 returns the NaN of whichever operand the compiler placed first. On the reference machine, `-Od` and `-O2` already disagree on 38 NaN signs in the `vec_c` group, and the first Linux run of the gate failed on that group. Game state may contain NaN floats, and the hash manifest hashes fields by value. **Architect must decide whether `StateHasher` canonicalizes NaN floats** (ADR 0008 §8). If it does not, a NaN in game state can split the hash between builds or platforms.
+- `std::log2` in `GXLoadLightObjImm` reached the host libm (patch 0015 replaces it with `std::countr_zero`). The libm link check now also recognises `__imp_` DLL imports; it had been blind on Windows.
+
+**For P1-16 (save states and the manifest).** Front-end state outside the arena must become registered `SaveState` globals and manifest areas:
+- `__gx` (the shadow registers);
+- the CPU-side `g_gxState`. It holds game-visible state such as the viewport, the projection, matrices, vertex formats, `zTex*` and the copy settings, next to renderer handles that must not be saved;
+- the FIFO buffer between drains;
+- the draw-sync callback and its last token (`sdk_additions.cpp`);
+- the texture/TLUT object ID counters.
+
+Decide whether the ID counters are hashed. They are stored in game memory (`GXTexObj`), so they are game state; the earlier plan was "saved, not hashed". The callback pointer needs P1-16's function-ID table.
+
+**Still open:**
+- `GXGetYScaleFactor` is not implemented. It is used on the PAL path only, and we target `GMPE01_00`.
+- The copy-destination debug trap with its m415 allow-list belongs with P1-15/P1-16, where game memory exists.
+- The object ID counters become registered `SaveState` globals in P1-16 (the accessors are `mpt::gx::object_id_counters()` and `set_object_id_counters()`).
+
 ---
 
 ## Sections still to fill (P1-18)

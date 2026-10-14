@@ -1,0 +1,12 @@
+{
+  "lock_version": 1,
+  "sources": [
+    {
+      "name": "aurora",
+      "repo": "https://github.com/encounter/aurora",
+      "commit": "514339438178ef2bed1b14e5149d90ece0c6e0cc",
+      "tree": "87e25e889e08af3db179efd3e9bedb6b87ded425",
+      "license": "MIT"
+    }
+  ]
+}

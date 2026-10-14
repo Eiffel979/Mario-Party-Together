@@ -186,3 +186,17 @@ The same harness and steps, with these changes:
    - `gate_real --backend d3d12|vulkan|d3d11|null-adapter [--scale N] [--async] --out <dir>`.
 
    Each run writes a `results.txt` with per-frame `gx`/`stream`/`img` hashes and one PNG per scene. The harness stays in the scratchpad: production GX code belongs to P1-14 in `runtimes/gc_wii/gx/`, owned by the P1-13/P1-14 agent.
+
+## 11. Follow-up in P1-14 (2026-10-13)
+
+The gate's checks are now repository tests in `runtimes/gc_wii/gx/tests` (see the README there). The Linux leg runs in `.github/workflows/gx-linux-gate.yml`, a separate workflow because a Dawn build takes most of an hour on a hosted runner. **It has not run yet: the branch is not pushed. The gate stays open until it passes** (ADR 0007, P1-14 gate amendment).
+
+Results on the reference machine with the production build (`windows-clang-release`, `MPT_GX_BACKEND=dawn`):
+- **G-a, from `dawn.lock`.** Dawn now builds with only the 8 pinned `DEPS` dependencies, fetched by `mpt_fetch_sources`. Timings: fetch and verify 411 s cold, configure 124 s, build 865 s. `fetch_dawn_dependencies.py` is not used.
+- **G-b.** All scenes render headless on D3D12 (FXC), Vulkan and D3D11, at scales 1 and 3. Dawn's Null adapter runs the whole device path.
+- **G-c.** Every one of 30 frames is identical null against real, on every backend and scale.
+- **G-d.** 44 of 44 probes match the goldens on D3D12, Vulkan and D3D11. Both gate defects are fixed:
+  - patch 7b: the partial copy now clears only its rectangle;
+  - patch 7: the Z16 static Z texture and m419's Z24X8 depth-copy pattern both render correctly.
+- **G-e.** Two processes give identical images.
+- **Null renderer with headers-only Dawn.** It builds and passes without compiling Dawn.

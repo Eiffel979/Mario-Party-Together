@@ -1,0 +1,19 @@
+Apply order 0008 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc: ADR 0007 section 6 patch 9.
+Do not enable Dawn's use_dxc toggle: D3D12 compiles with FXC from System32.
+Contains code from aurora (MIT; see LICENSE-aurora in this folder). Applied in order by
+runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+
+diff --git a/lib/webgpu/gpu.cpp b/lib/webgpu/gpu.cpp
+index b655200e944bdfce316a6fe4692da4c82f9ff85e..419904e4c2ce8d8a836979fa9a6cf3dfd9fa5b2e 100644
+--- a/lib/webgpu/gpu.cpp
++++ b/lib/webgpu/gpu.cpp
+@@ -838,7 +838,8 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
+     constexpr std::array enableToggles{
+     /* clang-format off */
+ #if _WIN32
+-      "use_dxc",
++      // use_dxc is not enabled: D3D12 compiles shaders with FXC (d3dcompiler_47.dll from System32),
++      // which is Dawn's default. We never ship dxcompiler.dll.
+ #ifndef NDEBUG
+       "emit_hlsl_debug_symbols",
+ #endif

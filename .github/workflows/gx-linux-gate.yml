@@ -1,0 +1,204 @@
+name: GX Linux gate
+
+# The Linux leg of the P1-14 gate (ADR 0007 section 6, P1-14 gate amendment) and, after it, the GX
+# layer's Linux check. A Dawn build takes most of an hour on a hosted runner, so this is its own
+# workflow: it runs when the GX layer, its pins or the vcpkg manifest change, or by hand. The Dawn
+# install is cached by the hash of dawn.lock, the recipe and the compiler; `clean_dawn` rebuilds it
+# from a clean cache (G-a).
+#
+# Synthetic data only. Nothing from a game or a dump is used, and no game data is uploaded.
+
+on:
+  workflow_dispatch:
+    inputs:
+      clean_dawn:
+        description: "Rebuild Dawn from a clean cache (G-a)"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - "runtimes/gc_wii/gx/**"
+      - "runtimes/gc_wii/sdk/**"
+      - "runtimes/gc_wii/CMakeLists.txt"
+      - "asset-import/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "vcpkg.json"
+      - "vcpkg-configuration.json"
+      - ".github/workflows/gx-linux-gate.yml"
+  pull_request:
+    paths:
+      - "runtimes/gc_wii/gx/**"
+      - "runtimes/gc_wii/sdk/**"
+      - "runtimes/gc_wii/CMakeLists.txt"
+      - "asset-import/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "vcpkg.json"
+      - "vcpkg-configuration.json"
+      - ".github/workflows/gx-linux-gate.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gx-linux-gate-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Must match the baseline in vcpkg-configuration.json.
+  VCPKG_COMMIT: 9e593bb18ea69cc5095e012465dcd675a822ed0d
+
+jobs:
+  gate:
+    name: G-a, G-b (lavapipe), G-c, G-e on Linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      MPT_VCPKG_DIR: ${{ github.workspace }}/../vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/../vcpkg-cache
+      MPT_SOURCE_CACHE: ${{ github.workspace }}/external/sources
+      MPT_DAWN_PREFIX: ${{ github.workspace }}/external/dawn
+      BUILD_DIR: ${{ github.workspace }}/build/gx-gate
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies, Mesa lavapipe and the Vulkan loader
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld ninja-build pkg-config autoconf automake libtool python3 \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev \
+            libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols \
+            libegl1-mesa-dev libgl1-mesa-dev libdrm-dev libgbm-dev \
+            libasound2-dev libpulse-dev libpipewire-0.3-dev libudev-dev libdbus-1-dev libibus-1.0-dev \
+            mesa-vulkan-drivers libvulkan1 vulkan-tools
+
+      # Logged so a runner image update that changes any of these is visible next to a result change.
+      - name: Show the toolchain, Mesa and the Vulkan loader
+        id: versions
+        run: |
+          clang --version
+          echo "clang=$(clang --version | head -1 | tr -c 'A-Za-z0-9.' '_')" >> "$GITHUB_OUTPUT"
+          dpkg-query -W -f='mesa-vulkan-drivers ${Version}\nlibvulkan1 ${Version}\n' mesa-vulkan-drivers libvulkan1
+          vulkaninfo --summary || true
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-gx-ubuntu-24.04-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: vcpkg-gx-ubuntu-24.04-${{ env.VCPKG_COMMIT }}-
+
+      - name: Bootstrap vcpkg
+        run: |
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+          git clone https://github.com/microsoft/vcpkg "$MPT_VCPKG_DIR"
+          git -C "$MPT_VCPKG_DIR" checkout "$VCPKG_COMMIT"
+          "$MPT_VCPKG_DIR/bootstrap-vcpkg.sh" -disableMetrics
+          echo "VCPKG_ROOT=$MPT_VCPKG_DIR" >> "$GITHUB_ENV"
+
+      # The whole tree with Clang, so runtimes/gc_wii builds in-tree and its tests are visible here.
+      # Warnings are not errors here: this job builds the whole tree with Clang, which the main CI does
+      # not, and its job is the gate, not warning policy. The main ci.yml builds the GX layer
+      # (headers-only Dawn) under -Werror from P1-21.
+      - name: Configure (null renderer first, to build the source fetcher)
+        run: |
+          cmake --preset ci-linux -B "$BUILD_DIR" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DMPT_WARNINGS_AS_ERRORS=OFF \
+            -DMPT_GX_BACKEND=null -DMPT_SOURCE_CACHE="$MPT_SOURCE_CACHE" -DMPT_DAWN_PREFIX="$MPT_DAWN_PREFIX"
+
+      - name: Fetch and verify aurora (aurora.lock)
+        run: |
+          cmake --build "$BUILD_DIR" --target mpt_fetch_sources
+          "$BUILD_DIR/runtimes/gc_wii/gx/tools/mpt_fetch_sources" \
+            --lock runtimes/gc_wii/gx/aurora.lock --cache "$MPT_SOURCE_CACHE"
+
+      - name: Restore the Dawn install
+        id: dawn-cache
+        if: ${{ !inputs.clean_dawn }}
+        uses: actions/cache/restore@v4
+        with:
+          path: external/dawn
+          key: dawn-ubuntu-24.04-${{ steps.versions.outputs.clang }}-${{ hashFiles('runtimes/gc_wii/gx/dawn.lock', 'runtimes/gc_wii/gx/tools/build_dawn.cmake') }}
+
+      - name: Build Dawn from dawn.lock (G-a)
+        if: ${{ steps.dawn-cache.outputs.cache-hit != 'true' }}
+        run: |
+          start=$(date +%s)
+          cmake -DMPT_FETCH_TOOL="$BUILD_DIR/runtimes/gc_wii/gx/tools/mpt_fetch_sources" \
+                -DMPT_SOURCE_CACHE="$MPT_SOURCE_CACHE" -DMPT_DAWN_PREFIX="$MPT_DAWN_PREFIX" \
+                -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+                -P runtimes/gc_wii/gx/tools/build_dawn.cmake
+          echo "Dawn fetch + build: $(( $(date +%s) - start )) s"
+          du -sh external/sources external/dawn external/dawn-build || true
+
+      - name: Save the Dawn install
+        if: ${{ steps.dawn-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: external/dawn
+          key: dawn-ubuntu-24.04-${{ steps.versions.outputs.clang }}-${{ hashFiles('runtimes/gc_wii/gx/dawn.lock', 'runtimes/gc_wii/gx/tools/build_dawn.cmake') }}
+
+      - name: Configure with the dawn renderer on lavapipe
+        run: |
+          cmake "$BUILD_DIR" -DMPT_GX_BACKEND=dawn -DMPT_REQUIRE_GX=ON \
+            -DMPT_GX_TEST_API=vulkan -DMPT_GX_TEST_SOFTWARE_ADAPTER=ON
+
+      - name: Build the GX layer and its tests
+        id: build
+        run: cmake --build "$BUILD_DIR" --target mpt_gx_scenes mpt_gx_scenes_null mpt_gx_mtx_tests mpt_gc_sdk_tests mpt_gx_probes
+
+      # G-b on lavapipe, G-c (null against real), G-e (two runs), MTX goldens, the libm link check.
+      - name: Test (G-b, G-c, G-e)
+        run: ctest --test-dir "$BUILD_DIR" -R '^g[xc]_' -E '^gx_dawn_probes$' --output-on-failure
+
+      # G-b's device and pipeline path on Dawn's Null adapter (no rasterization, so no probes).
+      - name: Scenes on Dawn's Null adapter
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          "$BUILD_DIR/runtimes/gc_wii/gx/tests/mpt_gx_scenes" --api dawn_null --out "$BUILD_DIR/gx-dawn-null"
+          cmake -DA="$BUILD_DIR/runtimes/gc_wii/gx/tests/out/null/results.txt" \
+                -DB="$BUILD_DIR/gx-dawn-null/results.txt" -DCOLUMNS=gx,stream,bytes \
+                -P runtimes/gc_wii/gx/tests/compare_results.cmake
+
+      # G-d with a tolerance: the goldens come from a Windows GPU, so a lavapipe mismatch is reported
+      # for review (a patch, not a gate failure) rather than failing the job.
+      - name: Probe colours against the goldens (informational on lavapipe)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          set +e
+          ctest --test-dir "$BUILD_DIR" -R '^gx_dawn_probes$' --output-on-failure > probes.log 2>&1
+          rc=$?
+          cat probes.log
+          {
+            echo "### GX golden probes on lavapipe (G-d, informational)"
+            echo
+            echo '```'
+            grep -E '^probe |probes checked|Passed|Failed' probes.log || echo "no probe output"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+      # Raw MTX values for diffing against the reference machine (B1 diagnosis): NaNs canonical,
+      # each value labelled with its inputs.
+      - name: Dump the MTX test values
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          MPT_GX_MTX_DUMP="$BUILD_DIR/mtx_values.txt" \
+            "$BUILD_DIR/runtimes/gc_wii/gx/tests/mpt_gx_mtx_tests" || true
+          gzip -kf "$BUILD_DIR/mtx_values.txt"
+
+      - name: Upload the synthetic scene images and trails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gx-linux-scenes
+          path: |
+            ${{ env.BUILD_DIR }}/mtx_values.txt.gz
+            ${{ env.BUILD_DIR }}/runtimes/gc_wii/gx/tests/out/*/results.txt
+            ${{ env.BUILD_DIR }}/runtimes/gc_wii/gx/tests/out/dawn/*.png
+          retention-days: 14
