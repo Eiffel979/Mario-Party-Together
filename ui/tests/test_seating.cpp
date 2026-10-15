@@ -57,6 +57,24 @@ TEST_CASE("an unseated device joins the lowest free seat") {
   CHECK_FALSE(seating.join(kPadA));  // already seated
 }
 
+TEST_CASE("seating is locked while a session runs (Phase 1)") {
+  input::PortAssigner ports;
+  Seating seating(ports);
+  ports.device_added({kPadA, "Controller", "pad-a"});  // Player 1
+  ports.device_added({kPadB, "Controller", "pad-b"});  // Player 2
+  seating.leave(kPadB);
+  seating.set_locked(true);
+  CHECK(seating.locked());
+  seating.cycle(kPadA, +1);
+  CHECK(ports.port_of(kPadA) == 0u);
+  seating.leave(kPadA);
+  CHECK(ports.port_of(kPadA) == 0u);
+  CHECK_FALSE(seating.join(kPadB));
+  CHECK_FALSE(ports.port_of(kPadB));
+  seating.set_locked(false);
+  CHECK(seating.join(kPadB) == 1u);
+}
+
 TEST_CASE("a party member's unplugged controller keeps the seat") {
   input::PortAssigner ports;
   Seating seating(ports);

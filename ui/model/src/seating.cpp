@@ -39,7 +39,7 @@ std::array<SeatPort, kMaxPlayers> Seating::ports() const {
 }
 
 std::optional<std::size_t> Seating::join(input::DeviceId id) {
-  if (ports_.port_of(id)) return std::nullopt;
+  if (locked_ || ports_.port_of(id)) return std::nullopt;
   for (std::size_t p = 0; p < kMaxPlayers; ++p) {
     if (!ports_.seated(p)) {
       if (!ports_.assign(id, p)) return std::nullopt;
@@ -51,6 +51,7 @@ std::optional<std::size_t> Seating::join(input::DeviceId id) {
 
 void Seating::cycle(input::DeviceId id, int direction) {
   // Choices: 0 = not playing, 1..4 = Player 1..4.
+  if (locked_) return;
   constexpr int kChoices = static_cast<int>(kMaxPlayers) + 1;
   const std::optional<std::size_t> now = ports_.port_of(id);
   const int current = now ? static_cast<int>(*now) + 1 : 0;
@@ -65,6 +66,7 @@ void Seating::cycle(input::DeviceId id, int direction) {
 }
 
 void Seating::leave(input::DeviceId id) {
+  if (locked_) return;
   const std::optional<std::size_t> port = ports_.port_of(id);
   ports_.assign(id, std::nullopt);
   if (port && ports_.devices_on(*port).empty()) ports_.set_seated(*port, false);

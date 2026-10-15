@@ -140,6 +140,8 @@ SDL_Event pad_axis(SDL_GamepadAxis axis, Sint16 value) {
   return e;
 }
 
+// TODO(P1-23 follow-up): replace this copy of the shell's pause binding and the routing
+// in play() with architect's shared route_event in mpt_shell_core once it lands.
 bool is_host_pause_action(const SDL_Event& e) {
   if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.scancode == SDL_SCANCODE_ESCAPE) return true;
   if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && e.gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE) return true;

@@ -34,6 +34,11 @@ class Seating {
  public:
   explicit Seating(input::PortAssigner& ports) : ports_(ports) {}
 
+  // Phase 1: seats change only while no session runs. The launcher locks seating from
+  // the shell's status; join(), cycle() and leave() then do nothing.
+  void set_locked(bool locked) { locked_ = locked; }
+  bool locked() const { return locked_; }
+
   std::vector<SeatDevice> devices() const;
   std::array<SeatPort, kMaxPlayers> ports() const;
 
@@ -52,6 +57,7 @@ class Seating {
 
  private:
   input::PortAssigner& ports_;
+  bool locked_ = false;
 };
 
 }  // namespace mpt::ui
