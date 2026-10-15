@@ -23,6 +23,7 @@ mpt_set_warnings(mpt_replay_check)
 # save files. Headless tests link it. It uses SDL types only for the UI seams
 # (shell/overlay.h) and never initializes SDL.
 add_library(mpt_shell_core
+  shell/durable_file.cpp
   shell/frame_loop.cpp
   shell/save_store.cpp
 )

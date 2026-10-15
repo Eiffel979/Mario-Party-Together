@@ -16,6 +16,7 @@
 #include <string>
 #include <string_view>
 
+#include "durable_file.h"
 #include "mpt/core/result.h"
 #include "mpt/core/save_media.h"
 #include "mpt/core/title_id.h"
@@ -26,15 +27,6 @@ namespace mpt::shell {
 // [A-Za-z0-9_-] (or is empty) becomes "unknown", so it can never escape the folder.
 std::filesystem::path save_slot_path(const std::filesystem::path& saves_root, TitleId title, std::string_view region);
 
-// UTF-8 text for messages. path::string() throws on Windows for names outside the ANSI
-// code page, and the user folder contains the user's name.
-std::string display_path(const std::filesystem::path& path);
-
-// Writes `bytes` to a temporary file next to `path` whose name is unique to this process
-// and call, flushes it to the disk, then renames it over `path` (and on POSIX syncs the
-// folder), so neither a crash nor a second shell on the same slot leaves a half-written
-// save. Creates missing parent folders.
-Result write_file_atomic(const std::filesystem::path& path, std::span<const std::byte> bytes);
 
 // nullopt if the file does not exist (a blank card). A file that exists but cannot be
 // read or is shorter than 4 bytes is an error.
