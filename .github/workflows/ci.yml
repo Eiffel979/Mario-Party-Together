@@ -119,10 +119,92 @@ jobs:
           # Written after msvc-dev-cmd so it overrides the VS-bundled vcpkg for the steps below.
           echo "VCPKG_ROOT=$MPT_VCPKG_DIR" >> "$GITHUB_ENV"
 
-      # MPT_REQUIRE_GC_WII: fail the configure step instead of silently skipping the
-      # GameCube SDK layer when no Clang toolchain is found (P1-21, E10).
+      # GX layer inputs (P1-21, E10): the verified aurora checkout and a headers-only Dawn
+      # prefix, so the null GX build, its scenes and the MTX goldens run under -Werror on both
+      # OSes (runtimes/gc_wii/gx/README.md). Windows keeps them on a short path: Dawn's and
+      # aurora's paths are long, and some MSVC tools stop at 260 characters.
+      - name: Set the GX source and Dawn paths
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then root="C:/mpt"; else root="$GITHUB_WORKSPACE/../mpt-gx"; fi
+          mkdir -p "$root"
+          echo "MPT_GX_SOURCES=$root/s" >> "$GITHUB_ENV"
+          echo "MPT_GX_DAWN=$root/dawn" >> "$GITHUB_ENV"
+
+      # A first configure without the GX inputs: it builds the source fetcher, which needs
+      # asset-import from the root project. GX is reported unavailable here, not an error.
+      - name: Configure (to build the source fetcher)
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build the source fetcher
+        run: cmake --build --preset ${{ matrix.preset }} --target mpt_fetch_sources
+
+      - name: Restore the verified aurora checkout
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MPT_GX_SOURCES }}/aurora
+          key: gx-aurora-${{ matrix.os }}-${{ hashFiles('runtimes/gc_wii/gx/aurora.lock') }}
+
+      # Runs on a cache hit too: the fetcher re-verifies the cached checkout's commit and tree.
+      - name: Fetch and verify aurora (aurora.lock)
+        shell: bash
+        run: |
+          tool="build/${{ matrix.preset }}/runtimes/gc_wii/gx/tools/mpt_fetch_sources"
+          [ -f "$tool.exe" ] && tool="$tool.exe"
+          "$tool" --lock runtimes/gc_wii/gx/aurora.lock --cache "$MPT_GX_SOURCES"
+
+      - name: Restore the verified musyx checkout
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MPT_GX_SOURCES }}/musyx
+          key: gc-musyx-${{ matrix.os }}-${{ hashFiles('runtimes/gc_wii/mp4/decomp.lock') }}
+
+      # MusyX only (ADR 0009, amendment after P1-13b). decomp.lock also pins Party Board, the
+      # MP4 game source, which public CI does not download. The fetcher reads a lock holding
+      # just the musyx entry, derived from decomp.lock here so the pin stays in one place, and
+      # verifies its commit and tree (also on a cache hit).
+      - name: Fetch and verify musyx (decomp.lock, musyx only)
+        shell: bash
+        run: |
+          py=$(command -v python3 || command -v python)
+          lock="$RUNNER_TEMP/musyx.lock"
+          "$py" - runtimes/gc_wii/mp4/decomp.lock "$lock" <<'PY'
+          import json, sys
+          lock = json.load(open(sys.argv[1], encoding="utf-8"))
+          lock["sources"] = [s for s in lock["sources"] if s["name"] == "musyx"]
+          if len(lock["sources"]) != 1:
+              sys.exit("decomp.lock has no single musyx entry")
+          json.dump(lock, open(sys.argv[2], "w", encoding="utf-8"), indent=2)
+          PY
+          tool="build/${{ matrix.preset }}/runtimes/gc_wii/gx/tools/mpt_fetch_sources"
+          [ -f "$tool.exe" ] && tool="$tool.exe"
+          "$tool" --lock "$lock" --cache "$MPT_GX_SOURCES"
+
+      - name: Restore the headers-only Dawn prefix
+        id: dawn-headers
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MPT_GX_DAWN }}
+          key: gx-dawn-headers-${{ matrix.os }}-${{ hashFiles('runtimes/gc_wii/gx/dawn.lock', 'runtimes/gc_wii/gx/tools/build_dawn.cmake') }}
+
+      # Only the generated WebGPU headers: seconds of work after the verified fetch, no compile.
+      # Dawn's sources are fetched only on a cache miss and are not cached themselves.
+      - name: Make the headers-only Dawn prefix (dawn.lock)
+        if: ${{ steps.dawn-headers.outputs.cache-hit != 'true' }}
+        shell: bash
+        run: |
+          tool="$PWD/build/${{ matrix.preset }}/runtimes/gc_wii/gx/tools/mpt_fetch_sources"
+          [ -f "$tool.exe" ] && tool="$tool.exe"
+          cmake "-DMPT_FETCH_TOOL=$tool" "-DMPT_SOURCE_CACHE=$MPT_GX_SOURCES" "-DMPT_DAWN_PREFIX=$MPT_GX_DAWN" \
+                -DMPT_DAWN_HEADERS_ONLY=ON -P runtimes/gc_wii/gx/tools/build_dawn.cmake
+
+      # MPT_REQUIRE_GC_WII, MPT_REQUIRE_GX and MPT_REQUIRE_MUSYX: a missing Clang, aurora or
+      # musyx checkout, or Dawn prefix fails the configure instead of silently skipping the
+      # layer (P1-21, E10).
       - name: Configure
-        run: cmake --preset ${{ matrix.preset }} -DMPT_REQUIRE_GC_WII=ON
+        run: >-
+          cmake --preset ${{ matrix.preset }} -DMPT_REQUIRE_GC_WII=ON -DMPT_REQUIRE_GX=ON -DMPT_REQUIRE_MUSYX=ON
+          "-DMPT_SOURCE_CACHE=${{ env.MPT_GX_SOURCES }}" "-DMPT_DAWN_PREFIX=${{ env.MPT_GX_DAWN }}"
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
