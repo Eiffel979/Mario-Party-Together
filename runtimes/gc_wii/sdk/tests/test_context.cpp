@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "../src/context.h"
+#include "mpt_gc/coro.h"
 #include "harness.h"
 
 using mpt::gc::detail::make_context;
@@ -215,4 +216,34 @@ TEST_CASE("a fresh context starts with the deterministic MXCSR") {
   }, nullptr);
   mpt::gc::detail::mpt_gc_switch_context(&g_host_sp, g_co_sp);
   CHECK(seen == mpt::gc::detail::kDeterministicMxcsr);
+}
+
+TEST_CASE("the coroutine C API nests a coroutine inside another and passes its argument") {
+  struct Co {
+    void* sp = nullptr;
+    void* back = nullptr;
+    int steps = 0;
+  };
+  static Co outer, inner;
+  static void* host = nullptr;
+  std::vector<std::byte> outer_stack(64 * 1024), inner_stack(64 * 1024);
+  inner.sp = mpt_gc_coro_make(inner_stack.data(), inner_stack.size(), [](void* arg) {
+    auto* self = static_cast<Co*>(arg);
+    for (;;) {
+      ++self->steps;
+      mpt_gc_coro_switch(&self->sp, outer.sp);
+    }
+  }, &inner);
+  outer.sp = mpt_gc_coro_make(outer_stack.data(), outer_stack.size(), [](void* arg) {
+    auto* self = static_cast<Co*>(arg);
+    for (;;) {
+      ++self->steps;
+      mpt_gc_coro_switch(&self->sp, inner.sp);  // inner switches straight back here
+      ++self->steps;
+      mpt_gc_coro_switch(&self->sp, host);
+    }
+  }, &outer);
+  for (int i = 0; i < 3; ++i) mpt_gc_coro_switch(&host, outer.sp);
+  CHECK(outer.steps == 6);
+  CHECK(inner.steps == 3);
 }
