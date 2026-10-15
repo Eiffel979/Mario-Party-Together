@@ -1,0 +1,43 @@
+Apply order 0016 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc: the copy-destination debug trap (ADR 0007 section 5), which has no ADR 0007 patch number.
+gx::g_copyTexObserver sees every GXCopyTex destination and its CPU-side size (debug trap hook).
+Contains code from aurora (MIT; see LICENSE-aurora in this folder). Applied in order by
+runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+
+diff --git a/lib/dolphin/gx/GXFrameBuffer.cpp b/lib/dolphin/gx/GXFrameBuffer.cpp
+index 43e8d890427febaeb44ec62b37a48d71cf77103c..48ae71d8e4589e3adb735005d1bb6d7e934bb177 100644
+--- a/lib/dolphin/gx/GXFrameBuffer.cpp
++++ b/lib/dolphin/gx/GXFrameBuffer.cpp
+@@ -31,6 +31,8 @@ aurora::Vec2<uint32_t> scale_copy_dst(u32 logicalWidth, u32 logicalHeight) {
+ }
+ } // namespace
+ 
++aurora::gx::CopyTexObserver aurora::gx::g_copyTexObserver = nullptr;
++
+ extern "C" {
+ GXRenderModeObj GXNtsc480IntDf = {
+     VI_TVMODE_NTSC_INT,
+@@ -163,6 +165,10 @@ void GXCopyDisp(void* dest, GXBool clear) {}
+ 
+ void GXCopyTex(void* dest, GXBool clear) {
+   aurora::gx::fifo::drain();
++  if (aurora::gx::g_copyTexObserver != nullptr) {
++    aurora::gx::g_copyTexObserver(dest, GXGetTexBufferSize(g_gxState.texCopyDstWidth, g_gxState.texCopyDstHeight,
++                                                           g_gxState.texCopyFmt, GX_FALSE, 0));
++  }
+ 
+   const auto rect = aurora::gx::map_logical_scissor(g_gxState.texCopySrc);
+   const auto [dstWidth, dstHeight] = scale_copy_dst(g_gxState.texCopyDstWidth, g_gxState.texCopyDstHeight);
+diff --git a/lib/gx/gx.hpp b/lib/gx/gx.hpp
+index 3a9a39497f245dbfe997f5d3a76cd098a722f195..704bdd70184f10b4788b4b113155f82755392bc1 100644
+--- a/lib/gx/gx.hpp
++++ b/lib/gx/gx.hpp
+@@ -410,6 +410,9 @@ struct ObjIdCounters {
+ ObjIdCounters get_obj_id_counters() noexcept;
+ void set_obj_id_counters(const ObjIdCounters& counters) noexcept;
+ void evict_copy_texture(const void* dest) noexcept;
++// Called by GXCopyTex with the destination and its CPU-side size in bytes (null by default).
++using CopyTexObserver = void (*)(void* dest, u32 size);
++extern CopyTexObserver g_copyTexObserver;
+ void evict_texture_object(u32 texObjId) noexcept;
+ void evict_tlut_object(u32 tlutObjId) noexcept;
+ Vec2<uint32_t> logical_fb_size() noexcept;
