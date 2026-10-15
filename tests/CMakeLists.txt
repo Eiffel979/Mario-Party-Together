@@ -8,6 +8,7 @@ add_executable(mpt_unit_tests
   unit/test_core.cpp
   unit/test_determinism.cpp
   unit/test_determinism_harness.cpp
+  unit/test_event_routing.cpp
   unit/test_dump_lane.cpp
   unit/test_gc_disc.cpp
   unit/test_fake_adapter.cpp
