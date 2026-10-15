@@ -12,7 +12,11 @@ foreach(_file IN LISTS _all)
   file(STRINGS "${_file}" _includes REGEX "^[ \t]*#[ \t]*include")
   file(RELATIVE_PATH _rel "${UI_DIR}" "${_file}")
   foreach(_line IN LISTS _includes)
-    if(_line MATCHES "runtimes/|adapters/|mpt/runtime|mpt/adapter|gc_wii|n64|_runtime\\.h|_adapter\\.h")
+    # Runtime and adapter headers: the directories, and the runtimes' public include
+    # prefixes (mpt/gc/, mpt_gc/, mpt/gx/, mpt_gx/, mpt/musyx). The core contracts under
+    # mpt/core/ (title_runtime.h, title_adapter.h) are core's public API and allowed.
+    if(_line MATCHES "runtimes/|adapters/|mpt/runtime|mpt/adapter|mpt/gc/|mpt_gc/|mpt/gx/|mpt_gx/|mpt/musyx|gc_wii|n64|_runtime\\.h|_adapter\\.h"
+       AND NOT _line MATCHES "[<\"]mpt/core/")
       # The bring-up test uses the qa-owned FakeRuntime from tests/support/ only.
       if(NOT (_rel MATCHES "^tests/" AND _line MATCHES "support/fake_"))
         list(APPEND _failures "${_rel}: ${_line}")
