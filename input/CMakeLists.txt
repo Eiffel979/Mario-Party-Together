@@ -4,10 +4,12 @@
 #                Does not link SDL3; input_core_purity checks it does not include it.
 # mpt_input_sdl  SDL3 device backend (keyboard + gamepad hot-plug) feeding the core.
 add_library(mpt_input
+  src/held_mask.cpp
   src/mapper.cpp
   src/names.cpp
   src/ports.cpp
   src/profile.cpp
+  src/reserved.cpp
 )
 add_library(mpt::input ALIAS mpt_input)
 target_include_directories(mpt_input PUBLIC include)
@@ -30,10 +32,12 @@ if(MPT_BUILD_TESTS)
   # Synthetic device state only; links the pure core, never SDL.
   add_executable(mpt_input_tests
     tests/main.cpp
+    tests/test_held_mask.cpp
     tests/test_mapper.cpp
     tests/test_names.cpp
     tests/test_ports.cpp
     tests/test_profile.cpp
+    tests/test_reserved.cpp
   )
   target_link_libraries(mpt_input_tests PRIVATE mpt::input doctest::doctest)
   mpt_set_warnings(mpt_input_tests)

@@ -4,6 +4,8 @@
 #include <cstdlib>
 #include <tuple>
 
+#include "mpt/input/reserved.h"
+
 namespace mpt::input {
 
 // Control i of the button block drives canonical Button bit i.
@@ -116,6 +118,7 @@ void accumulate(const ResolvedProfile& profile, const DeviceSnapshot& device, Po
     ControlValue& value = acc[c];
     for (const Source& s : profile.bindings[c]) {
       if (s.is_keyboard() != keyboard) continue;
+      if (is_reserved(s)) continue;  // host-owned even if a Profile built in code binds it
       switch (s.kind) {
         case Source::Kind::key:
           if (s.code < kKeyCount && device.keyboard.test(s.code)) value.digital = true;

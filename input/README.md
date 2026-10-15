@@ -20,7 +20,50 @@ SDL events ─► SdlInput (sdl_input.h)        host side, nondeterministic
 | `mpt::input_sdl` | `SdlInput`: keyboard + gamepad hot-plug, per-frame sampling | yes |
 
 The shell calls `SdlInput::handle_event` for every polled event and
-`SdlInput::sample(frame)` exactly once per emulated frame.
+`SdlInput::sample(frame)` exactly once per emulated frame. `sample()` strips
+reserved inputs and applies the held-input mask (below) before mapping.
+
+## Host-reserved pause action (`reserved.h`)
+Esc on the keyboard and Guide on a gamepad are the **host pause action**
+(ADR 0010 §3.2). They belong to the host, never to a title, so they never set a
+bit in an `InputFrame`, a replay or a netplay packet:
+- `parse_profile` rejects any binding of `key:escape` (also `key:#41`) or
+  `button:guide`, in base bindings and minigame overrides, with
+  "... is reserved for the host pause action and cannot be bound".
+- The mapper ignores reserved sources even in a `Profile` built in code.
+- `SdlInput::sample` clears them from the device snapshots before mapping.
+  (`snapshot()` stays raw, for the UI.)
+- The built-in default leaves `home` unbound.
+
+The shell asks `SdlInput::host_action(const SDL_Event&)`: it returns
+`HostAction::pause` for a non-repeat Esc key-down or a Guide button-down, and
+nullopt otherwise. The pure forms are `host_action_for(Source)`,
+`host_action_for_key(hid)` and `host_action_for_button(PadButton)`.
+
+## Held-input mask (`held_mask.h`)
+Buttons held when a screen closes or pause ends must not leak into the game
+(ADR 0010 §3.3): the South press that confirms "Resume" is still down when
+stepping restarts. The shell calls `SdlInput::mask_held_until_release()` at
+each point where game input resumes after host-side input:
+- resuming from pause (with or without the overlay);
+- a UI screen losing focus while a session runs;
+- starting a session (the "Launch" press);
+- the window regaining keyboard focus.
+
+Every key and gamepad button held at that moment is then cleared in the
+snapshots until it is released, and works normally from its next press.
+- **Digital physical sources only.** Masking is per key / per gamepad button,
+  whatever it is bound to, so it does not depend on the profile or minigame
+  override active when the frame is mapped. Another source for the same control
+  works at once (keyboard K presses A while pad South is masked). Keys bound to
+  stick directions are digital and are masked too.
+- **Axes are not masked.** Sticks and analog triggers report their position on
+  the first frame: a held stick is a deliberate hold, and menus do not leave it
+  "pressed". So an analog trigger past `trigger_button_threshold`, or an axis
+  bound to a button control, can press a button on the first frame.
+- A device unplugged while masked loses its mask. Captures merge.
+- The mask is host-side, left of the `InputFrame` boundary: the frames it
+  produces are what the replay records and what netplay sends.
 
 ## Conventions
 - **Sticks:** `PadState` stick values are -32767..32767 with **+X right, +Y up**
@@ -105,10 +148,11 @@ c_stick_left c_stick_right` (GameCube C-stick / right stick), `trigger_l trigger
   `kp_0`–`kp_9 kp_divide kp_multiply kp_minus kp_plus kp_enter kp_period`,
   `lctrl lshift lalt lgui rctrl rshift ralt rgui`. A key without a name is written
   `key:#<code>` with its decimal HID usage (0–511), for example `key:#100`.
+  `key:escape` is host-reserved and cannot be bound.
 - `button:<name>`: a gamepad button by position: `south east west north back guide
   start left_stick right_stick left_shoulder right_shoulder dpad_up dpad_down
   dpad_left dpad_right misc1 left_paddle1 right_paddle1 left_paddle2 right_paddle2
-  touchpad`.
+  touchpad`. `button:guide` is host-reserved and cannot be bound.
 - `axis:<name>+` / `axis:<name>-`: one half of a stick axis (`left_x left_y right_x
   right_y`, SDL orientation, +Y down). `axis:left_trigger` / `axis:right_trigger`.
 
