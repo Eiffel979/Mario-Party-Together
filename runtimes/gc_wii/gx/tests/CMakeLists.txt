@@ -72,18 +72,19 @@ target_compile_definitions(mpt_gx_mtx_tests PRIVATE _CRT_SECURE_NO_WARNINGS  # s
 target_compile_options(mpt_gx_mtx_tests PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${MPT_GX_WARN_FLAGS}>")
 add_test(NAME gx_mtx_golden COMMAND mpt_gx_mtx_tests)
 
-# The front end and MTX use no host libm transcendental or fma (ADR 0008 section 5).
+# The front end and MTX use no host libm transcendental or fma (ADR 0008 section 5). The SDK's
+# check is shared by every game-module library.
 get_filename_component(_mpt_gx_cc_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
 find_program(MPT_GX_NM NAMES llvm-nm nm HINTS "${_mpt_gx_cc_dir}")
 if(MPT_GX_NM)
   add_test(NAME gx_frontend_no_host_math
     COMMAND "${CMAKE_COMMAND}" "-DNM=${MPT_GX_NM}" "-DFILES=$<TARGET_FILE:mpt_gx_frontend>"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/check_no_host_math.cmake")
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/../../sdk/tests/check_no_host_math.cmake")
   # The check must catch plain host calls (it was blind to __imp_ symbols once): expected to fail.
   add_library(mpt_gx_host_math_probe OBJECT host_math_probe.c)
   add_test(NAME gx_no_host_math_detects_host_calls
     COMMAND "${CMAKE_COMMAND}" "-DNM=${MPT_GX_NM}" "-DFILES=$<TARGET_OBJECTS:mpt_gx_host_math_probe>"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/check_no_host_math.cmake")
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/../../sdk/tests/check_no_host_math.cmake")
   set_tests_properties(gx_no_host_math_detects_host_calls PROPERTIES WILL_FAIL ON)
   add_custom_target(mpt_gx_probes ALL)
   add_dependencies(mpt_gx_probes mpt_gx_host_math_probe)
