@@ -86,4 +86,27 @@ if(MPT_BUILD_TESTS)
   # RmlUi nor SDL (ADR 0010 §3.1, §4).
   add_test(NAME ui_include_boundary
     COMMAND "${CMAKE_COMMAND}" "-DUI_DIR=${CMAKE_CURRENT_SOURCE_DIR}" -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boundaries.cmake")
+
+  # The link check (below) catches a ui target that links a runtimes/ target: configure
+  # a tiny project that does, and one that does not.
+  foreach(_case violate clean)
+    set(_violate OFF)
+    if(_case STREQUAL "violate")
+      set(_violate ON)
+    endif()
+    add_test(NAME ui_link_boundary_selftest_${_case}
+      COMMAND "${CMAKE_COMMAND}" -S "${CMAKE_CURRENT_SOURCE_DIR}/tests/link_selftest"
+              -B "${CMAKE_CURRENT_BINARY_DIR}/link_selftest_${_case}" -G "${CMAKE_GENERATOR}"
+              "-DMPT_UI_LINK_CHECK=${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_link_boundary.cmake"
+              "-DVIOLATE=${_violate}")
+  endforeach()
+  set_tests_properties(ui_link_boundary_selftest_violate PROPERTIES
+    PASS_REGULAR_EXPRESSION "ui/ link boundary violated")
+  set_tests_properties(ui_link_boundary_selftest_clean PROPERTIES
+    PASS_REGULAR_EXPRESSION "ui link boundary: OK")
 endif()
+
+# No ui target links a runtimes/ or adapters/ target (ADR 0010 §3.1). Runtimes are added
+# after ui/, so the check runs once the whole tree is configured.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_link_boundary.cmake")
+cmake_language(DEFER DIRECTORY "${PROJECT_SOURCE_DIR}" CALL mpt_ui_check_link_boundary)
