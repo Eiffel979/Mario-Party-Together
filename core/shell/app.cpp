@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "audio_out.h"
+#include "event_routing.h"
 #include "frame_loop.h"
 #include "mpt/asset_import/build.h"
 #include "mpt/asset_import/importer.h"
@@ -249,17 +250,6 @@ int run_verify_replay(const AppOptions& options, const ShellTitles& titles) {
   return 0;
 }
 
-bool is_host_pause_action(const SDL_Event& e) {
-  // Host-reserved binding (ADR 0010 §3.2): Esc on the keyboard, Guide on a gamepad.
-  // Consumed here, before input/ sees the event.
-  if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.scancode == SDL_SCANCODE_ESCAPE) return true;
-  if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && e.gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE) return true;
-  return false;
-}
-
-bool is_device_event(const SDL_Event& e) {
-  return e.type == SDL_EVENT_GAMEPAD_ADDED || e.type == SDL_EVENT_GAMEPAD_REMOVED;
-}
 
 class Shell final : public IShellCommands {
  public:
@@ -302,10 +292,11 @@ class Shell final : public IShellCommands {
       const std::uint64_t t0 = SDL_GetTicksNS();
       if (loop_) {
         const bool ui_focus = overlay_ && overlay_->hasFocus();
-        // Leaving a UI screen starts a new pacing segment, as resuming from pause does, so
-        // the frames that were not stepped are not caught up in a burst.
-        if (had_ui_focus_ && !ui_focus) pacer_.reset(SDL_GetTicksNS());
-        had_ui_focus_ = ui_focus;
+        // Game input becoming live again (resume, a screen losing focus) masks what is
+        // held, so the press that resumed never reaches the game (ADR 0010 §3.3), and
+        // starts a new pacing segment, so the frames not stepped are not caught up in a
+        // burst. This runs before tick(), so before the next sample().
+        if (input_gate_.update(!loop_->paused() && !ui_focus, input_)) pacer_.reset(SDL_GetTicksNS());
         const FrameLoop::Tick tick = loop_->tick(ui_focus);
         if (tick == FrameLoop::Tick::stepped) {
           stepped = true;
@@ -413,6 +404,11 @@ class Shell final : public IShellCommands {
     loop_ = std::make_unique<FrameLoop>(*session_, std::move(hooks), recorder);
     // A pad plugged in mid-party must not add a player (input/ ports.h).
     input_.ports().set_auto_assign(false);
+    // Whatever is held as the session starts (the launcher's confirm press) is not a press
+    // in the game. Explicit here because a stop and a start can fall in one iteration,
+    // which the gate below would not see as an edge.
+    input_.mask_held_until_release();
+    input_gate_ = GameInputGate{};
     pacer_.reset(SDL_GetTicksNS());
     std::printf("session: %s, seed %llu\n", std::string(to_string(config.dump.title)).c_str(),
                 static_cast<unsigned long long>(config.runtime.seed));
@@ -490,32 +486,24 @@ class Shell final : public IShellCommands {
       loop_->pause();
       audio_.pause();
     } else {
-      loop_->resume();
+      loop_->resume();  // the input gate masks held inputs and resets pacing before the next step
       audio_.resume();
-      pacer_.reset(SDL_GetTicksNS());
     }
   }
 
   void poll_events() {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
-      if (e.type == SDL_EVENT_QUIT) {
-        running_ = false;
-        continue;
+      switch (route_event(e, overlay_, input_)) {  // event_routing.h
+        case EventOutcome::quit:
+          running_ = false;
+          break;
+        case EventOutcome::toggle_pause:
+          if (loop_) set_paused(!loop_->paused());
+          break;
+        case EventOutcome::none:
+          break;
       }
-      if (is_device_event(e)) input_.handle_event(e);  // hot-plug bookkeeping always runs
-      const bool ui_focus = overlay_ && overlay_->hasFocus();
-      if (ui_focus) {
-        overlay_->handleEvent(e);
-        continue;
-      }
-      if (is_host_pause_action(e)) {
-        // Offered to the UI first (it opens the pause screen); without a UI the shell
-        // toggles pause itself. Either way input/ never sees it.
-        if (!(overlay_ && overlay_->handleEvent(e)) && loop_) set_paused(!loop_->paused());
-        continue;
-      }
-      if (!is_device_event(e)) input_.handle_event(e);
     }
   }
 
@@ -558,7 +546,7 @@ class Shell final : public IShellCommands {
   AudioOut audio_;
   FramePacer pacer_;
   IOverlay* overlay_ = nullptr;
-  bool had_ui_focus_ = false;
+  GameInputGate input_gate_;
 
   std::unique_ptr<Session> session_;
   std::unique_ptr<FrameLoop> loop_;
