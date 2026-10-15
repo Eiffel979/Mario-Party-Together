@@ -32,6 +32,9 @@ void mpt_mp4_game_main(void);
 
 /* CARDInit from the console SDK's declaration (aurora declares a two-argument form). */
 void mpt_mp4_CARDInit(void);
+/* AIInitDMA and AIGetDMAStartAddr with host pointers (aurora declares them with 32-bit addresses). */
+void mpt_mp4_AIInitDMA(void* start, unsigned int length);
+void* mpt_mp4_AIGetDMAStartAddr(void);
 
 #ifdef __cplusplus
 }

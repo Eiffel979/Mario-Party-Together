@@ -3,19 +3,60 @@ THP: the SDK's decoder and a defined return
 Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
 
 diff --git a/src/game/THPSimple.c b/src/game/THPSimple.c
-index 675d9e9aab48c58adb92482ac02e4d651cfed069..4b5e65dd8667bb3acfe18114517a6c5d3c21f3e0 100755
+index 675d9e9aab48c58adb92482ac02e4d651cfed069..96566e65fa304432a3c39b0b0d9dee88369f42b8 100755
 --- a/src/game/THPSimple.c
 +++ b/src/game/THPSimple.c
-@@ -1,6 +1,9 @@
+@@ -1,6 +1,15 @@
  #include "game/THPSimple.h"
  #include "game/THPDraw.h"
  #include <string.h>
 +#ifdef MPT_PC
 +#include "mpt_gc/thp.h" /* THPInit and the decoders: the SDK's own (ADR 0007 section 4) */
++#include "mpt_mp4_port.h" /* AI DMA with host pointers */
++#define MPT_AI_INIT_DMA(buf, len) mpt_mp4_AIInitDMA((buf), (len))
++#define MPT_AI_DMA_START() ((u8 *)mpt_mp4_AIGetDMAStartAddr())
++#else
++#define MPT_AI_INIT_DMA(buf, len) AIInitDMA((u32)(buf), (len))
++#define MPT_AI_DMA_START() ((u8 *)AIGetDMAStartAddr() + 0x80000000)
 +#endif
  
  #define ALIGN32(val) (((val) + 0x1F) & ~0x1F)
  
+@@ -43,7 +52,7 @@ s32 THPSimpleInit(s32 arg0) {
+     if (AudioSystem == 0) {
+         memset(SoundBuffer, 0, sizeof(SoundBuffer));
+         DCFlushRange(SoundBuffer, sizeof(SoundBuffer));
+-        AIInitDMA((u32) &SoundBuffer[SoundBufferIndex], sizeof(SoundBuffer[0]));
++        MPT_AI_INIT_DMA(&SoundBuffer[SoundBufferIndex], sizeof(SoundBuffer[0]));
+         AIStartDMA();
+     }
+     Initialized = 1;
+@@ -598,7 +607,7 @@ static void THPAudioMixCallback(void) {
+ 
+     if (AudioSystem == 0) {
+         SoundBufferIndex ^= 1;
+-        AIInitDMA((u32) SoundBuffer[SoundBufferIndex], sizeof(SoundBuffer[0]));
++        MPT_AI_INIT_DMA(SoundBuffer[SoundBufferIndex], sizeof(SoundBuffer[0]));
+         temp_r31 = OSEnableInterrupts();
+         MixAudio(SoundBuffer[SoundBufferIndex], 0, 0xA0);
+         DCFlushRange(SoundBuffer[SoundBufferIndex], sizeof(SoundBuffer[0]));
+@@ -609,13 +618,13 @@ static void THPAudioMixCallback(void) {
+                 CurAudioBuffer = LastAudioBuffer;
+             }
+             OldAIDCallback();
+-            LastAudioBuffer = (u8*) AIGetDMAStartAddr() + 0x80000000;
++            LastAudioBuffer = MPT_AI_DMA_START();
+         } else {
+             OldAIDCallback();
+-            CurAudioBuffer = (u8*) AIGetDMAStartAddr() + 0x80000000;
++            CurAudioBuffer = MPT_AI_DMA_START();
+         }
+         SoundBufferIndex ^= 1;
+-        AIInitDMA((u32) SoundBuffer[SoundBufferIndex], sizeof(SoundBuffer[0]));
++        MPT_AI_INIT_DMA(SoundBuffer[SoundBufferIndex], sizeof(SoundBuffer[0]));
+         temp_r31 = OSEnableInterrupts();
+         if (CurAudioBuffer) {
+             DCInvalidateRange(CurAudioBuffer, sizeof(SoundBuffer[0]));
 diff --git a/src/game/thpmain.c b/src/game/thpmain.c
 index ad131f7256d9ae079fe3d9a2ea0c2cdbe91c6b81..d978696359731c18222a8e9a778181e58f93f162 100755
 --- a/src/game/thpmain.c
