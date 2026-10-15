@@ -9,3 +9,12 @@ add_executable(mpt_mp4_rel_tests test_rel_isolation.c ../src/rel_loader.c ${MPT_
 target_include_directories(mpt_mp4_rel_tests PRIVATE ../include)
 target_link_libraries(mpt_mp4_rel_tests PRIVATE ${MPT_MP4_TEST_REL_LIBS})
 add_test(NAME mp4_rel_isolation COMMAND mpt_mp4_rel_tests)
+
+# The C ABI as a host sees it: load the module and call through mpt_mp4_get_api (no dump).
+add_executable(mpt_mp4_abi_tests test_abi.c)
+target_include_directories(mpt_mp4_abi_tests PRIVATE ../include)
+if(NOT WIN32)
+  target_link_libraries(mpt_mp4_abi_tests PRIVATE ${CMAKE_DL_LIBS})
+endif()
+add_dependencies(mpt_mp4_abi_tests mp4_game)
+add_test(NAME mp4_game_abi COMMAND mpt_mp4_abi_tests "$<TARGET_FILE:mp4_game>")
