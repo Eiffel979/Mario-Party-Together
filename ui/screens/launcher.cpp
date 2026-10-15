@@ -263,6 +263,9 @@ class Launcher final : public shell::IOverlay {
 
     const shell::SessionStatus status = host_.status();
     flow_.sync(SessionView{status.running, status.paused, status.start_failures, status.last_error});
+    // Phase 1: seats change only while no session runs (the shell also turns input/'s
+    // auto-assign off for the session).
+    seating_.set_locked(status.running);
     if (flow_.resuming() && flow_.resume_ready(any_input_held(), now_ns)) host_.commands->requestResume();
 
     if (import_.poll()) on_import_changed();
@@ -424,7 +427,7 @@ class Launcher final : public shell::IOverlay {
 
   void start_party() {
     LibraryEntry* entry = selected_ ? library_.at(*selected_) : nullptr;
-    if (!entry || !entry->verified || !seating_.ready() || flow_.starting()) return;
+    if (!entry || !entry->verified || !seating_.ready() || seating_.locked() || flow_.starting()) return;
     flow_.begin_start(host_.status().start_failures);
     shell::StartRequest request;
     request.dump = *entry->verified;  // from asset_import::make_verified; the shell picks the seed
@@ -631,9 +634,11 @@ class Launcher final : public shell::IOverlay {
       ports.push_back(PortRow{"Player " + std::to_string(p + 1), seats[p].summary(), seats[p].seated});
     }
     set("ports", view_.ports, std::move(ports));
-    set("seat_ready", view_.seat_ready, seating_.ready() && entry && entry->verified.has_value());
+    set("seat_ready", view_.seat_ready,
+        seating_.ready() && !seating_.locked() && entry && entry->verified.has_value());
     set("seat_starting", view_.seat_starting, flow_.starting());
-    set("seat_note", view_.seat_note, seating_.cpu_note());
+    set("seat_note", view_.seat_note,
+        seating_.locked() ? std::string("Seats are locked while a game is running.") : seating_.cpu_note());
     set("seat_status", view_.seat_status,
         Rml::String(flow_.starting() ? "Starting the game..." : (flow_.screen() == Screen::seating ? flow_.message() : "")));
 
