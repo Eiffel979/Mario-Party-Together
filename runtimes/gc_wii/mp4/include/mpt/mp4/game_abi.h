@@ -70,6 +70,8 @@ typedef enum MptMp4VideoBackend {
 #define MPT_MP4_BOOT_SKIP_BOOT_SEQUENCE 0x1u          /* straight to mode select */
 #define MPT_MP4_BOOT_UNLOCK_ALL_MINIGAMES 0x2u
 #define MPT_MP4_BOOT_UNLOCK_BOWSERS_GNARLY_PARTY 0x4u
+/* Debug: trap CPU reads of GXCopyTex destinations (ADR 0007 section 5); a read faults the step. */
+#define MPT_MP4_BOOT_DEBUG_COPY_TRAP 0x100u
 
 typedef struct MptMp4BootConfig {
   uint32_t struct_size;

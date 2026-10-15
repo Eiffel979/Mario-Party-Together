@@ -18,3 +18,8 @@ if(NOT WIN32)
 endif()
 add_dependencies(mpt_mp4_abi_tests mp4_game)
 add_test(NAME mp4_game_abi COMMAND mpt_mp4_abi_tests "$<TARGET_FILE:mp4_game>")
+
+# The copy-destination debug trap on the real GXCopyTex (null renderer).
+add_executable(mpt_mp4_copy_trap_tests test_copy_trap.cpp ../src/copy_trap.cpp)
+target_link_libraries(mpt_mp4_copy_trap_tests PRIVATE mpt::gx)
+add_test(NAME mp4_copy_trap COMMAND mpt_mp4_copy_trap_tests)
