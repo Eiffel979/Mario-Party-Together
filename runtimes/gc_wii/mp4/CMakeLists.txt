@@ -124,7 +124,7 @@ list(TRANSFORM GAME_FILES PREPEND "${MPT_MP4_PB}/")
 list(APPEND GAME_FILES "${MPT_MP4_PB}/src/port/byteswap.cpp")
 list(TRANSFORM MPT_MP4_MSM_FILES PREPEND "${MPT_MP4_PB}/")
 # Our replacements for Party Board's port layer (include/mpt_mp4_port.h) and its coroutines.
-set(MPT_MP4_PORT_FILES src/port.c src/sdk_bridge.c src/libco.c src/layout_check.c)
+set(MPT_MP4_PORT_FILES src/port.c src/sdk_bridge.c src/libco.c src/layout_check.c src/game_reads.c)
 add_library(mpt_mp4_dol OBJECT ${GAME_FILES} ${MPT_MP4_MSM_FILES} ${MPT_MP4_PORT_FILES})
 target_link_libraries(mpt_mp4_dol PRIVATE mpt_mp4_game_flags)
 
@@ -166,9 +166,31 @@ add_library(mp4_game SHARED
   ${MPT_MP4_REL_INFOS}
   "${CMAKE_CURRENT_BINARY_DIR}/generated/mpt_mp4_rel_table.c"
   src/rel_loader.c
-  src/game_data.c)
-target_link_libraries(mp4_game PRIVATE mpt_mp4_game_flags ${MPT_MP4_REL_LIBS} mpt::gx mpt_musyx_core)
+  src/game_data.c
+  src/abi.cpp)
+target_link_libraries(mp4_game PRIVATE mpt_mp4_game_flags ${MPT_MP4_REL_LIBS} mpt::gx mpt::musyx)
 set_target_properties(mp4_game PROPERTIES C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden PREFIX "")
+target_include_directories(mp4_game PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+
+# The build fingerprint save states and golden trails are keyed by (ADR 0008 section 10, ADR 0009): the
+# pinned sources, every patch applied to them, the GX backend and the compiler.
+set(_fp "${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION};${MPT_GX_BACKEND}")
+foreach(_f "${CMAKE_CURRENT_SOURCE_DIR}/decomp.lock" "${CMAKE_CURRENT_SOURCE_DIR}/../gx/aurora.lock")
+  file(SHA256 "${_f}" _h)
+  string(APPEND _fp ";${_h}")
+endforeach()
+file(GLOB _fp_patches "${CMAKE_CURRENT_SOURCE_DIR}/patches/partyboard/*.patch"
+                      "${CMAKE_CURRENT_SOURCE_DIR}/../gx/patches/aurora/*.patch")
+list(SORT _fp_patches)
+foreach(_f IN LISTS _fp_patches)
+  file(SHA256 "${_f}" _h)
+  string(APPEND _fp ";${_h}")
+endforeach()
+string(SHA256 _fp_hash "${_fp}")
+string(SUBSTRING "${_fp_hash}" 0 16 _fp_hash)
+set(MPT_MP4_BUILD_ID "mp4-${_fp_hash}" CACHE INTERNAL "MP4 game module build fingerprint")
+target_compile_definitions(mp4_game PRIVATE "MPT_MP4_BUILD_ID=\"${MPT_MP4_BUILD_ID}\"")
+message(STATUS "runtimes/gc_wii/mp4: build ID ${MPT_MP4_BUILD_ID}")
 
 # Every object library, for compile-only builds.
 add_custom_target(mpt_mp4_objects)
