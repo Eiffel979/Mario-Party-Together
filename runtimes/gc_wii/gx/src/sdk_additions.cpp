@@ -110,4 +110,6 @@ void set_object_id_counters(const ObjectIdCounters& counters) {
   aurora::gx::set_obj_id_counters({counters.next_tex_obj_id, counters.next_tlut_obj_id});
 }
 
+void set_copy_tex_observer(CopyTexObserver observer) { aurora::gx::g_copyTexObserver = observer; }
+
 }  // namespace mpt::gx

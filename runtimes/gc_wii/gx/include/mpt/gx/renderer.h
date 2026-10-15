@@ -71,4 +71,9 @@ struct ObjectIdCounters {
 ObjectIdCounters object_id_counters();
 void set_object_id_counters(const ObjectIdCounters& counters);
 
+// Debug hook for the copy-destination trap (ADR 0007 section 5): called by GXCopyTex with each
+// destination and its CPU-side size in bytes. nullptr (the default) turns it off.
+using CopyTexObserver = void (*)(void* dest, uint32_t size);
+void set_copy_tex_observer(CopyTexObserver observer);
+
 }  // namespace mpt::gx
