@@ -52,6 +52,7 @@ ImportFlow::ImportFlow(ImportBackend& backend, bool run_inline) : backend_(backe
 
 ImportFlow::~ImportFlow() {
   cancel_ = true;
+  backend_.interrupt();
   join();
 }
 
@@ -84,6 +85,7 @@ void ImportFlow::cancel() {
   if (!busy()) return;
   cancel_ = true;
   state_ = State::cancelling;
+  backend_.interrupt();
 }
 
 void ImportFlow::reset() {
