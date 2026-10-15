@@ -123,7 +123,9 @@ list(TRANSFORM GAME_FILES PREPEND "${MPT_MP4_PB}/")
 # Party Board port code we reuse unchanged: the 64-bit HSF model-format conversion (P1-15 piece 4).
 list(APPEND GAME_FILES "${MPT_MP4_PB}/src/port/byteswap.cpp")
 list(TRANSFORM MPT_MP4_MSM_FILES PREPEND "${MPT_MP4_PB}/")
-add_library(mpt_mp4_dol OBJECT ${GAME_FILES} ${MPT_MP4_MSM_FILES})
+# Our replacements for Party Board's port layer (include/mpt_mp4_port.h) and its coroutines.
+set(MPT_MP4_PORT_FILES src/port.c src/sdk_bridge.c src/libco.c)
+add_library(mpt_mp4_dol OBJECT ${GAME_FILES} ${MPT_MP4_MSM_FILES} ${MPT_MP4_PORT_FILES})
 target_link_libraries(mpt_mp4_dol PRIVATE mpt_mp4_game_flags)
 
 # ---- RELs: compiled separately, then isolated (tools/isolate_rel.cmake) ---------------------------
@@ -148,6 +150,14 @@ foreach(_f IN LISTS REL_FILES)
   endif()
 endforeach()
 list(REMOVE_DUPLICATES MPT_MP4_RELS)
+
+# The game core's writable data goes to its own range too (src/game_section.h, src/game_data.c).
+if(_rel_format STREQUAL "coff")
+  set(_game_fi "/FI${CMAKE_CURRENT_SOURCE_DIR}/src/game_section.h")
+else()
+  set(_game_fi -include "${CMAKE_CURRENT_SOURCE_DIR}/src/game_section.h")
+endif()
+target_compile_options(mpt_mp4_dol PRIVATE ${_nobss} ${_game_fi})
 set(_rel_dir "${CMAKE_CURRENT_BINARY_DIR}/rels")
 set(MPT_MP4_REL_LIBS "")
 set(MPT_MP4_REL_INFOS "")
@@ -207,7 +217,8 @@ add_library(mp4_game SHARED
   $<TARGET_OBJECTS:mpt_mp4_dol>
   ${MPT_MP4_REL_INFOS}
   "${CMAKE_CURRENT_BINARY_DIR}/generated/mpt_mp4_rel_table.c"
-  src/rel_loader.c)
+  src/rel_loader.c
+  src/game_data.c)
 target_link_libraries(mp4_game PRIVATE mpt_mp4_game_flags ${MPT_MP4_REL_LIBS} mpt::gx mpt_musyx_core)
 set_target_properties(mp4_game PROPERTIES C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden PREFIX "")
 
