@@ -2,10 +2,10 @@
 
 #include <doctest/doctest.h>
 
-#include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
-#include <thread>
+#include <mutex>
 
 #include "mpt/ui/model/import_flow.h"
 
@@ -45,7 +45,11 @@ class FakeBackend final : public ImportBackend {
     ++builds;
     progress(ai::BuildProgress{"Compiling", 0, 2, 0.5, "half"});
     if (wait_for_cancel) {
-      while (!cancelled()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      std::unique_lock lock(mutex_);
+      started_ = true;
+      changed_.notify_all();
+      // Like a long build step that stops when cancelled; interrupt() wakes it.
+      changed_.wait(lock, [&] { return cancelled(); });
       error = "cancelled";
       return std::nullopt;
     }
@@ -59,6 +63,22 @@ class FakeBackend final : public ImportBackend {
     outcome.manifest.dump_sha256 = kSha;
     return outcome;
   }
+
+  // Blocks until a wait_for_cancel build is running inside build().
+  void wait_until_started() {
+    std::unique_lock lock(mutex_);
+    changed_.wait(lock, [&] { return started_; });
+  }
+  // ImportFlow calls this after setting its cancel flag.
+  void interrupt() override {
+    const std::lock_guard lock(mutex_);
+    changed_.notify_all();
+  }
+
+ private:
+  std::mutex mutex_;
+  std::condition_variable changed_;
+  bool started_ = false;
 };
 
 fs::path fake_build_dir() {
@@ -166,19 +186,16 @@ TEST_CASE("the worker thread reports progress and can be cancelled") {
   ImportFlow flow(backend);
   flow.start("x.iso");
   CHECK(flow.busy());
-  // Wait until the build has started (its first progress event arrives).
-  for (int i = 0; i < 2000 && flow.progress().stage != "Compiling"; ++i) {
-    flow.poll();
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
-  REQUIRE(flow.progress().stage == "Compiling");
+  // The build is running once the backend says so; its events are queued by then.
+  backend.wait_until_started();
+  flow.poll();
+  CHECK(flow.progress().stage == "Compiling");
   CHECK(flow.state() == ImportFlow::State::building);
   flow.cancel();
   CHECK(flow.state() == ImportFlow::State::cancelling);
-  for (int i = 0; i < 2000 && flow.busy(); ++i) {
-    flow.poll();
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
+  flow.wait_for_worker();
+  flow.poll();
+  CHECK_FALSE(flow.busy());
   REQUIRE(flow.rejection());
   CHECK(flow.rejection()->kind == RejectKind::cancelled);
 }
@@ -190,6 +207,7 @@ TEST_CASE("destroying the flow mid-build stops and joins the worker") {
   {
     ImportFlow flow(backend);
     flow.start("x.iso");
+    backend.wait_until_started();
   }
-  CHECK(true);  // reaching here means the destructor did not hang
+  CHECK(backend.builds == 1);  // reaching here means the destructor cancelled and joined
 }

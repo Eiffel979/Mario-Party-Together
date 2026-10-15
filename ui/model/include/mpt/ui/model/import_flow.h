@@ -39,6 +39,10 @@ class ImportBackend {
                                                           const asset_import::ProgressCallback& progress,
                                                           const std::function<bool()>& cancelled,
                                                           std::string& error) = 0;
+  // Called on the main thread right after the flow sets its cancel flag, so a backend
+  // that blocks can wake up and check it. BuildCache polls the flag, so the default
+  // does nothing.
+  virtual void interrupt() {}
 };
 
 // Why a dump was not accepted. Each kind has its own heading; the message under it is
@@ -102,6 +106,9 @@ class ImportFlow {
   bool poll();
   // Back to idle once done or rejected.
   void reset();
+  // Blocks until the worker has posted its last event (then poll() applies them all).
+  // For tests and shutdown; the launcher never blocks on it.
+  void wait_for_worker() { join(); }
 
   State state() const { return state_; }
   bool busy() const { return state_ == State::identifying || state_ == State::building || state_ == State::cancelling; }
