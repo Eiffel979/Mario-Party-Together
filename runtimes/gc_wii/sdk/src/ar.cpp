@@ -135,11 +135,7 @@ void ARQPostRequest(ARQRequest* request, u32 owner, u32 type, u32 priority, uint
   request->next = nullptr;
   request->owner = owner;
   request->type = type;
-  request->priority = priority;
-  request->source = source;
-  request->dest = dest;
-  request->length = length;
-  request->callback = callback;
+  request->priority = priority;  // nothing past here: see ar.h
   if (type == ARQ_TYPE_MRAM_TO_ARAM) {
     copy(ARAM_DIR_MRAM_TO_ARAM, source, static_cast<u32>(dest), length, "ARQPostRequest");
   } else {

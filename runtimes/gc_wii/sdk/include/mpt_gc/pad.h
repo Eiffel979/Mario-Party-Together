@@ -40,6 +40,9 @@ MPT_GC_EXTERN_C_BEGIN
 #define PAD_MOTOR_RUMBLE 1u
 #define PAD_MOTOR_STOP_HARD 2u
 
+/* The layout of the pinned aurora headers that game code compiles against (ADR 0007 section 6): the
+ * console's 12 bytes plus aurora's extButton, so PADRead's array has a 16-byte stride. The MP4 module
+ * asserts it against those headers. */
 typedef struct PADStatus {
   u16 button;
   s8 stickX;
@@ -51,6 +54,7 @@ typedef struct PADStatus {
   u8 analogA;
   u8 analogB;
   s8 err;
+  u32 extButton; /* aurora extension; always 0 */
 } PADStatus;
 
 BOOL PADInit(void);

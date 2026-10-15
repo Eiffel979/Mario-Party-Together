@@ -8,6 +8,7 @@ add_library(mpt_gc_sdk STATIC
   src/file_source.cpp
   src/gc_math.cpp
   src/heap.cpp
+  src/layout.cpp
   src/os.cpp
   src/sdk.cpp
   src/thp.cpp
