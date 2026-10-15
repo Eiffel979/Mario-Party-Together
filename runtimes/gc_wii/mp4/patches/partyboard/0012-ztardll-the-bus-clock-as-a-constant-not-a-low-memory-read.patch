@@ -1,0 +1,21 @@
+Apply order 0012 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+ztardll: the bus clock as a constant, not a low-memory read
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+diff --git a/src/REL/ztardll/main.c b/src/REL/ztardll/main.c
+index e5eaf9671b10b41d1f7aaaaeed3bae3dfd799de1..1dd004e03f8d58006c81890821389f7d63c21a16 100644
+--- a/src/REL/ztardll/main.c
++++ b/src/REL/ztardll/main.c
+@@ -1120,7 +1120,12 @@ void fn_1_51BC(s16 arg0)
+         var_r29 = OSGetTick();
+         while (TRUE) {
+             if ((msmMusGetNumPlay(1) != 0) || (msmSeGetNumPlay(1) != 0)) {
++#ifdef MPT_PC
++                /* the bus clock the console's OS writes to low memory (0x800000F8) */
++                if (((OSGetTick() - var_r29) / (OS_BUS_CLOCK / 4 / 1000)) >= 0x1F4) {
++#else
+                 if (((OSGetTick() - var_r29) / (*((u32 *)0x800000F8) / 4 / 1000)) >= 0x1F4) {
++#endif
+                     break;
+                 }
+             }

@@ -1,0 +1,30 @@
+Apply order 0011 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+card: initialise the SDK's card
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+diff --git a/src/game/card.c b/src/game/card.c
+index cb273fc1cd76b3b82762520234c49ddae9ddd56a..e4a92d869d3e257ed03fe8ca2e29c4f34f5814cc 100644
+--- a/src/game/card.c
++++ b/src/game/card.c
+@@ -3,7 +3,9 @@
+ #include "game/card.h"
+ #include "version.h"
+ 
+-#ifdef TARGET_PC
++#ifdef MPT_PC
++#include "mpt_mp4_port.h"
++#elif defined(TARGET_PC)
+ #include "port/settings.h"
+ #endif
+ 
+@@ -14,7 +16,9 @@ static void MountCallBack(s32 chan, s32 result);
+ 
+ void HuCardInit(void)
+ {
+-#ifdef TARGET_PC
++#ifdef MPT_PC
++	mpt_mp4_CARDInit(); /* the SDK's card is the session's save media (ADR 0004) */
++#elif defined(TARGET_PC)
+         CARDSetLoadType(partyboard_settings_card_file_type());
+         CARDInit("Party Board", "mariopartyrd");
+ #else

@@ -27,6 +27,11 @@ const MptMp4RelInfo* mpt_mp4_rel_link(const char* name);
 void mpt_mp4_rel_object_setup(const MptMp4RelInfo* rel);
 void mpt_mp4_rel_unlink(const MptMp4RelInfo* rel);
 
+/* The game core's writable data (the DOL, msm and the port files; src/game_data.c). Together with
+ * every REL's range, this is the game state outside the SDK arena. */
+unsigned char* mpt_mp4_game_data_lo(void);
+unsigned char* mpt_mp4_game_data_hi(void);
+
 /* The generated table (mpt_mp4_rel_table.c). */
 extern const MptMp4RelInfo* const mpt_mp4_rel_table[];
 extern const unsigned mpt_mp4_rel_count;
