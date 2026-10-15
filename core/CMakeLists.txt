@@ -23,12 +23,14 @@ mpt_set_warnings(mpt_replay_check)
 # save files. Headless tests link it. It uses SDL types only for the UI seams
 # (shell/overlay.h) and never initializes SDL.
 add_library(mpt_shell_core
+  shell/durable_file.cpp
+  shell/event_routing.cpp
   shell/frame_loop.cpp
   shell/save_store.cpp
 )
 add_library(mpt::shell_core ALIAS mpt_shell_core)
 target_include_directories(mpt_shell_core PUBLIC shell)
-target_link_libraries(mpt_shell_core PUBLIC mpt::core SDL3::SDL3)
+target_link_libraries(mpt_shell_core PUBLIC mpt::core mpt::input_sdl SDL3::SDL3)
 mpt_set_warnings(mpt_shell_core)
 
 # The windowed shell: SDL loop, presenter, audio, input, CLI. Linked by the real
