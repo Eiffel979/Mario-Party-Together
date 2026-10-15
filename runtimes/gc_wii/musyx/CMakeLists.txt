@@ -121,7 +121,17 @@ set_target_properties(mpt_musyx_core PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRE
 target_compile_definitions(mpt_musyx_core PUBLIC
   MUSY_TARGET=0  # MUSY_TARGET_PC
   MUSY_VERSION_MAJOR=${_vmaj} MUSY_VERSION_MINOR=${_vmin} MUSY_VERSION_PATCH=${_vpat}
-  PRIVATE NDEBUG _USE_MATH_DEFINES)
+  PRIVATE NDEBUG)
+# musyx uses M_PI (hw_pc.c resampler table, hardware.c), which is not ISO C: the
+# UCRT defines it only with _USE_MATH_DEFINES and glibc only in its _DEFAULT_SOURCE/
+# _GNU_SOURCE/_XOPEN_SOURCE modes, which our strict C11 build does not enable.
+# We define it ourselves, on every OS, with the exact token sequence both C
+# libraries use. So the value (and the resampler table and hash it feeds) is
+# identical everywhere, a later identical #define in <math.h> is a benign
+# redefinition, and no other declaration or feature macro changes: unlike
+# _DEFAULT_SOURCE, which would expose BSD/SVID/POSIX declarations to every musyx
+# unit on Linux only, or _USE_MATH_DEFINES, which works only on Windows.
+target_compile_definitions(mpt_musyx_core PRIVATE "M_PI=3.14159265358979323846")
 
 # mpt_musyx: the C++ AudioEngine adapter (host-side setup: section bounds, reset).
 add_library(mpt_musyx STATIC src/musyx_engine.cpp include/mpt/gc/musyx_engine.h)
