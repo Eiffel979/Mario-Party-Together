@@ -18,6 +18,7 @@
 #include "mpt/gc/musyx_engine.h"
 #include "mpt/gc/sdk.h"
 #include "mpt/gx/renderer.h"
+#include "copy_trap.h"
 #include "mpt_mp4_port.h"
 #include "mpt_mp4_reads.h"
 #include "mpt_mp4_rel.h"
@@ -39,6 +40,8 @@ struct MptMp4Game {
   std::unique_ptr<mpt::gx::Renderer> renderer;
   mpt::gx::FrameImage image;
   std::vector<std::int16_t> audio;
+  bool copy_trap = false;
+  std::string fault;  // the module's own faults (copy trap); the SDK's otherwise
   MptMp4ReportFn report = nullptr;
   void* report_user = nullptr;
 };
@@ -182,6 +185,10 @@ MptMp4Status create(const MptMp4BootConfig* config, MptMp4Game** out, MptMp4Erro
   game->sdk->setReportSink([g = game.get()](const char* text) {
     if (g->report != nullptr) g->report(g->report_user, text);
   });
+  if ((config->flags & MPT_MP4_BOOT_DEBUG_COPY_TRAP) != 0) {
+    mpt::mp4::copy_trap_enable();
+    game->copy_trap = true;
+  }
   g_game = game.release();
   *out = g_game;
   return MPT_MP4_OK;
@@ -189,6 +196,7 @@ MptMp4Status create(const MptMp4BootConfig* config, MptMp4Game** out, MptMp4Erro
 
 void destroy(MptMp4Game* game) {
   if (game == nullptr || game != g_game) return;
+  if (game->copy_trap) mpt::mp4::copy_trap_disable();
   game->sdk.reset();
   game->renderer.reset();
   mpt_mp4_dol_detach();
@@ -200,9 +208,16 @@ MptMp4StepResult step(MptMp4Game* game, const MptMp4InputFrame* input) {
   if (game == nullptr || input == nullptr) return MPT_MP4_STEP_FAULTED;
   mpt::InputFrame frame;
   std::memcpy(&frame, input, sizeof frame);
+  if (!game->fault.empty()) return MPT_MP4_STEP_FAULTED;
   game->renderer->begin_frame();
+  if (game->copy_trap) mpt::mp4::copy_trap_arm();
   const mpt::gc::StepStatus status = game->sdk->stepFrame(frame);
+  if (game->copy_trap) {
+    mpt::mp4::copy_trap_disarm();
+    game->fault = mpt::mp4::copy_trap_take_violation();
+  }
   game->renderer->end_frame(&game->image);
+  if (!game->fault.empty()) return MPT_MP4_STEP_FAULTED;
   switch (status) {
     case mpt::gc::StepStatus::running: return MPT_MP4_STEP_RUNNING;
     case mpt::gc::StepStatus::halted: return MPT_MP4_STEP_HALTED;
@@ -213,7 +228,10 @@ MptMp4StepResult step(MptMp4Game* game, const MptMp4InputFrame* input) {
 }
 
 std::uint64_t frame(const MptMp4Game* game) { return game ? game->sdk->frame() : 0; }
-const char* fault(const MptMp4Game* game) { return game ? game->sdk->fault().c_str() : ""; }
+const char* fault(const MptMp4Game* game) {
+  if (game == nullptr) return "";
+  return game->fault.empty() ? game->sdk->fault().c_str() : game->fault.c_str();
+}
 
 void frameRate(const MptMp4Game* game, MptMp4FrameRate* out) {
   if (game == nullptr || out == nullptr) return;
@@ -278,6 +296,7 @@ MptMp4Status loadState(MptMp4Game* game, const std::uint8_t* data, std::size_t s
     return MPT_MP4_ERR_STATE;
   }
   mpt::gx::set_object_id_counters({getU32(tail), getU32(tail + 4)});
+  if (game->copy_trap) mpt::mp4::copy_trap_forget();
   game->renderer->reset_for_load_state();
   return MPT_MP4_OK;
 }

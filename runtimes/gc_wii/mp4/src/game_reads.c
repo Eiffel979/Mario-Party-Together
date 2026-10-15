@@ -43,3 +43,11 @@ void mpt_mp4_hash_game(MptMp4HashFn update, void* user) {
   const int32_t ovl = (int32_t)omcurovl;
   update(user, &ovl, sizeof ovl);
 }
+
+/* The running overlay's name, for the copy-destination trap's allow-list (NULL before the first). */
+const char* mpt_mp4_current_overlay_name(void) {
+  if (omcurovl < 0 || omcurovl >= DLL_MAX) {
+    return NULL;
+  }
+  return _ovltbl[omcurovl].name;
+}

@@ -167,7 +167,8 @@ add_library(mp4_game SHARED
   "${CMAKE_CURRENT_BINARY_DIR}/generated/mpt_mp4_rel_table.c"
   src/rel_loader.c
   src/game_data.c
-  src/abi.cpp)
+  src/abi.cpp
+  src/copy_trap.cpp)
 target_link_libraries(mp4_game PRIVATE mpt_mp4_game_flags ${MPT_MP4_REL_LIBS} mpt::gx mpt::musyx)
 set_target_properties(mp4_game PROPERTIES C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden PREFIX "")
 target_include_directories(mp4_game PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
