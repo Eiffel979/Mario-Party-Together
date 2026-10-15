@@ -2,7 +2,10 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include "mpt/ui/model/library.h"
 
@@ -72,4 +75,45 @@ TEST_CASE("save and load, and a damaged file starts empty with a warning") {
   std::ofstream(dir / "bad.json") << "{\"format\":\"mpt.library\",\"version\":1,\"titles\":[{\"title\":\"zz\"}]}";
   CHECK(Library::load(dir / "bad.json", warning).entries().empty());
   CHECK_FALSE(warning.empty());
+}
+
+TEST_CASE("wrong-typed fields are a damaged library, never an exception") {
+  const std::string sha = "\"" + std::string(64, 'a') + "\"";
+  const std::string good_entry = "{\"title\":\"mp4\",\"region\":\"USA\",\"revision\":\"Rev 0\",\"sha256\":" + sha +
+                                 ",\"path\":\"x.iso\"}";
+  const char* const bad_docs[] = {
+      "{\"format\":1,\"version\":1,\"titles\":[]}",
+      "{\"format\":\"mpt.library\",\"version\":\"1\",\"titles\":[]}",
+      "{\"format\":\"mpt.library\",\"version\":1.5,\"titles\":[]}",
+      "{\"format\":\"mpt.library\",\"version\":1,\"titles\":{}}",
+      "{\"format\":\"mpt.library\",\"version\":1,\"titles\":[1]}",
+      "[]",
+  };
+  const char* const bad_fields[] = {
+      "{\"title\":1,\"region\":\"USA\",\"sha256\":SHA,\"path\":\"x.iso\"}",
+      "{\"title\":\"mp4\",\"region\":[],\"sha256\":SHA,\"path\":\"x.iso\"}",
+      "{\"title\":\"mp4\",\"region\":\"USA\",\"revision\":{},\"sha256\":SHA,\"path\":\"x.iso\"}",
+      "{\"title\":\"mp4\",\"region\":\"USA\",\"sha256\":12,\"path\":\"x.iso\"}",
+      "{\"title\":\"mp4\",\"region\":\"USA\",\"sha256\":SHA,\"path\":true}",
+      "{\"title\":null,\"region\":\"USA\",\"sha256\":SHA,\"path\":\"x.iso\"}",
+  };
+  std::vector<std::string> cases(std::begin(bad_docs), std::end(bad_docs));
+  for (const char* field : bad_fields) {
+    std::string entry = field;
+    if (const auto at = entry.find("SHA"); at != std::string::npos) entry.replace(at, 3, sha);
+    cases.push_back("{\"format\":\"mpt.library\",\"version\":1,\"titles\":[" + good_entry + "," + entry + "]}");
+  }
+  const auto dir = scratch("library_types");
+  for (const std::string& text : cases) {
+    CAPTURE(text);
+    std::string error;
+    std::optional<Library> parsed;
+    CHECK_NOTHROW(parsed = Library::parse(text, error));
+    CHECK_FALSE(parsed);
+    CHECK_FALSE(error.empty());
+    std::ofstream(dir / "lib.json", std::ios::trunc) << text;
+    std::string warning;
+    CHECK(Library::load(dir / "lib.json", warning).entries().empty());
+    CHECK_FALSE(warning.empty());
+  }
 }

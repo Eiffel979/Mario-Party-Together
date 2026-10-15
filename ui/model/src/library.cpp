@@ -30,6 +30,21 @@ bool is_hex64(const std::string& s) {
          });
 }
 
+// The string at `key`, or empty if it is missing or not a string. Never throws.
+std::string string_at(const nlohmann::json& object, const char* key) {
+  const auto it = object.find(key);
+  return it != object.end() && it->is_string() ? it->get<std::string>() : std::string();
+}
+
+// Reads an optional string field: false if it is present with another type.
+bool read_string(const nlohmann::json& object, const char* key, std::string& out) {
+  const auto it = object.find(key);
+  if (it == object.end()) return true;
+  if (!it->is_string()) return false;
+  out = it->get<std::string>();
+  return true;
+}
+
 bool entry_less(const LibraryEntry& a, const LibraryEntry& b) {
   if (a.title != b.title) return static_cast<int>(a.title) < static_cast<int>(b.title);
   return a.region < b.region;
@@ -51,7 +66,11 @@ std::optional<Library> Library::parse(std::string_view json_text, std::string& e
     error = "library.json is not valid JSON";
     return std::nullopt;
   }
-  if (doc.value("format", std::string()) != kFormat || doc.value("version", 0) != kVersion) {
+  // Every key is type-checked before it is read: the file is user-editable, and
+  // nlohmann's value() throws on a wrong type.
+  const auto version = doc.find("version");
+  if (string_at(doc, "format") != kFormat || version == doc.end() || !version->is_number_integer() ||
+      version->get<long long>() != kVersion) {
     error = "library.json has an unknown format or version";
     return std::nullopt;
   }
@@ -67,11 +86,16 @@ std::optional<Library> Library::parse(std::string_view json_text, std::string& e
       return std::nullopt;
     }
     LibraryEntry entry;
-    const std::optional<TitleId> title = parse_title_id(item.value("title", std::string()));
-    entry.region = item.value("region", std::string());
-    entry.revision = item.value("revision", std::string());
-    entry.sha256 = item.value("sha256", std::string());
-    const std::string path = item.value("path", std::string());
+    std::string title_text;
+    std::string path;
+    const bool typed = read_string(item, "title", title_text) && read_string(item, "region", entry.region) &&
+                       read_string(item, "revision", entry.revision) && read_string(item, "sha256", entry.sha256) &&
+                       read_string(item, "path", path);
+    if (!typed) {
+      error = "library.json has a field of the wrong type";
+      return std::nullopt;
+    }
+    const std::optional<TitleId> title = parse_title_id(title_text);
     if (!title || !is_hex64(entry.sha256) || path.empty()) {
       error = "library.json has an incomplete entry";
       return std::nullopt;
@@ -94,7 +118,14 @@ Library Library::load(const std::filesystem::path& file, std::string& warning) {
   }
   const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
   std::string error;
-  std::optional<Library> library = parse(text, error);
+  std::optional<Library> library;
+  try {
+    library = parse(text, error);
+  } catch (const std::exception& e) {
+    // parse() checks every type; this is only a backstop so a damaged file can never
+    // take the launcher down.
+    error = e.what();
+  }
   if (!library) {
     warning = "Your library list is damaged (" + error + "), so it starts empty. Add your games again.";
     return {};
@@ -116,6 +147,9 @@ std::string Library::to_json() const {
 }
 
 bool Library::save(const std::filesystem::path& file, std::string& error) const {
+  // TODO(P1-23 follow-up): switch to architect's shared durable atomic write (being
+  // extracted from core/shell/save_store.cpp) once it lands. This version neither syncs
+  // to disk nor uses a per-process temporary name.
   std::error_code ec;
   std::filesystem::create_directories(file.parent_path(), ec);
   std::filesystem::path tmp = file;
