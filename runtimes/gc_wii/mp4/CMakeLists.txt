@@ -124,7 +124,7 @@ list(TRANSFORM GAME_FILES PREPEND "${MPT_MP4_PB}/")
 list(APPEND GAME_FILES "${MPT_MP4_PB}/src/port/byteswap.cpp")
 list(TRANSFORM MPT_MP4_MSM_FILES PREPEND "${MPT_MP4_PB}/")
 # Our replacements for Party Board's port layer (include/mpt_mp4_port.h) and its coroutines.
-set(MPT_MP4_PORT_FILES src/port.c src/sdk_bridge.c src/libco.c)
+set(MPT_MP4_PORT_FILES src/port.c src/sdk_bridge.c src/libco.c src/layout_check.c)
 add_library(mpt_mp4_dol OBJECT ${GAME_FILES} ${MPT_MP4_MSM_FILES} ${MPT_MP4_PORT_FILES})
 target_link_libraries(mpt_mp4_dol PRIVATE mpt_mp4_game_flags)
 
