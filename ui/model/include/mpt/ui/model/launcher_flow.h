@@ -2,8 +2,7 @@
 
 // Which launcher screen is up, the back stack, and how the launcher follows the
 // session: start, pause, resume, quit (ADR 0010 §3-4, P1-23). Plain C++: no RmlUi, no
-// SDL. Host time is passed in by the caller and is only used to cap the wait for held
-// buttons on resume; nothing here reaches game state.
+// SDL, no clock. Nothing here reaches game state.
 
 #include <cstdint>
 #include <string>
@@ -32,10 +31,6 @@ struct SessionView {
 
 class LauncherFlow {
  public:
-  // Held buttons are waited for at most this long on resume, so a stuck button cannot
-  // keep the game paused forever.
-  static constexpr std::uint64_t kResumeHoldCapNs = 1'500'000'000;
-
   Screen screen() const { return screen_; }
   // A UI screen has input focus everywhere except while playing: the shell then does
   // not step the session (ADR 0010 §3.2).
@@ -43,9 +38,10 @@ class LauncherFlow {
 
   // Navigation. go() pushes the current screen; back() pops it. back() does nothing on
   // the library (the back action never exits the app) or while playing, and on the
-  // pause screen it means "resume". Returns true if something happened.
+  // pause screen it is handled by the caller as "resume" (see resume()). Returns true if
+  // the screen changed.
   void go(Screen next);
-  bool back(std::uint64_t now_ns);
+  bool back();
   void to_library();
 
   // Starting a party from the seating screen. The shell applies the request on its next
@@ -58,12 +54,10 @@ class LauncherFlow {
   // Pause overlay. open_pause() is the host pause action while playing: returns true if
   // the overlay opened (the caller then asks the shell to pause).
   bool open_pause();
-  // "Resume" chosen: waits until no button is held (ADR 0010 §3.3).
-  void choose_resume(std::uint64_t now_ns);
-  bool resuming() const { return resuming_; }
-  // While resuming: true once the caller should ask the shell to resume. The screen is
-  // then `playing`.
-  bool resume_ready(bool any_input_held, std::uint64_t now_ns);
+  // "Resume" chosen on the pause screen: back to playing. Returns true if the caller
+  // should ask the shell to resume. Buttons still held (the confirm press) are masked by
+  // the shell's GameInputGate until released (ADR 0010 §3.3), so no wait is needed here.
+  bool resume();
   // "Quit to library": the caller asks the shell to stop the session.
   void quit_to_library();
 
@@ -76,8 +70,6 @@ class LauncherFlow {
   bool starting_ = false;
   std::uint64_t failures_at_start_ = 0;
   bool stopping_ = false;
-  bool resuming_ = false;
-  std::uint64_t resume_since_ns_ = 0;
   std::string message_;
 };
 

@@ -37,7 +37,7 @@ target_include_directories(mpt_ui
   PRIVATE backend)
 # mpt::shell_core provides only the shell-side seams here (overlay.h, ui_host.h).
 target_link_libraries(mpt_ui
-  PUBLIC mpt::ui_model mpt::shell_core mpt::input SDL3::SDL3
+  PUBLIC mpt::ui_model mpt::shell_core mpt::input mpt::input_sdl SDL3::SDL3
   PRIVATE RmlUi::RmlUi)
 target_compile_definitions(mpt_ui PRIVATE MPT_UI_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 mpt_set_warnings(mpt_ui)

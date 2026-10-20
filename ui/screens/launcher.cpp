@@ -3,22 +3,26 @@
 // Determinism (ADR 0010 §3): this file never sees a runtime, an adapter, a Session, a
 // SaveState, a replay or the seed. It asks the shell for start, pause, resume, stop and
 // quit through IShellCommands, and reads the session only through SessionStatus. Host
-// time is used for animation, key repeat and the resume hold cap only.
+// time is used for animation and key repeat only.
 
 #include "mpt/ui/launcher.h"
 
 #include <RmlUi/Core.h>
 #include <SDL3/SDL.h>
 
+#include <cstddef>
 #include <cstdio>
 #include <map>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
 #include "input_sdl.h"
+#include "durable_file.h"
 #include "mpt/asset_import/known_dumps.h"
+#include "mpt/input/sdl_input.h"
 #include "mpt/ui/model/file_browser.h"
 #include "mpt/ui/model/import_flow.h"
 #include "mpt/ui/model/launcher_flow.h"
@@ -84,7 +88,6 @@ struct View {
   Rml::String seat_status;
 
   Rml::String pause_title;
-  bool pause_resuming = false;
 };
 
 // ---- The native file dialog's answer arrives on another thread --------------------
@@ -131,10 +134,9 @@ fs::path find_asset_root(const fs::path& requested) {
 }
 
 bool is_pause_action(const SDL_Event& e) {
-  // The shell's host-reserved binding (core/shell/app.cpp, ADR 0010 §3.2).
-  if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.scancode == SDL_SCANCODE_ESCAPE) return true;
-  if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && e.gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE) return true;
-  return false;
+  // input/'s host-reserved binding (Esc, Guide; ADR 0010 §3.2), the same one the shell
+  // routes with.
+  return input::SdlInput::host_action(e) == input::HostAction::pause;
 }
 
 std::optional<NavDir> dpad_dir(Uint8 button) {
@@ -185,7 +187,7 @@ class Launcher final : public shell::IOverlay {
     initialised_ = true;
     const fs::path font = root_ / "assets" / "fonts" / "LatoLatin-Regular.ttf";
     if (!Rml::LoadFontFace(to_utf8(font), /*fallback_face=*/true)) {
-      std::fprintf(stderr, "ui: could not load the font %s\n", to_utf8(font).c_str());
+      std::fprintf(stderr, "ui: could not load the font %s\n", shell::display_path(font).c_str());
       return false;
     }
     int w = 0;
@@ -200,7 +202,7 @@ class Launcher final : public shell::IOverlay {
       const fs::path file = root_ / "screens" / (std::string(name) + ".rml");
       Rml::ElementDocument* doc = context_->LoadDocument(to_utf8(file));
       if (!doc) {
-        std::fprintf(stderr, "ui: could not load %s\n", to_utf8(file).c_str());
+        std::fprintf(stderr, "ui: could not load %s\n", shell::display_path(file).c_str());
         return false;
       }
       docs_[name] = doc;
@@ -266,7 +268,6 @@ class Launcher final : public shell::IOverlay {
     // Phase 1: seats change only while no session runs (the shell also turns input/'s
     // auto-assign off for the session).
     seating_.set_locked(status.running);
-    if (flow_.resuming() && flow_.resume_ready(any_input_held(), now_ns)) host_.commands->requestResume();
 
     if (import_.poll()) on_import_changed();
     take_dialog_result();
@@ -371,9 +372,18 @@ class Launcher final : public shell::IOverlay {
       case Screen::seating:
         if (flow_.starting()) return;
         break;
+      case Screen::pause:
+        resume();  // back on the pause screen resumes
+        return;
       default: break;
     }
-    flow_.back(now_ns_);
+    flow_.back();
+  }
+
+  // Held buttons (the confirm press) are masked by the shell's GameInputGate when game
+  // input goes live again (ADR 0010 §3.3), so the UI resumes at once.
+  void resume() {
+    if (flow_.resume()) host_.commands->requestResume();
   }
 
   // ---- Actions ----
@@ -421,8 +431,19 @@ class Launcher final : public shell::IOverlay {
       return;
     }
     selected_ = library_.add(result.dump, result.path);
-    std::string error;
-    if (!library_.save(library_file(), error)) message_ = "Your library list could not be saved: " + error;
+    save_library();
+  }
+
+  // Durable and atomic (core/shell/durable_file.h): a crash leaves the old list or the
+  // new one, never a mix.
+  void save_library() {
+    const std::string text = library_.to_json();
+    const auto* bytes = reinterpret_cast<const std::byte*>(text.data());
+    if (Result written = shell::write_file_atomic(library_file(), std::span<const std::byte>(bytes, text.size()));
+        !written) {
+      message_ = "Your library list could not be saved: " + written.error();
+      std::fprintf(stderr, "ui: library: %s\n", written.error().c_str());
+    }
   }
 
   void start_party() {
@@ -503,7 +524,6 @@ class Launcher final : public shell::IOverlay {
     c.Bind("seat_note", &view_.seat_note);
     c.Bind("seat_status", &view_.seat_status);
     c.Bind("pause_title", &view_.pause_title);
-    c.Bind("pause_resuming", &view_.pause_resuming);
 
     const auto on = [&c](const char* name, std::function<void(const Rml::VariantList&)> fn) {
       c.BindEventCallback(name, [fn = std::move(fn)](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& args) {
@@ -555,7 +575,7 @@ class Launcher final : public shell::IOverlay {
       seating_.cycle(devices[static_cast<std::size_t>(i)].id, index_arg(a, 1) < 0 ? -1 : 1);
     });
     on("start_party", [this](const Rml::VariantList&) { start_party(); });
-    on("resume", [this](const Rml::VariantList&) { flow_.choose_resume(now_ns_); });
+    on("resume", [this](const Rml::VariantList&) { resume(); });
     on("quit_library", [this](const Rml::VariantList&) {
       flow_.quit_to_library();
       host_.commands->requestStop();
@@ -644,7 +664,6 @@ class Launcher final : public shell::IOverlay {
 
     // Pause
     set("pause_title", view_.pause_title, entry ? entry->display_name() : std::string());
-    set("pause_resuming", view_.pause_resuming, flow_.resuming());
   }
 
   // ---- Documents and focus ----

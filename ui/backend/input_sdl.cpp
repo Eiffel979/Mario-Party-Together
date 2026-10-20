@@ -1,7 +1,5 @@
 #include "input_sdl.h"
 
-#include <SDL3/SDL_gamepad.h>
-#include <SDL3/SDL_stdinc.h>
 
 namespace mpt::ui {
 
@@ -40,25 +38,6 @@ int rml_modifiers(SDL_Keymod mods) {
   if (mods & SDL_KMOD_SHIFT) out |= Rml::Input::KM_SHIFT;
   if (mods & SDL_KMOD_ALT) out |= Rml::Input::KM_ALT;
   return out;
-}
-
-bool any_input_held() {
-  int count = 0;
-  const bool* keys = SDL_GetKeyboardState(&count);
-  for (int i = 0; keys && i < count; ++i) {
-    if (keys[i]) return true;
-  }
-  SDL_JoystickID* pads = SDL_GetGamepads(&count);
-  bool held = false;
-  for (int i = 0; pads && i < count && !held; ++i) {
-    SDL_Gamepad* pad = SDL_GetGamepadFromID(pads[i]);  // opened by input/; not owned here
-    if (!pad) continue;
-    for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT && !held; ++b) {
-      held = SDL_GetGamepadButton(pad, static_cast<SDL_GamepadButton>(b));
-    }
-  }
-  SDL_free(pads);
-  return held;
 }
 
 }  // namespace mpt::ui

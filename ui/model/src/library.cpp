@@ -146,32 +146,6 @@ std::string Library::to_json() const {
   return doc.dump(2) + "\n";
 }
 
-bool Library::save(const std::filesystem::path& file, std::string& error) const {
-  // TODO(P1-23 follow-up): switch to architect's shared durable atomic write (being
-  // extracted from core/shell/save_store.cpp) once it lands. This version neither syncs
-  // to disk nor uses a per-process temporary name.
-  std::error_code ec;
-  std::filesystem::create_directories(file.parent_path(), ec);
-  std::filesystem::path tmp = file;
-  tmp += ".tmp";
-  {
-    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-    const std::string text = to_json();
-    out.write(text.data(), static_cast<std::streamsize>(text.size()));
-    if (!out) {
-      error = "could not write the library list";
-      return false;
-    }
-  }
-  std::filesystem::rename(tmp, file, ec);
-  if (ec) {
-    std::filesystem::remove(tmp, ec);
-    error = "could not replace the library list";
-    return false;
-  }
-  return true;
-}
-
 std::size_t Library::add(const VerifiedDump& dump, const std::filesystem::path& dump_path) {
   LibraryEntry entry;
   entry.title = dump.title;

@@ -36,12 +36,14 @@ launcher falls back to this source folder (developer builds).
 - Host time is used for animation, key repeat and the resume hold cap. UI state is never
   part of `SaveState`, a replay, `stateHash()` or the seed; the shell picks the seed.
 - `--headless`, `--replay` and `--verify-replay` never create the UI.
-- **Resume masking.** "Resume" waits until no key and no gamepad button is held (at most
-  1.5 s), so the confirm press never reaches the game. `input/` does not yet mask buttons
-  held at resume (ADR 0010 §3.3); this UI-side wait covers the launcher until it does.
+- **Resume masking.** "Resume" asks the shell to resume at once. The shell's
+  `GameInputGate` (`core/shell/event_routing.h`) masks whatever is held when game input
+  goes live again (ADR 0010 §3.3), so the confirm press never reaches the game.
+- The pause action is input/'s reserved binding (`SdlInput::host_action`: Esc, Guide).
 - `ui_overlay_replay` (the ADR 0010 bring-up gate) plays a FakeRuntime replay with the real
-  launcher: paused with Esc or Guide, navigated with synthetic D-pad, stick and buttons,
-  resumed with south or east. The trail equals the trail with no UI.
+  launcher, routed with the shell's own `route_event` and `GameInputGate`: paused with Esc
+  or Guide, navigated with synthetic D-pad, stick and buttons, resumed with south or east.
+  The trail equals the trail with no UI.
 
 ## RCSS rules
 

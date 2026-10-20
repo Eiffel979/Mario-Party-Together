@@ -38,9 +38,9 @@ class Library {
   // library plus a warning (the file is left as it is until the next save).
   static Library load(const std::filesystem::path& file, std::string& warning);
   static std::optional<Library> parse(std::string_view json, std::string& error);
+  // The file's text. The launcher writes it with the shell's durable atomic write
+  // (core/shell/durable_file.h), which keeps this model free of the shell and SDL.
   std::string to_json() const;
-  // Writes the list atomically (temporary file, then rename).
-  bool save(const std::filesystem::path& file, std::string& error) const;
 
   // Adds a verified dump, replacing an entry for the same title and region. Returns
   // its index.

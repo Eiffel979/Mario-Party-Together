@@ -19,8 +19,4 @@ std::optional<Rml::Input::KeyIdentifier> rml_key(SDL_Keycode key);
 int rml_modifiers(SDL_Keymod mods);
 Rml::Input::KeyIdentifier rml_key(NavDir dir);
 
-// True while any key or any gamepad button is down: resume waits for it (ADR 0010
-// §3.3), so the "Resume" press never reaches the game.
-bool any_input_held();
-
 }  // namespace mpt::ui

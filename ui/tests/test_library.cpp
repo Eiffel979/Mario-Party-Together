@@ -60,12 +60,12 @@ TEST_CASE("adding the same title and region replaces the entry") {
   CHECK(library.entries()[0].dump_path == "new.iso");
 }
 
-TEST_CASE("save and load, and a damaged file starts empty with a warning") {
+TEST_CASE("load what to_json wrote, and a damaged file starts empty with a warning") {
   const auto dir = scratch("library");
   Library library;
   library.add(dump(TitleId::mp4, "USA", 'a'), "x.iso");
-  std::string error;
-  REQUIRE(library.save(dir / "library.json", error));
+  // The launcher writes this text with the shell's write_file_atomic.
+  std::ofstream(dir / "library.json", std::ios::binary) << library.to_json();
   std::string warning;
   CHECK(Library::load(dir / "library.json", warning).entries().size() == 1);
   CHECK(warning.empty());

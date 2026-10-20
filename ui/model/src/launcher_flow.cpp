@@ -8,12 +8,8 @@ void LauncherFlow::go(Screen next) {
   screen_ = next;
 }
 
-bool LauncherFlow::back(std::uint64_t now_ns) {
-  if (screen_ == Screen::pause) {
-    if (!resuming_) choose_resume(now_ns);
-    return true;
-  }
-  if (screen_ == Screen::playing || starting_ || stack_.empty()) return false;
+bool LauncherFlow::back() {
+  if (screen_ == Screen::pause || screen_ == Screen::playing || starting_ || stack_.empty()) return false;
   screen_ = stack_.back();
   stack_.pop_back();
   return true;
@@ -22,7 +18,6 @@ bool LauncherFlow::back(std::uint64_t now_ns) {
 void LauncherFlow::to_library() {
   screen_ = Screen::library;
   stack_.clear();
-  resuming_ = false;
 }
 
 void LauncherFlow::begin_start(std::uint64_t start_failures_now) {
@@ -34,20 +29,11 @@ void LauncherFlow::begin_start(std::uint64_t start_failures_now) {
 bool LauncherFlow::open_pause() {
   if (screen_ != Screen::playing) return false;
   screen_ = Screen::pause;
-  resuming_ = false;
   return true;
 }
 
-void LauncherFlow::choose_resume(std::uint64_t now_ns) {
-  if (screen_ != Screen::pause) return;
-  resuming_ = true;
-  resume_since_ns_ = now_ns;
-}
-
-bool LauncherFlow::resume_ready(bool any_input_held, std::uint64_t now_ns) {
-  if (!resuming_ || screen_ != Screen::pause) return false;
-  if (any_input_held && now_ns - resume_since_ns_ < kResumeHoldCapNs) return false;
-  resuming_ = false;
+bool LauncherFlow::resume() {
+  if (screen_ != Screen::pause) return false;
   screen_ = Screen::playing;
   return true;
 }
