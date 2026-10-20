@@ -23,3 +23,8 @@ add_test(NAME mp4_game_abi COMMAND mpt_mp4_abi_tests "$<TARGET_FILE:mp4_game>")
 add_executable(mpt_mp4_copy_trap_tests test_copy_trap.cpp ../src/copy_trap.cpp)
 target_link_libraries(mpt_mp4_copy_trap_tests PRIVATE mpt::gx)
 add_test(NAME mp4_copy_trap COMMAND mpt_mp4_copy_trap_tests)
+
+# msm's disc structures in host byte order, on synthetic big-endian records.
+add_executable(mpt_mp4_msm_swap_tests test_msm_swap.c ../src/msm_swap.c)
+target_link_libraries(mpt_mp4_msm_swap_tests PRIVATE mpt_mp4_game_flags)
+add_test(NAME mp4_msm_swap COMMAND mpt_mp4_msm_swap_tests)
