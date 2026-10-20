@@ -555,7 +555,7 @@ Decide whether the ID counters are hashed. They are stored in game memory (`GXTe
 - goldens pin the PCM and the trail.
 
 **Merge conditions** (ADR 0009 amendment after P1-13b):
-- (a) Party Board's `msm` builds against the pin: **met at build level by P1-15** (§18). Its file structures are not yet byteswapped.
+- (a) Party Board's `msm` builds against the pin: **met at build level by P1-15** (§18). Its disc structures are converted to host byte order (patch 0015).
 - (b) met: render on the game thread only, and the services link check passes.
 - (c) clang-cl: met. **Linux Clang: not yet run** (there is no Linux machine here, and CI does not fetch musyx).
 - (d) met on synthetic data.
@@ -575,16 +575,42 @@ Decide whether the ID counters are hashed. They are stored in game memory (`GXTe
 4. **64-bit HSF conversion** is Party Board's `byteswap.cpp`, unchanged. **Pointer/integer cast review:** a scan of every game object with clang's cast warnings (`-Wpointer-to-int-cast`, `-Wint-to-pointer-cast` and the void variants) found that `msm` did pointer arithmetic through `u32` (patch 0013 changes it to `uintptr_t`). It also found that `THPSimple.c` passed AI DMA buffers as `u32`, because aurora declares 32-bit addresses (patch 0008 adds bridges to the SDK's `uintptr_t` calls). The remaining casts are harmless: 32-bit offset arithmetic in `msmmem.c`, an ARAM address round trip in `msmsys.c`, and an int kept in `user_data` in `w04Dll`.
 5. **Constant heap-header caller address.** Party Board already passes `0` (`HuMemDirectMalloc`/`Free` under `TARGET_PC`) or `FAKE_RETADDR` (`process.c`). No other `HuMemMemoryAlloc` caller exists.
 6. **`ztardll` low-memory read.** `*(u32*)0x800000F8` (the bus clock) becomes `OS_BUS_CLOCK` (patch 0012). The read is in a `!VERSION_ENG` branch, so `GMPE01_00` never runs it.
-7. **C ABI** (`include/mpt/mp4/game_abi.h`, **draft v1 for architect review**). One export returns a versioned function table:
+7. **C ABI** (`include/mpt/mp4/game_abi.h`, **v1.0**: architect approved the v1 draft, and the seven required changes from the ADR 0008 ABI review are applied). One export returns a versioned function table:
    - create/destroy, step, frame, fault and frame rate;
    - state hash and save/load state;
    - save media and its generation;
    - video (RGBA8), audio (s16 stereo), rumble and OSReport text;
    - raw party reads (overlay, board, turn, max turns, and per player the character, CPU flag, coins, stars and space).
 
-   Every struct carries `struct_size`, the input frame mirrors `mpt::InputFrame` byte for byte, and the module owns all memory it returns. Boot flags set Party Board's gameplay options (skip boot sequence, unlock minigames, unlock Bowser's Gnarly Party) for the session from the host. Local preferences never set them. `mp4_game_abi` loads the module and checks versioning and argument handling. The build ID hashes the pins, every patch, the GX backend and the compiler.
+   Every struct carries `struct_size`, checked against named v1.0 sizes. Fields past the caller's size default, and frozen structs are size-asserted. The input frame mirrors `mpt::InputFrame` byte for byte, and sticks fold -32768 to -32767. The module owns all memory it returns, which stays valid until the next `step`, `load_state` or `destroy`; `audio()` returns the last step's samples on every call.
+
+   **Gameplay boot flags** (skip boot sequence, unlock minigames, unlock Bowser's Gnarly Party) are determinism inputs. They are hashed and saved with the state. **The fixed Phase 1 set is `MPT_MP4_PHASE1_GAMEPLAY_FLAGS` = none (the console's behaviour), which `Mp4Runtime` always passes.** They are never user settings; later the unlocks become ruleset rules. Debug and presentation settings (copy trap, video backend, scale, audio output, cache dir, arena base) never reach the hash.
+
+   **Save states:** the SDK state (arena, card image and generation, registered regions), then a trailer with the full build ID, the gameplay flags, the soft-reset frame and generation bases, the module status and fault text, the GX object IDs, and a layout version (`state_format()`, 2). `load_state` rejects another build or layout. A state is valid for the same build and platform at the same arena and module base.
+
+   **`OSResetSystem` is a deterministic soft reset inside the module.** The game core's data returns to its load-time image, MusyX and the renderer reset, and a new SDK boots on the same card from the same seed. Frame numbers and the card generation continue. Halts and faults are terminal module status, kept in the state, for ADR 0011's `status()`.
+
+   **Party reads** (`MptMp4Party::flags`, raw for the adapter's `PartyPhase`; **provisional until the dump lane confirms them**):
+   - `PARTY_MODE` is `GWSystem.party`.
+   - `IN_SETUP`: party mode, and the running overlay is `mentDll`, the party menu that calls `BoardPartyConfigSet`.
+   - `IN_PROGRESS`: party mode, and a board overlay (`wNN`) is in the overlay history (`omOvlHisGet`). That covers the board's turns and the minigames it calls.
+   - `TURNS_OVER`: party mode, and `GWSystem.turn > GWSystem.max_turn` (`BoardTurnNext` ends the party there).
+   - `RESULTS_FINAL`: turns over, and the board has left the overlay history.
+
+   `resultDll` is the minigame results screen (`instDll` switches to it), not the party's. `party()` only reads.
+
+   `mp4_game_abi` loads the module and checks versioning and argument handling. The build ID hashes the pins, every patch, the GX backend and the compiler.
 
 **Also in this work.**
+- **msm byte order** (patch 0015, `src/msm_swap.c`). Every structure msm reads raw from its `.msm` and `.pdt` files is converted to host order right after its read:
+  - the header, the info block, the aux parameters and the group info;
+  - each group's data head, at every load;
+  - the music and SE tables;
+  - the stream header and the stream pack list;
+  - each pack, converted once even when streams share it, with the second stream entry only for stereo packs;
+  - the ADPCM coefficients.
+
+  The project, pool, sample directory, songs and samples stay big-endian, because MusyX's PC loader reads them as big-endian. The layouts are asserted. `mp4_msm_swap` checks every field against synthetic big-endian records written from the structure definitions. **msmSysInit now gets valid sizes** for everything it reads (header, info, group info, aux parameters, music and SE tables, stream tables). Nothing has run on real files yet.
 - **Port layer** (`src/port.c`, `src/sdk_bridge.c`, patches 0010–0011). Party Board's settings and version queries return fixed `GMPE01_00` answers. `main.c` is the console loop, entered as `mpt_mp4_game_main` with no aurora frame calls, SDL events, UI or frame limiter. `card.c` calls the console `CARDInit`.
 - **Coroutines.** libco's API on the SDK's own context switch (`mpt_gc/coro.h`, `src/libco.c`). Process stacks come from the process heap, as on the console (patch 0002, twice the console size). Each stack has a record and a 256-byte canary at its low end. A smashed canary or a returning process is an `OSPanic`.
 - **SDK additions:**
@@ -613,11 +639,13 @@ Decide whether the ID counters are hashed. They are stored in game memory (`GXTe
 - `HuTHP3DCreateVol` returned an undefined value on an early exit (patch 0008 returns -1). Nothing calls it.
 
 **Open before M1 (boots headless on the dump lane).** These are listed in the P1-15 report and carried by P1-16:
-- **msm's file structures are big-endian.** The `.msm` header, group info, group data offsets, music/SE tables and stream headers are read raw from disc and used as host integers. Party Board never ran msm, so none of this is converted. `msmSysInit` will read garbage sizes until msm gets byteswap passes for its file structures. This is the first thing a headless boot will hit.
+- ~~msm's file structures are big-endian~~: converted (patch 0015, above).
 - Process coroutine stacks are game-sized (4–32 KiB). SDK interrupts that fall due at a call boundary inside a process, including the MusyX render on the AI tick, run on that stack. The stack high-water mark must be measured on the dump lane. If it is too high, the SDK should run due interrupts on its interrupt coroutine from a boundary instead.
 - The GX front end's state (`g_gxState`) is not in the save state. Load restores only the object ID counters and resets the renderer caches.
 - MP4's I/O callback mode (P1-16 audit), the fixed module and arena bases, and the hash manifest. v1 covers the SDK, MusyX, the `GW*` blocks, `rnd_seed` and the current overlay.
-- **Linux:** the module has not been built on Linux here. The ELF section markers and `__start_`/`__stop_` bounds are untested, and CI is blocked.
+- **Linux:** the module has not been built on Linux here, and the ELF section markers and `__start_`/`__stop_` bounds are untested.
+- A soft reset re-creates the SDK. With `arena_base` 0 its arena can move, and states saved before the reset then no longer load; P1-16's fixed arena base removes this. The GX front end's globals are not reset at a soft reset. The game's own `GXInit` at boot re-initializes them; the dump lane should confirm nothing stale is left.
+- The party flags above are derived from the decomp's code paths and have not been observed on a real party yet.
 
 ---
 
