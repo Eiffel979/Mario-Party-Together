@@ -5,8 +5,8 @@
 //     a pause and resume mid-run (ADR 0010 §3.5).
 //
 // SDL runs with the dummy video driver and the software renderer, so no display is
-// needed. Events are pushed into SDL's queue and routed the way core/shell/app.cpp
-// routes them.
+// needed. Events are pushed into SDL's queue and routed with the shell's own route_event
+// and GameInputGate (core/shell/event_routing.h).
 
 #include <doctest/doctest.h>
 
@@ -22,9 +22,10 @@
 #include <variant>
 #include <vector>
 
+#include "event_routing.h"
 #include "frame_loop.h"
 #include "mpt/core/replay.h"
-#include "mpt/input/ports.h"
+#include "mpt/input/sdl_input.h"
 #include "mpt/ui/launcher.h"
 #include "overlay.h"
 #include "shell/fake_title.h"
@@ -140,30 +141,21 @@ SDL_Event pad_axis(SDL_GamepadAxis axis, Sint16 value) {
   return e;
 }
 
-// TODO(P1-23 follow-up): replace this copy of the shell's pause binding and the routing
-// in play() with architect's shared route_event in mpt_shell_core once it lands.
-bool is_host_pause_action(const SDL_Event& e) {
-  if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.scancode == SDL_SCANCODE_ESCAPE) return true;
-  if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && e.gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE) return true;
-  return false;
-}
-
 struct Harness {
   SdlVideo& video;
   TestShell shell;
-  input::PortAssigner ports;
+  input::SdlInput input;  // the shell's input: seating for the launcher, routing below
   std::filesystem::path user_dir;
   std::unique_ptr<IOverlay> overlay;
   std::size_t bright_pixels = 0;  // from the last draw() with read-back
 
   explicit Harness(SdlVideo& v) : video(v) {
-    ports.device_added(input::DeviceInfo{input::kKeyboardDevice, "Keyboard", "keyboard"});
     user_dir = std::filesystem::temp_directory_path() / "mpt_ui_overlay_tests";
     std::filesystem::remove_all(user_dir);
     UiHost host;
     host.commands = &shell;
     host.window = video.window;
-    host.ports = &ports;
+    host.ports = &input.ports();
     host.titles = {TitleId::mp4};
     host.user_dir = user_dir;
     host.cache_dir = user_dir / "cache";
@@ -240,6 +232,10 @@ std::vector<ReplayCheckpoint> play(const Replay& replay, Harness* ui,
   };
   FrameLoop loop(*session, std::move(hooks));
   IOverlay* overlay = ui ? ui->overlay.get() : nullptr;
+  std::optional<input::SdlInput> own_input;
+  if (!ui) own_input.emplace();
+  input::SdlInput& input = ui ? ui->input : *own_input;
+  GameInputGate gate;
   if (ui) ui->shell.running = true;
   drain_events();
 
@@ -267,16 +263,15 @@ std::vector<ReplayCheckpoint> play(const Replay& replay, Harness* ui,
     if (const auto it = script.find(tick); it != script.end()) {
       for (SDL_Event e : it->second) REQUIRE(SDL_PushEvent(&e));
     }
+    // Routing and the input gate are the shell's own (event_routing.h), as in app.cpp.
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
-      if (!overlay) continue;
-      if (overlay->hasFocus()) {
-        overlay->handleEvent(e);
-      } else if (is_host_pause_action(e)) {
-        if (!overlay->handleEvent(e)) loop.paused() ? loop.resume() : loop.pause();
+      if (route_event(e, overlay, input) == EventOutcome::toggle_pause) {
+        loop.paused() ? loop.resume() : loop.pause();
       }
     }
     const bool focus = overlay && overlay->hasFocus();
+    gate.update(!loop.paused() && !focus, input);
     const FrameLoop::Tick result = loop.tick(focus);
     if (overlay) {
       overlay->update(tick * kTickNs);
