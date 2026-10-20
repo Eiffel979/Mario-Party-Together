@@ -33,7 +33,7 @@ launcher falls back to this source folder (developer builds).
   `VerifiedDump` comes from `asset_import::make_verified`.
 - While any screen is up, `hasFocus()` is true and the shell does not step the session.
   While the game runs, the UI is offered only the host pause action.
-- Host time is used for animation, key repeat and the resume hold cap. UI state is never
+- Host time is used for animation and key repeat only. UI state is never
   part of `SaveState`, a replay, `stateHash()` or the seed; the shell picks the seed.
 - `--headless`, `--replay` and `--verify-replay` never create the UI.
 - **Resume masking.** "Resume" asks the shell to resume at once. The shell's
