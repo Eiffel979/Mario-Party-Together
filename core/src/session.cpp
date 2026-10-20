@@ -16,12 +16,16 @@ std::set<TitleId> g_live_titles;
 
 std::string title_name(TitleId title) { return std::string(to_string(title)); }
 
-// Success while running; otherwise "runtime halted|faulted <when>: <message>" (ADR 0011).
-Result check_running(const ITitleRuntime& runtime, const std::string& when) {
-  const RuntimeHealth health = runtime.status();
+// Success while running; otherwise "runtime halted|faulted <when>[ <frame>]: <message>"
+// (ADR 0011). The message is built only when the runtime has stopped.
+Result check_running(const ITitleRuntime& runtime, const char* when, std::optional<std::uint64_t> frame = std::nullopt) {
+  RuntimeHealth health = runtime.status();
   if (health.status == RuntimeStatus::running) return Result::success();
-  const char* what = health.status == RuntimeStatus::halted ? "runtime halted " : "runtime faulted ";
-  return Result::failure(what + when + (health.message.empty() ? std::string() : ": " + health.message));
+  std::string text = health.status == RuntimeStatus::halted ? "runtime halted " : "runtime faulted ";
+  text += when;
+  if (frame) text += " " + std::to_string(*frame);
+  if (!health.message.empty()) text += ": " + health.message;
+  return Result::failure(std::move(text));
 }
 
 }  // namespace
@@ -89,7 +93,7 @@ Result Session::step(const InputFrame& inputs) {
                            std::to_string(frame_));
   }
   // A runtime that has stopped is not stepped again until a loadState revives it (ADR 0011).
-  if (Result running = check_running(*runtime_, "before frame " + std::to_string(frame_)); !running) return running;
+  if (Result running = check_running(*runtime_, "before frame", frame_); !running) return running;
   const std::uint64_t generation_before = runtime_->saveMediaGeneration();
   runtime_->stepFrame(inputs);
   ++frame_;
@@ -97,7 +101,7 @@ Result Session::step(const InputFrame& inputs) {
   director_.observe(inputs.frame, adapter_->readParty());
   // The frame that stopped the runtime still happened: it is counted, observed and its save
   // write kept, and only then reported.
-  return check_running(*runtime_, "at frame " + std::to_string(inputs.frame));
+  return check_running(*runtime_, "at frame", inputs.frame);
 }
 
 Result Session::loadState(const SaveState& state) {
