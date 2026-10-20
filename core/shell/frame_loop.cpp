@@ -15,7 +15,11 @@ FrameLoop::Tick FrameLoop::tick(bool ui_has_focus) {
   const std::optional<InputFrame> inputs = hooks_.sample ? hooks_.sample(session_.frame()) : std::nullopt;
   if (!inputs) return Tick::input_ended;
 
-  if (Result stepped = session_.step(*inputs); !stepped) {
+  Result stepped = session_.step(*inputs);
+  // A step that halted or faulted the runtime still happened (ADR 0011): record it and
+  // keep its save write, so a replay reproduces the stop. A step refused outright did not.
+  const bool happened = session_.frame() == inputs->frame + 1;
+  if (!stepped && !happened) {
     failure_ = std::move(stepped);
     return Tick::failed;
   }
@@ -28,6 +32,10 @@ FrameLoop::Tick FrameLoop::tick(bool ui_has_focus) {
   }
   // Always drain the pending image; persist it only for a non-ephemeral session.
   if (std::optional<SaveMedia> written = session_.takeSaveMedia(); written && hooks_.persist) hooks_.persist(*written);
+  if (!stepped) {
+    failure_ = std::move(stepped);
+    return Tick::failed;
+  }
 
   const std::optional<MinigameId>& current = session_.director().party().current_minigame;
   if (current != minigame_) {

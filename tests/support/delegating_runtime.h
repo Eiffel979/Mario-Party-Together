@@ -23,6 +23,7 @@ class DelegatingRuntime : public ITitleRuntime {
   FrameRate frameRate() const override { return inner_.frameRate(); }
   std::uint64_t saveMediaGeneration() const override { return inner_.saveMediaGeneration(); }
   SaveMedia saveMedia() const override { return inner_.saveMedia(); }
+  RuntimeHealth status() const override { return inner_.status(); }
 
   const FakeRuntime& inner() const { return inner_; }
 

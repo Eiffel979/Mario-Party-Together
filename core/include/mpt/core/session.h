@@ -47,7 +47,11 @@ class Session {
   ~Session();
 
   // Steps the runtime once, detects a save-media write (ADR 0004 rule 10) and lets the
-  // Director observe. Fails without stepping unless inputs.frame == frame().
+  // Director observe. Fails without stepping unless inputs.frame == frame() and the
+  // runtime is running. If this step halts or faults the runtime (ADR 0011), the frame
+  // still counts (frame() advances, the save write and the Director's observation are
+  // kept) and step() returns "runtime halted|faulted at frame N: ...". Callers that record
+  // replays keep that frame's inputs: check frame() == inputs.frame + 1.
   Result step(const InputFrame& inputs);
 
   // Loads a state and resyncs: frame() becomes state.frame, the Director drops events at
