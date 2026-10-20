@@ -6,6 +6,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <variant>
 
 #include "../shell/fake_title.h"
@@ -20,16 +21,29 @@ using namespace mpt;
 
 namespace {
 
+// When a StoppingRuntime stops. Each test case owns one, shared with the runtimes its
+// registry creates, so nothing carries over between cases.
+struct StopPlan {
+  std::uint64_t stop_at = 10;
+  RuntimeStatus how = RuntimeStatus::faulted;
+  int steps = 0;
+};
+
+std::shared_ptr<StopPlan> make_plan(std::uint64_t stop_at, RuntimeStatus how) {
+  auto plan = std::make_shared<StopPlan>();
+  plan->stop_at = stop_at;
+  plan->how = how;
+  return plan;
+}
+
 // FakeRuntime that stops once `stop_at` frames have been stepped. The status is derived
 // from the frame count, so it is game state: loadState restores it.
 class StoppingRuntime final : public test::DelegatingRuntime {
  public:
-  static inline std::uint64_t stop_at = 10;
-  static inline RuntimeStatus how = RuntimeStatus::faulted;
-  static inline int steps = 0;
+  explicit StoppingRuntime(std::shared_ptr<StopPlan> plan) : plan_(std::move(plan)) {}
 
   void stepFrame(const InputFrame& inputs) override {
-    ++steps;
+    ++plan_->steps;
     inner_.stepFrame(inputs);
     frame_ = inputs.frame + 1;
   }
@@ -43,18 +57,19 @@ class StoppingRuntime final : public test::DelegatingRuntime {
     return inner_.boot(dump, config);
   }
   RuntimeHealth status() const override {
-    if (frame_ < stop_at) return {};
-    return RuntimeHealth{how, how == RuntimeStatus::halted ? "main loop returned" : "watchdog"};
+    if (frame_ < plan_->stop_at) return {};
+    return RuntimeHealth{plan_->how, plan_->how == RuntimeStatus::halted ? "main loop returned" : "watchdog"};
   }
 
  private:
+  std::shared_ptr<StopPlan> plan_;
   std::uint64_t frame_ = 0;
 };
 
-TitleRegistry stopping_registry() {
+TitleRegistry stopping_registry(const std::shared_ptr<StopPlan>& plan) {
   TitleRegistry registry;
   REQUIRE(registry
-              .add(TitleId::mp4, [] { return std::make_unique<StoppingRuntime>(); },
+              .add(TitleId::mp4, [plan] { return std::make_unique<StoppingRuntime>(plan); },
                    [](ITitleRuntime& runtime) -> std::unique_ptr<ITitleAdapter> {
                      return std::make_unique<test::FakeAdapter>(dynamic_cast<StoppingRuntime&>(runtime).inner());
                    })
@@ -88,10 +103,8 @@ TEST_CASE("runtimes that never stop report running (the default)") {
 }
 
 TEST_CASE("Session::step reports a fault, counts that frame, and steps no further") {
-  StoppingRuntime::stop_at = 10;
-  StoppingRuntime::how = RuntimeStatus::faulted;
-  StoppingRuntime::steps = 0;
-  const TitleRegistry registry = stopping_registry();
+  const auto plan = make_plan(10, RuntimeStatus::faulted);
+  const TitleRegistry registry = stopping_registry(plan);
   auto session = start_ok(registry);
 
   for (std::uint64_t f = 0; f < 9; ++f) REQUIRE(session->step(test::fake_party_script(f)).ok());
@@ -101,27 +114,25 @@ TEST_CASE("Session::step reports a fault, counts that frame, and steps no furthe
   CHECK_FALSE(faulted.ok());
   CHECK(contains(faulted.error(), "runtime faulted at frame 9: watchdog"));
   CHECK(session->frame() == 10);  // the frame that faulted still counts
-  CHECK(StoppingRuntime::steps == 10);
+  CHECK(plan->steps == 10);
   CHECK(session->runtime().status().status == RuntimeStatus::faulted);
 
   const Result again = session->step(test::fake_party_script(10));
   CHECK(contains(again.error(), "runtime faulted before frame 10"));
-  CHECK(StoppingRuntime::steps == 10);  // not stepped
+  CHECK(plan->steps == 10);  // not stepped
   CHECK(session->frame() == 10);
 
   SUBCASE("loadState of a running state revives the runtime") {
     REQUIRE(session->loadState(before_fault).ok());
     CHECK(session->runtime().status().status == RuntimeStatus::running);
-    StoppingRuntime::stop_at = 100;
+    plan->stop_at = 100;
     CHECK(session->step(test::fake_party_script(9)).ok());
     CHECK(session->frame() == 10);
   }
 }
 
 TEST_CASE("a halt is reported as a halt") {
-  StoppingRuntime::stop_at = 3;
-  StoppingRuntime::how = RuntimeStatus::halted;
-  const TitleRegistry registry = stopping_registry();
+  const TitleRegistry registry = stopping_registry(make_plan(3, RuntimeStatus::halted));
   auto session = start_ok(registry);
   REQUIRE(session->step(test::fake_party_script(0)).ok());
   REQUIRE(session->step(test::fake_party_script(1)).ok());
@@ -129,18 +140,14 @@ TEST_CASE("a halt is reported as a halt") {
 }
 
 TEST_CASE("Session::start refuses a runtime that is not running after boot") {
-  StoppingRuntime::stop_at = 0;
-  StoppingRuntime::how = RuntimeStatus::faulted;
-  const TitleRegistry registry = stopping_registry();
+  const TitleRegistry registry = stopping_registry(make_plan(0, RuntimeStatus::faulted));
   auto started = Session::start(registry, config());
   REQUIRE(std::holds_alternative<Result>(started));
   CHECK(contains(std::get<Result>(started).error(), "runtime faulted after boot"));
 }
 
 TEST_CASE("a recorded fault is in the replay, and verifying it reports the fault") {
-  StoppingRuntime::stop_at = 70;
-  StoppingRuntime::how = RuntimeStatus::faulted;
-  const TitleRegistry registry = stopping_registry();
+  const TitleRegistry registry = stopping_registry(make_plan(70, RuntimeStatus::faulted));
 
   auto header = make_replay_header(config(), false);
   REQUIRE(std::holds_alternative<ReplayHeader>(header));
