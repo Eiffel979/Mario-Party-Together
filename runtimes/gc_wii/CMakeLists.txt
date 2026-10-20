@@ -34,6 +34,7 @@ set(MPT_CORE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../core/include" CACHE 
 if(TARGET mpt::asset_import)
   add_subdirectory(gx/tools)
   add_subdirectory(mp4/recipe)  # asset-import's MP4 build recipe
+  add_subdirectory(mp4/host)    # Mp4Runtime, Mp4Adapter and their shell registration (P1-16)
 endif()
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
