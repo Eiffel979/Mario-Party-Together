@@ -17,7 +17,7 @@ This note was written by reading the community decomp and its PC-port fork in pl
 | `https://github.com/mariopartyrd/partyboard` | Upstream's own PC port ("Party Board"). Same organisation, game sources forked from the decomp. | `main` = `98ac07fd1e8f7ab938bbb6fe75789fad99419010` (2026-09-29) | **CC0 1.0** (`LICENSE` at the root) |
 | `https://github.com/AxioDL/musyx` | MusyX sound-library decomp (submodule `extern/musyx` of both repos) | **We pin `86851a3a8d51788d166ea42d137b49526f570400`** (upstream `main`, tree `7177c167f5a5b1e5f63ab927e44d412982f96588`, ADR 0009 amendment after P1-13b). Party Board's gitlink stays `2a0e01aeff0d06a9ee9e12966c435cb75144af9e`; the lock records the override. | CC0 1.0 at our pin (checked in its `LICENSE`). `2a0e01a` is MIT; CC0 starts at `8cb588d`. |
 | `https://github.com/encounter/aurora` | GameCube/Wii source-level compatibility layer used by Party Board. **Adopted after S1: its GX front end, Dawn renderer, MTX and headers, without `aurora_core`** (ADR 0007 §6, ADR 0009 §1). | Party Board pins `514339438178ef2bed1b14e5149d90ece0c6e0cc`. Upstream HEAD on 2026-10-08 is `50e5be30ec12cc72768bc564bc016b55e82be868`, 132 commits later. | MIT |
-| `https://github.com/higan-emu/libco` | Coroutines used by Party Board for game processes | Party Board pins `e18e09d634d612a01781168ad4d76be10a7e3bad` | ISC (check during P1-15) |
+| `https://github.com/higan-emu/libco` | Coroutines used by Party Board for game processes | Party Board pins `e18e09d634d612a01781168ad4d76be10a7e3bad` | ISC. **Not used:** P1-15 provides libco's API on the SDK's own context switch (§18) |
 
 The decomp also has branches `port` (now a stub whose README points to the Party Board repo), `pal` and `mod` (2024, unrelated).
 
@@ -506,7 +506,7 @@ Decide whether the ID counters are hashed. They are stored in game memory (`GXTe
 
 ## 17. MusyX on the SDK (P1-13b part 2, `runtimes/gc_wii/musyx/`)
 
-**Pin.** musyx `86851a3a8d51788d166ea42d137b49526f570400`, tree `7177c167f5a5b1e5f63ab927e44d412982f96588`, CC0 1.0 (ADR 0009 amendment after P1-13b). The pin is recorded in `runtimes/gc_wii/mp4/decomp.lock`. That lock also has Party Board's entry, whose `extern/musyx` gitlink stays at `2a0e01a` with the override reason. Party Board's tree hash is added when P1-15 first fetches it.
+**Pin.** musyx `86851a3a8d51788d166ea42d137b49526f570400`, tree `7177c167f5a5b1e5f63ab927e44d412982f96588`, CC0 1.0 (ADR 0009 amendment after P1-13b). The pin is recorded in `runtimes/gc_wii/mp4/decomp.lock`. That lock also has Party Board's entry, whose `extern/musyx` gitlink stays at `2a0e01a` with the override reason. P1-15 added Party Board's tree hash and the aurora pin (§18).
 
 **Getting the source.** Run `mpt_fetch_sources --lock runtimes/gc_wii/mp4/decomp.lock --cache <MPT_SOURCE_CACHE>`. The source lands in `<MPT_SOURCE_CACHE>/musyx/<commit>`, which is the default `MPT_MUSYX_DIR` and the same layout aurora uses. P1-13b fetched it with a musyx-only copy of the lock, because Party Board was not to be fetched yet. Configure checks that the checkout is clean and at the locked commit (`MPT_MUSYX_ALLOW_UNPINNED` is for development only). Without a checkout, the target is skipped, unless `MPT_REQUIRE_MUSYX` is ON. **CI does not fetch musyx yet**, so the musyx tests run only on developer machines until qa-reviewer adds the fetch step and sets `MPT_REQUIRE_MUSYX` in the `ci-*` presets.
 
@@ -518,7 +518,7 @@ Decide whether the ID counters are hashed. They are stored in game memory (`GXTe
   - `synthdata.c` with `malloc`/`free` mapped to `salMalloc`/`salFree`, so `sndConvert32BitSDIRTo64BitSDIR` allocates through the game's hooks;
 - `hw_memory.c` replaced by `musyx_memory.c`, which is upstream's code without its host-heap fallback. If MusyX allocates before `sndSetHooks`, that is a game fault (`OSPanic`).
 
-`MPT_MUSYX_VERSION` defaults to 2.0.0, upstream's default. **P1-15 confirms the version MP4's `msm` needs.**
+`MPT_MUSYX_VERSION` defaults to 2.0.0, upstream's default. **P1-15 confirmed 2.0.0 for MP4's `msm`** (§18).
 
 **Compiler flags and math.** Every musyx unit is force-included with `musyx_state_section.h`, which pulls in `mpt_gc/libm_redirect.h`. That header sends `powf`, `pow`, `sin`, `cos`, `sinf`, `cosf`, `tanf`, `acosf` and `atan2f` to `mpt_*`:
 - The audit of the linked sources found `powf` (the ADSR time-cents curve and reverb comb coefficients), `sin`/`cos` (the resampler's polyphase table) and `cos` (`sndCos`).
@@ -555,10 +555,69 @@ Decide whether the ID counters are hashed. They are stored in game memory (`GXTe
 - goldens pin the PCM and the trail.
 
 **Merge conditions** (ADR 0009 amendment after P1-13b):
-- (a) Party Board's `msm` builds against the pin: **P1-15**.
+- (a) Party Board's `msm` builds against the pin: **met at build level by P1-15** (§18). Its file structures are not yet byteswapped.
 - (b) met: render on the game thread only, and the services link check passes.
 - (c) clang-cl: met. **Linux Clang: not yet run** (there is no Linux machine here, and CI does not fetch musyx).
 - (d) met on synthetic data.
+
+## 18. The game module (P1-15, `runtimes/gc_wii/mp4/`)
+
+**Decomp progress and pins (2026-10-19).** `marioparty4` is fully matching for `GMPE01_00` (245 objects `Matching`, 238 `MatchingFor(USA, PAL)`, none non-matching; `main` at `147b165`). The module is built from **Party Board `98ac07fd1e8f7ab938bbb6fe75789fad99419010`** (tree `a3471c744d132b4625a4869da4e72cf85c5a1d9a`, CC0 1.0), **musyx `86851a3`** and **aurora `5143394`**, all in `decomp.lock` and fetched by `mpt_fetch_sources` into the source cache. Party Board's `extern/aurora` submodule is satisfied by the separate aurora pin. libco is **not** used (see below), so it has no pin.
+
+**Build.** `MPT_BUILD_MP4_GAME_MODULE=ON` (off by default) adds `mp4/` to the Clang project. The pins are copied into the build tree and our patches are applied with `git apply` (Party Board patches `patches/partyboard/0001`–`0014`, aurora patches `gx/patches/aurora/0001`–`0016`). Game code builds with `TARGET_PC MPT_PC NON_MATCHING OPTIMIZED_TEXTURE_LOADING BYTESWAPPING TARGET_DOL VERSION=0`. `VERSION=0` is `GMPE01_00`; Party Board itself builds `VERSION=1`. `MPT_PC` is our target macro, used wherever Party Board's `TARGET_PC` code assumes its own port layer. The output is `mp4_game.dll` (`.so` on Linux), which exports **only** `mpt_mp4_get_api`. Patch 0014 turns off Party Board's `SHARED_SYM` exports. Without a dump everything compiles and links, so this is the compile-only build for CI.
+
+**Recipe** (`mp4/recipe/`, host side, `mpt::mp4::make_recipe`). It pins the three sources, extracts the disc, checks for clang-cl (clang on Linux), cmake and ninja, and records the Clang version and target in the build key. It then configures `runtimes/gc_wii` as a Clang project with the resolved checkouts, builds `mp4_game`, and installs it as `<build>/module/mp4_game.dll`, with the extracted disc in `<build>/disc/`. It refuses any revision other than `GMPE01_00`. The shell registration and the GX backend/Dawn arguments belong to P1-16.
+
+**Required pieces.**
+1. **REL symbol isolation** (`tools/MptMp4Rel.cmake`, `tools/isolate_rel.cmake`). Each of the 91 RELs is its own object library. Its defined external symbols are renamed to `mpt_rel_<REL>__<sym>` with `llvm-objcopy --redefine-syms` and archived. An info record gives the REL's `ObjectSetup` and data range. Every REL is linked into the one module.
+2. **Pristine `.data` restore.** A forced-include header puts each REL's writable data in its own section: `.data$mptrel$<REL>$b` between `$a`/`$c` markers on COFF, and `mptrel_<REL>` with `__start_`/`__stop_` on ELF. `-fno-zero-initialized-in-bss` keeps `.bss` inside that range. `rel_loader.c` copies every range at init and restores it on each `omDLLLink` (patch 0003 replaces the per-REL DLL loader). That gives fresh `.data` and zeroed `.bss`, as `OSLink` does. The game core (DOL, msm, port files) gets one range of its own (`.data$mptgame$b`). The REL ranges and the game-core range are registered as SDK state regions. **Unit check:** `mp4_rel_isolation` uses two synthetic RELs with the same names and checks independent resolution, intra-REL references, restore and zeroing.
+3. **DOL data reader** (`src/port.c`). It uses Party Board's `dolassets` address table, reduced to the `GMPE01_00` column, and maps each blob through `main.dol`'s section table instead of Party Board's fixed shift. Attach fails if any blob falls outside a section. The disc-error screens use explicit indices (patch 0006), because Party Board's `dolassets.h` maps `retryerror_en` to the French entry and has no `wrongdisc_en`. The boot logo is still read from `dll/bootDll.rel` through the DVD layer.
+4. **64-bit HSF conversion** is Party Board's `byteswap.cpp`, unchanged. **Pointer/integer cast review:** a scan of every game object with clang's cast warnings (`-Wpointer-to-int-cast`, `-Wint-to-pointer-cast` and the void variants) found that `msm` did pointer arithmetic through `u32` (patch 0013 changes it to `uintptr_t`). It also found that `THPSimple.c` passed AI DMA buffers as `u32`, because aurora declares 32-bit addresses (patch 0008 adds bridges to the SDK's `uintptr_t` calls). The remaining casts are harmless: 32-bit offset arithmetic in `msmmem.c`, an ARAM address round trip in `msmsys.c`, and an int kept in `user_data` in `w04Dll`.
+5. **Constant heap-header caller address.** Party Board already passes `0` (`HuMemDirectMalloc`/`Free` under `TARGET_PC`) or `FAKE_RETADDR` (`process.c`). No other `HuMemMemoryAlloc` caller exists.
+6. **`ztardll` low-memory read.** `*(u32*)0x800000F8` (the bus clock) becomes `OS_BUS_CLOCK` (patch 0012). The read is in a `!VERSION_ENG` branch, so `GMPE01_00` never runs it.
+7. **C ABI** (`include/mpt/mp4/game_abi.h`, **draft v1 for architect review**). One export returns a versioned function table:
+   - create/destroy, step, frame, fault and frame rate;
+   - state hash and save/load state;
+   - save media and its generation;
+   - video (RGBA8), audio (s16 stereo), rumble and OSReport text;
+   - raw party reads (overlay, board, turn, max turns, and per player the character, CPU flag, coins, stars and space).
+
+   Every struct carries `struct_size`, the input frame mirrors `mpt::InputFrame` byte for byte, and the module owns all memory it returns. Boot flags set Party Board's gameplay options (skip boot sequence, unlock minigames, unlock Bowser's Gnarly Party) for the session from the host. Local preferences never set them. `mp4_game_abi` loads the module and checks versioning and argument handling. The build ID hashes the pins, every patch, the GX backend and the compiler.
+
+**Also in this work.**
+- **Port layer** (`src/port.c`, `src/sdk_bridge.c`, patches 0010–0011). Party Board's settings and version queries return fixed `GMPE01_00` answers. `main.c` is the console loop, entered as `mpt_mp4_game_main` with no aurora frame calls, SDL events, UI or frame limiter. `card.c` calls the console `CARDInit`.
+- **Coroutines.** libco's API on the SDK's own context switch (`mpt_gc/coro.h`, `src/libco.c`). Process stacks come from the process heap, as on the console (patch 0002, twice the console size). Each stack has a record and a 256-byte canary at its low end. A smashed canary or a returning process is an `OSPanic`.
+- **SDK additions:**
+  - `OSStopwatch*`, which read `OSGetTime` and so cost one quantum each, as on the console;
+  - `OSDumpHeap`, `OSGetResetButtonState`, and `OSCachedToUncached`/`OSUncachedToCached` (identity);
+  - `__OSCurrHeap`, the public SDK name, replacing `__OSCurrentHeap`.
+- **Layout contract** (`sdk/include/mpt_gc/layout_contract.h`). A record-layout comparison against the aurora headers found two real mismatches. aurora's `PADStatus` is 16 bytes (`extButton`), so `PADRead` wrote pads 2–4 at the wrong stride. aurora's `ARQRequest` has 32-bit `source`/`dest`, so `ARQPostRequest` wrote 16 bytes past a 40-byte request. Both are fixed in the SDK. Every size and offset of `PADStatus`, `DVDCommandBlock`, `DVDFileInfo`, `CARDFileInfo`, `CARDStat`, the `ARQRequest` prefix, `OSCalendarTime`, `OSStopwatch` and `OSThreadQueue` is now asserted on both sides: `sdk/src/layout.cpp` against our headers, and `mp4/src/layout_check.c` against the game's. A signature comparison of the 236 functions declared by both found only `CARDInit` (aurora has two arguments; bridged) and the AI DMA calls above with ABI-relevant differences. The rest are `const`, `BOOL`/`int` and typedef spellings.
+- **Copy-destination trap** (`src/copy_trap.cpp`, aurora patch 0016, boot flag `MPT_MP4_BOOT_DEBUG_COPY_TRAP`):
+  - While a frame step runs, whole pages inside each `GXCopyTex` destination are protected.
+  - A CPU read faults the step with the overlay's name, unless the overlay is on the allow-list. The allow-list is `m415Dll`: Stamp Out! memcpys its shadow map into a texture, and on PC it copies zeros. Party Board does not branch this code.
+  - A CPU write releases the range, because the heap or the game reused it.
+  - Pages are unprotected between steps, so save states and hashes never fault.
+  - `mp4_copy_trap` drives the real `GXCopyTex` on the null renderer.
+
+**Merge condition (a): met at build level.** `msm` compiles and links against musyx `86851a3` with `MUSY_VERSION` 2.0.0 (patches 0001, 0007, 0009). It needed:
+- the msm headers' declarations;
+- `SND_HOOKS` with a `size_t` malloc;
+- `msmSysLoadGroup` without the console's ignored third argument;
+- `msmSysCheckInit` returning `sndIsInstalled()`, the r3 value `sreset.c` tests.
+
+**`MPT_MUSYX_VERSION` stays 2.0.0.** msm links against 2.0.0 and has no `MUSY_VERSION` checks. Runtime correctness is open; see below.
+
+**Determinism notes.**
+- `m404` has a Party Board TODO, "do we need to byteswap this?", at a 16-bit read next to its `DebugBreak`. Patch 0004 removes the `DebugBreak` but does not answer the question. The dump lane must check the value (Trace Race).
+- `sreset.c`'s reset path spins on `VIGetRetraceCount` with a 1,349,800-iteration cap before `OSResetSystem`. The cap bounds it, and the SDK faults on reset.
+- `HuTHP3DCreateVol` returned an undefined value on an early exit (patch 0008 returns -1). Nothing calls it.
+
+**Open before M1 (boots headless on the dump lane).** These are listed in the P1-15 report and carried by P1-16:
+- **msm's file structures are big-endian.** The `.msm` header, group info, group data offsets, music/SE tables and stream headers are read raw from disc and used as host integers. Party Board never ran msm, so none of this is converted. `msmSysInit` will read garbage sizes until msm gets byteswap passes for its file structures. This is the first thing a headless boot will hit.
+- Process coroutine stacks are game-sized (4–32 KiB). SDK interrupts that fall due at a call boundary inside a process, including the MusyX render on the AI tick, run on that stack. The stack high-water mark must be measured on the dump lane. If it is too high, the SDK should run due interrupts on its interrupt coroutine from a boundary instead.
+- The GX front end's state (`g_gxState`) is not in the save state. Load restores only the object ID counters and resets the renderer caches.
+- MP4's I/O callback mode (P1-16 audit), the fixed module and arena bases, and the hash manifest. v1 covers the SDK, MusyX, the `GW*` blocks, `rnd_seed` and the current overlay.
+- **Linux:** the module has not been built on Linux here. The ELF section markers and `__start_`/`__stop_` bounds are untested, and CI is blocked.
 
 ---
 
