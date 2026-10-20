@@ -40,7 +40,9 @@ int main(int argc, char** argv) {
   const MptMp4Api* api = get_api(MPT_MP4_ABI_VERSION);
   CHECK(api != NULL);
   if (api == NULL) return 1;
-  CHECK(api->struct_size == sizeof(MptMp4Api));
+  CHECK(api->struct_size >= MPT_MP4_API_SIZE_V1_0);
+  CHECK(api->state_format() != 0);
+  CHECK(api->card_format() != 0);
   CHECK(api->abi_version == MPT_MP4_ABI_VERSION);
   CHECK(api->build_id != NULL && strncmp(api->build_id, "mp4-", 4) == 0);
 
@@ -59,6 +61,9 @@ int main(int argc, char** argv) {
   CHECK(game == NULL);
 
   config.abi_version = MPT_MP4_ABI_VERSION;
+  config.struct_size = MPT_MP4_BOOT_CONFIG_SIZE_V1_0 - 8; /* shorter than v1.0 */
+  CHECK(api->create(&config, &game, &error) == MPT_MP4_ERR_VERSION);
+  config.struct_size = sizeof config;
   CHECK(api->create(&config, &game, &error) == MPT_MP4_ERR_DISC);
   CHECK(game == NULL);
   CHECK(error.message[0] != '\0');

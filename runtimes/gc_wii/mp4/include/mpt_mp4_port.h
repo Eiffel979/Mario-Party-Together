@@ -22,8 +22,8 @@ typedef struct MptMp4PortConfig {
 extern MptMp4PortConfig mpt_mp4_port_config;
 
 /* The DOL data reader (ADR 0009 section 3). Takes the user's main.dol (sys/main.dol in the extracted
- * disc), which must stay alive while the module runs, and checks that every blob the game reads is
- * inside a DOL section. Returns 0 and fills `error` when it is not GMPE01_00's layout. */
+ * disc), checks that every blob the game reads is inside a DOL section, and copies them into module
+ * storage (the game-core state range), so the DOL buffer need not outlive the call. Returns 0 and fills `error` when it is not GMPE01_00's layout. */
 int mpt_mp4_dol_attach(const unsigned char* dol, size_t size, char* error, size_t error_size);
 void mpt_mp4_dol_detach(void);
 

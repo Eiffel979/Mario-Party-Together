@@ -13,12 +13,42 @@
 extern FileListEntry _ovltbl[];
 extern s32 rnd_seed;
 
+static const char* overlay_name(int32_t ovl) {
+  return (ovl >= 0 && ovl < DLL_MAX) ? _ovltbl[ovl].name : NULL;
+}
+
+/* A board overlay: w01Dll..w06Dll (party boards) and the other wNN boards. */
+static int is_board(const char* name) {
+  return name != NULL && name[0] == 'w' && name[1] >= '0' && name[1] <= '9' && name[2] >= '0' && name[2] <= '9';
+}
+
+/* Whether a board is anywhere in the overlay history (omOvlHisGet: level 0 is the newest). Read
+ * directly from the history array through omOvlHisGet, which only reads. */
+static int board_in_history(void) {
+  for (s32 level = 0; level <= omovlhisidx; ++level) {
+    const omOvlHisData* his = omOvlHisGet(level);
+    if (his != NULL && is_board(overlay_name(his->overlay))) return 1;
+  }
+  return 0;
+}
+
 void mpt_mp4_read_party(MptMp4Party* out) {
   out->overlay = (omcurovl >= 0 && omcurovl < DLL_MAX) ? (int32_t)omcurovl : -1;
   memset(out->overlay_name, 0, sizeof out->overlay_name);
   if (out->overlay >= 0 && _ovltbl[out->overlay].name != NULL) {
     strncpy(out->overlay_name, _ovltbl[out->overlay].name, sizeof out->overlay_name - 1);
   }
+  uint32_t flags = 0;
+  if (GWSystem.party) flags |= MPT_MP4_PARTY_MODE;
+  const char* running = overlay_name(out->overlay);
+  if (GWSystem.party && running != NULL && strcmp(running, "mentDll") == 0) flags |= MPT_MP4_PARTY_IN_SETUP;
+  const int on_board = GWSystem.party && board_in_history();
+  if (on_board) flags |= MPT_MP4_PARTY_IN_PROGRESS;
+  if (GWSystem.party && GWSystem.max_turn > 0 && GWSystem.turn > GWSystem.max_turn) {
+    flags |= MPT_MP4_PARTY_TURNS_OVER;
+    if (!on_board) flags |= MPT_MP4_PARTY_RESULTS_FINAL;
+  }
+  out->flags = flags;
   out->board = GWSystem.board;
   out->turn = GWSystem.turn;
   out->max_turns = GWSystem.max_turn;
