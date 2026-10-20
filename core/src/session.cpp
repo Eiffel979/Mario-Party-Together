@@ -16,6 +16,14 @@ std::set<TitleId> g_live_titles;
 
 std::string title_name(TitleId title) { return std::string(to_string(title)); }
 
+// Success while running; otherwise "runtime halted|faulted <when>: <message>" (ADR 0011).
+Result check_running(const ITitleRuntime& runtime, const std::string& when) {
+  const RuntimeHealth health = runtime.status();
+  if (health.status == RuntimeStatus::running) return Result::success();
+  const char* what = health.status == RuntimeStatus::halted ? "runtime halted " : "runtime faulted ";
+  return Result::failure(what + when + (health.message.empty() ? std::string() : ": " + health.message));
+}
+
 }  // namespace
 
 std::optional<Session::TitleLease> Session::TitleLease::acquire(TitleId title) {
@@ -68,6 +76,8 @@ std::variant<std::unique_ptr<Session>, Result> Session::start(const TitleRegistr
     }
   }
 
+  if (Result running = check_running(*runtime, "after boot"); !running) return running;
+
   std::unique_ptr<Session> session(new Session(std::move(*lease), std::move(runtime), std::move(adapter)));
   session->director_.resync(0, session->adapter_->readParty());
   return session;
@@ -78,12 +88,16 @@ Result Session::step(const InputFrame& inputs) {
     return Result::failure("input for frame " + std::to_string(inputs.frame) + " given at frame " +
                            std::to_string(frame_));
   }
+  // A runtime that has stopped is not stepped again until a loadState revives it (ADR 0011).
+  if (Result running = check_running(*runtime_, "before frame " + std::to_string(frame_)); !running) return running;
   const std::uint64_t generation_before = runtime_->saveMediaGeneration();
   runtime_->stepFrame(inputs);
   ++frame_;
   if (runtime_->saveMediaGeneration() != generation_before) pending_save_media_ = runtime_->saveMedia();
   director_.observe(inputs.frame, adapter_->readParty());
-  return Result::success();
+  // The frame that stopped the runtime still happened: it is counted, observed and its save
+  // write kept, and only then reported.
+  return check_running(*runtime_, "at frame " + std::to_string(inputs.frame));
 }
 
 Result Session::loadState(const SaveState& state) {

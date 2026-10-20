@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 
 #include "mpt/core/dump.h"
 #include "mpt/core/input.h"
@@ -29,6 +30,20 @@ struct FrameRate {
   std::uint32_t denominator = 1;
 
   friend bool operator==(const FrameRate&, const FrameRate&) = default;
+};
+
+// Whether a runtime can still step (ADR 0011).
+enum class RuntimeStatus : std::uint8_t {
+  running,  // stepFrame() may be called
+  halted,   // the game ended by itself (its main loop returned)
+  faulted,  // a deterministic fault the runtime cannot continue from
+};
+
+struct RuntimeHealth {
+  RuntimeStatus status = RuntimeStatus::running;
+  std::string message{};  // empty while running; why it stopped otherwise
+
+  friend bool operator==(const RuntimeHealth&, const RuntimeHealth&) = default;
 };
 
 struct RuntimeConfig {
@@ -113,6 +128,14 @@ class ITitleRuntime {
   virtual std::uint64_t saveMediaGeneration() const = 0;
   // Current image. Only meaningful to persist when the generation has changed.
   virtual SaveMedia saveMedia() const = 0;
+
+  // Runtime status (ADR 0011). Valid after boot(). Changes only as a result of boot(),
+  // stepFrame() or loadState(), so it is deterministic: every peer and replay sees the
+  // same status on the same frame. halted and faulted are terminal until a loadState()
+  // restores a running state; queries (video, audio, stateHash, saveState, ...) still
+  // work, but stepFrame() must not be called. Host failures (memory, files) are boot()
+  // or loadState() failures, never a status. The default is for runtimes that never stop.
+  virtual RuntimeHealth status() const { return {}; }
 };
 
 }  // namespace mpt
