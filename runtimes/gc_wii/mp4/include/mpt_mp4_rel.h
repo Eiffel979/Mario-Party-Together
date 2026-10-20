@@ -31,6 +31,9 @@ void mpt_mp4_rel_unlink(const MptMp4RelInfo* rel);
  * every REL's range, this is the game state outside the SDK arena. */
 unsigned char* mpt_mp4_game_data_lo(void);
 unsigned char* mpt_mp4_game_data_hi(void);
+/* Restores the game core's data to its image at module load (the first call takes that image). Called
+ * before every boot. Returns 0 on failure. */
+int mpt_mp4_game_data_reset(void);
 
 /* The generated table (mpt_mp4_rel_table.c). */
 extern const MptMp4RelInfo* const mpt_mp4_rel_table[];

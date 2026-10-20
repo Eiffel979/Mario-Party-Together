@@ -67,8 +67,12 @@ static const DolBlob s_dol_blobs[DOL_INCLUDE_COUNT] = {
 #define NINTENDODATA_OFFSET (0x2B80u + 0xA0u)
 #define NINTENDODATA_SIZE 0x307Du
 
-static const unsigned char* s_dol;
-static const unsigned char* s_dol_blob_ptr[DOL_INCLUDE_COUNT];
+/* The blobs are copied into module storage at attach, so no host pointer reaches game state: the game
+ * keeps pointers to them, and module data has a fixed address at a fixed module base (ADR 0008
+ * section 11). This file's data is part of the game-core state range. Offsets are 32-byte aligned. */
+#define MPT_DOL_BLOB_BYTES 0x15000u /* 0x14DA0 used by GMPE01_00 */
+static unsigned char s_blob_storage[MPT_DOL_BLOB_BYTES] __attribute__((aligned(32)));
+static uint32_t s_blob_offset[DOL_INCLUDE_COUNT]; /* 0 = not attached; offsets start at 32 */
 
 static uint32_t be32(const unsigned char* p) {
   return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | (uint32_t)p[3];
@@ -104,36 +108,38 @@ static void set_error(char* error, size_t error_size, const char* message) {
 }
 
 int mpt_mp4_dol_attach(const unsigned char* dol, size_t size, char* error, size_t error_size) {
-  const unsigned char* found[DOL_INCLUDE_COUNT];
+  uint32_t at = 32;
   for (int i = 0; i < DOL_INCLUDE_COUNT; ++i) {
-    found[i] = NULL;
+    s_blob_offset[i] = 0;
     if (s_dol_blobs[i].address == 0) {
       continue;
     }
-    found[i] = dol_find(dol, size, s_dol_blobs[i].address, s_dol_blobs[i].size);
-    if (found[i] == NULL) {
+    const unsigned char* found = dol_find(dol, size, s_dol_blobs[i].address, s_dol_blobs[i].size);
+    if (found == NULL) {
       set_error(error, error_size, "main.dol does not have GMPE01_00's layout (a data blob is outside every section)");
       return 0;
     }
+    if (at + s_dol_blobs[i].size > MPT_DOL_BLOB_BYTES) {
+      set_error(error, error_size, "DOL blob storage is too small");
+      return 0;
+    }
+    memcpy(s_blob_storage + at, found, s_dol_blobs[i].size);
+    s_blob_offset[i] = at;
+    at = (at + s_dol_blobs[i].size + 31u) & ~31u;
   }
-  s_dol = dol;
-  memcpy(s_dol_blob_ptr, found, sizeof found);
   return 1;
 }
 
-void mpt_mp4_dol_detach(void) {
-  s_dol = NULL;
-  memset(s_dol_blob_ptr, 0, sizeof s_dol_blob_ptr);
-}
+void mpt_mp4_dol_detach(void) { memset(s_blob_offset, 0, sizeof s_blob_offset); }
 
 void InitializeDol(void) {} /* mpt_mp4_dol_attach replaces it */
 
-/* The blobs are read-only and outside the arena; the game only reads them. */
+/* The game only reads the blobs. */
 void* GetDolIncludeData(int index) {
-  if (index < 0 || index >= DOL_INCLUDE_COUNT || s_dol_blob_ptr[index] == NULL) {
+  if (index < 0 || index >= DOL_INCLUDE_COUNT || s_blob_offset[index] == 0) {
     OSPanic(__FILE__, __LINE__, "DOL data %d is not available in GMPE01_00", index);
   }
-  return (void*)s_dol_blob_ptr[index];
+  return s_blob_storage + s_blob_offset[index];
 }
 
 void* GetRelIncludeData(int index) {

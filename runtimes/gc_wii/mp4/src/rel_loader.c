@@ -57,3 +57,26 @@ void mpt_mp4_rel_object_setup(const MptMp4RelInfo* rel) {
 void mpt_mp4_rel_unlink(const MptMp4RelInfo* rel) {
   (void)rel; /* nothing to free: the REL stays mapped, and its data is restored on the next link */
 }
+
+/* The game core's pristine image, taken on the first call (before any game code has run) and restored
+ * on every later one: a fresh boot, whether a new game in the same process or a soft reset. */
+static unsigned char* s_game_pristine = 0;
+
+int mpt_mp4_game_data_reset(void) {
+  unsigned char* lo = mpt_mp4_game_data_lo();
+  unsigned char* hi = mpt_mp4_game_data_hi();
+  if (lo == 0 || hi <= lo) {
+    return 1;
+  }
+  const size_t size = (size_t)(hi - lo);
+  if (s_game_pristine == 0) {
+    s_game_pristine = (unsigned char*)malloc(size);
+    if (s_game_pristine == 0) {
+      return 0;
+    }
+    memcpy(s_game_pristine, lo, size);
+    return 1;
+  }
+  memcpy(lo, s_game_pristine, size);
+  return 1;
+}
