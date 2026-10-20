@@ -1,5 +1,8 @@
 /* The game module's C ABI from a host's point of view: load the module, look up its one export, check
  * versioning and argument validation. No dump: boots that need disc files are the dump lane's (P1-16). */
+#if !defined(_WIN32) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE /* dladdr */
+#endif
 #include <stdio.h>
 #include <string.h>
 
@@ -40,7 +43,16 @@ int main(int argc, char** argv) {
   const MptMp4Api* api = get_api(MPT_MP4_ABI_VERSION);
   CHECK(api != NULL);
   if (api == NULL) return 1;
-  CHECK(api->struct_size >= MPT_MP4_API_SIZE_V1_0);
+  CHECK(api->struct_size >= MPT_MP4_API_SIZE_V1_1 && api->status != NULL);
+  /* The fixed image base (ADR 0008 section 11, mp4/layout.cmake). */
+#if defined(_WIN32)
+  CHECK((uintptr_t)module == (uintptr_t)MPT_MP4_MODULE_BASE);
+#else
+  {
+    Dl_info info;
+    CHECK(dladdr((void*)get_api, &info) != 0 && (uintptr_t)info.dli_fbase == (uintptr_t)MPT_MP4_MODULE_BASE);
+  }
+#endif
   CHECK(api->state_format() != 0);
   CHECK(api->card_format() != 0);
   CHECK(api->abi_version == MPT_MP4_ABI_VERSION);

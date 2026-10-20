@@ -216,10 +216,15 @@ add_dependencies(mpt_mp4_objects mpt_mp4_dol)
 foreach(_rel IN LISTS MPT_MP4_RELS)
   add_dependencies(mpt_mp4_objects mpt_mp4_rel_${_rel})
 endforeach()
+# A fixed image base (ADR 0008 section 11): function pointers the game stores in the arena and in its
+# state regions stay valid in a fresh process. Windows: no dynamic base and no relocations, so the
+# loader either maps it there or fails. Linux: lld links the .so at that base; glibc's loader asks the
+# kernel for that address, and the host runtime checks where it landed.
+include("${CMAKE_CURRENT_SOURCE_DIR}/layout.cmake")
 if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-  target_link_options(mp4_game PRIVATE /errorlimit:0)
+  target_link_options(mp4_game PRIVATE /errorlimit:0 "/BASE:${MPT_MP4_MODULE_BASE}" /DYNAMICBASE:NO /FIXED)
 else()
-  target_link_options(mp4_game PRIVATE -Wl,--error-limit=0)
+  target_link_options(mp4_game PRIVATE -Wl,--error-limit=0 -fuse-ld=lld "-Wl,--image-base=${MPT_MP4_MODULE_BASE}")
 endif()
 
 # Unit checks (synthetic data only).

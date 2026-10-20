@@ -220,6 +220,10 @@ typedef struct MptMp4Api {
 
   /* Cheap and pure: never changes game state (ADR 0002 rule 9). */
   void (*party)(const MptMp4Game* game, MptMp4Party* out);
+
+  /* v1.1: the module's status (RUNNING, HALTED or FAULTED), the same value the last step returned and
+   * what a load_state restored (ADR 0011). NULL in a v1.0 module. */
+  MptMp4StepResult (*status)(const MptMp4Game* game);
 } MptMp4Api;
 
 /* v1.0 sizes (x86-64). A caller's struct_size must be at least these. */
@@ -229,6 +233,7 @@ typedef struct MptMp4Api {
 #define MPT_MP4_AUDIO_SIZE_V1_0 32u
 #define MPT_MP4_PARTY_SIZE_V1_0 136u
 #define MPT_MP4_API_SIZE_V1_0 160u
+#define MPT_MP4_API_SIZE_V1_1 168u /* adds status */
 
 MPT_MP4_STATIC_ASSERT(sizeof(void*) == 8, "the MP4 game module ABI is defined for 64-bit hosts");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Error) == MPT_MP4_ERROR_SIZE_V1_0, "MptMp4Error v1.0");
@@ -236,7 +241,7 @@ MPT_MP4_STATIC_ASSERT(sizeof(MptMp4BootConfig) == MPT_MP4_BOOT_CONFIG_SIZE_V1_0,
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Video) == MPT_MP4_VIDEO_SIZE_V1_0, "MptMp4Video v1.0");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Audio) == MPT_MP4_AUDIO_SIZE_V1_0, "MptMp4Audio v1.0");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Party) == MPT_MP4_PARTY_SIZE_V1_0, "MptMp4Party v1.0");
-MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Api) == MPT_MP4_API_SIZE_V1_0, "MptMp4Api v1.0");
+MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Api) == MPT_MP4_API_SIZE_V1_1, "MptMp4Api v1.1");
 /* Frozen for major version 1. */
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Pad) == 32, "MptMp4Pad is frozen");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4InputFrame) == 136, "MptMp4InputFrame is frozen");

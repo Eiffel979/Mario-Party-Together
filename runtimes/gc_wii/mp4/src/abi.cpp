@@ -535,10 +535,12 @@ void party(const MptMp4Game* game, MptMp4Party* out) {
   mpt_mp4_read_party(out);
 }
 
+MptMp4StepResult statusOf(const MptMp4Game* game) { return game ? result(*game) : MPT_MP4_STEP_FAULTED; }
+
 const MptMp4Api kApi = {
     sizeof(MptMp4Api), MPT_MP4_ABI_VERSION, MPT_MP4_BUILD_ID,
     &create, &destroy, &step, &frame, &fault, &frameRate, &stateHash, &saveState, &loadState, &stateFormat,
-    &saveMediaGeneration, &saveMedia, &cardFormat, &video, &audio, &rumble, &setReport, &party,
+    &saveMediaGeneration, &saveMedia, &cardFormat, &video, &audio, &rumble, &setReport, &party, &statusOf,
 };
 
 }  // namespace
