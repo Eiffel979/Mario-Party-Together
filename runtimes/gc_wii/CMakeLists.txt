@@ -33,6 +33,7 @@ set(MPT_CORE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../core/include" CACHE 
 # the root project has. They are not game code, so they build with the root's compiler.
 if(TARGET mpt::asset_import)
   add_subdirectory(gx/tools)
+  add_subdirectory(mp4/recipe)  # asset-import's MP4 build recipe
 endif()
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
