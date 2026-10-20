@@ -166,3 +166,49 @@ P1-14's MTX goldens failed on Linux on **NaN sign and payload bits** (`docs/titl
 5. **Signed zero stays exact.** Under strict FP (no fast-math, `-ffp-contract=off`), the sign of a zero result is fully specified by IEEE 754, so a difference there is a real divergence. `1/x` and `atan2` already make it behaviour.
 6. **`SaveState` is unaffected.** It keeps the raw bytes (§10), so `loadState` restores every NaN bit for bit, and the run continues exactly as the producer's would on the same build. The hash after a load still equals the producer's (ADR 0002 rule 5), because the same canonical hashing applies to both. The deep-hash debug mode (§9) hashes raw memory. It can show NaN-bit differences between two builds, and that is expected; it is only ever compared on one machine and one build.
 7. **Contract version.** The two functions are added to `state.h`, and every existing digest (`update`, `update_u64`) is unchanged. So no recorded hash, replay or golden trail changes, and `kCoreContractVersion` stays 1 (ADR 0002, amendment 16).
+
+## Review of the MP4 game-module C ABI v1 (architect, 2026-10-19)
+I reviewed the draft `runtimes/gc_wii/mp4/include/mpt/mp4/game_abi.h` (P1-15, branch `p1-15-mp4-module`) against the host/Clang split above.
+
+**Verdict: approved as the shape, with required changes.** They must land before P1-16 merges.
+
+The design is right:
+- one export, `mpt_mp4_get_api(version)`, returning a function table;
+- plain C types only, and no struct passed by value;
+- memory the module returns stays owned by the module;
+- the input frame mirrors `mpt::InputFrame` (checked with `static_assert` in `abi.cpp`);
+- frames cross as `cpu_rgba8`;
+- one game per process, with `MPT_MP4_ERR_BUSY`, matching ADR 0002 rule 10.
+
+It covers everything `Mp4Runtime` needs for `ITitleRuntime`: boot, step, frame numbering, frame rate, `video`/`audio`, `saveState`/`loadState`, `stateHash`, and save media with its generation. Required changes:
+
+1. **Lifetimes follow ADR 0002 rule 6, not "until the next call".** The draft makes memory valid "until the next call that names the same game". Under that rule, calling `audio()` invalidates the pointer from `video()`, but the shell reads both after every step.
+   - Returned buffers (`video`, `audio`, `party`, `fault`) must stay valid until the next `step`, `load_state` or `destroy`.
+   - Query functions never invalidate anything.
+2. **`audio()` returns the samples of the last step and is idempotent.** Today it calls `takeAudio()`, so a second call returns nothing, while `ITitleRuntime::audio()` is "output of the last stepFrame()". The module collects each step's samples during `step`.
+3. **Boot flags are determinism inputs.** `SKIP_BOOT_SEQUENCE` and the two unlock flags change the game's trajectory. Under ADR 0002 rule 2 they would be inputs that no replay or peer records.
+   - **Phase 1:** `Mp4Runtime` always passes one fixed constant set of gameplay flags, documented in `docs/titles/mp4.md`. Gameplay flags are never user-settable.
+   - **Later:** the unlock options become title-specific rules, through the ruleset follow-up ADR (ADR 0002 review), and are recorded in the replay's ruleset field.
+   - The module **includes the gameplay flags in `state_hash`**, so a mismatch shows on the first checkpoint.
+   - `DEBUG_COPY_TRAP`, `video_backend`, `internal_scale`, `audio_output`, `cache_dir` and `arena_base` must not affect `state_hash` (rule 2, E6).
+4. **No host pointers in game-visible memory.** `disc_root` and `cache_dir` are copied at `create`. The report callback and its `user` pointer live in the module's host-side object, as they do today. None of these may live in the arena or in a registered global that `save_state` captures (§11).
+5. **Forward compatibility, done properly.**
+   - `create` accepts any `struct_size` at least as large as the **v1.0 size** of each struct. A named constant, not `sizeof` of the current struct, so a v1.1 module still accepts a v1.0 host. Fields beyond the caller's `struct_size` get v1.0 defaults.
+   - `MptMp4Api::struct_size` is set by the **module**. The host checks that it covers every function pointer it calls. Entries added in a minor version may be NULL.
+   - Fixed-layout structs without `struct_size` (`MptMp4Pad`, `MptMp4InputFrame`, `MptMp4FrameRate`, `MptMp4PartyPlayer`) are frozen for major version 1. The header asserts their sizes in C (`_Static_assert`), and the host asserts them against `mpt::` types as `abi.cpp` does.
+   - The module folds stick value -32768 to -32767 (ADR 0002, amendment 12).
+6. **Save states.**
+   - The blob carries the full `build_id` and its own layout version, and `load_state` rejects any mismatch with `MPT_MP4_ERR_STATE`. `Mp4Runtime` fills `SaveState::format_version` from that layout version (§10).
+   - After `load_state`, `frame()` returns the state's frame (rule 3).
+   - The comment "valid in the same process" must say "same build and platform, at the same arena and module base". E5 needs fresh-process loads (§11) unless the M1 narrowing rule triggers.
+   - Card image and generation are restored with the state (ADR 0004 rule 9).
+7. **The party struct must be enough to derive `PartyPhase`.** The overlay index and name give board and minigame, but cannot tell `results` from `finished` (ADR 0005: `finished` only once results are final).
+   - Add the raw fields the adapter needs, as `uint32_t` flags or game values: at least "a party is in progress", "in party setup" and "results final". Which game variables back them is runtime-gc-wii's call, in `docs/titles/mp4.md`.
+   - `party()` must stay cheap and must never change game state (ADR 0002 rule 9).
+   - Mapping overlay names and character indices to content IDs is the host adapter's job, which is right.
+
+**Open item for core (architect):** `step` can return `HALTED` or `FAULTED`, but `ITitleRuntime::stepFrame` has no way to report it.
+- `RESET_REQUESTED` (`OSResetSystem`) should be handled **inside the module**, as a deterministic soft reset, so it never needs the host.
+- For halts and faults, I will write a small additive core ADR before P1-16 merges: a runtime status query that `Session::step` turns into a failed `Result`. Until then, `Mp4Runtime` logs the fault and stops stepping the module, but keeps the frame count.
+
+`rumble()` stays presentation-only. It is derived from game state and may be ignored until the host-feedback follow-up (ADR 0002 review, Phase 4).
