@@ -2,3 +2,8 @@
 # Only our own original files belong here, never anything derived from a game.
 # Every entry needs a comment saying what the file is and why it must be binary.
 # qa-reviewer approves additions.
+
+# The launcher's one font (ADR 0010 section 5, Review 4): Lato, Latin subset, under the
+# SIL Open Font License 1.1, unmodified, with its licence in ui/assets/fonts/OFL.txt.
+# A font is binary by nature. Exact path only: any other binary under ui/ still fails.
+ui/assets/fonts/LatoLatin-Regular.ttf

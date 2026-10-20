@@ -1,0 +1,37 @@
+<rml>
+<head>
+  <title>Import</title>
+  <link type="text/rcss" href="../assets/theme.rcss"/>
+</head>
+<body data-model="ui">
+  <h1>{{imp_title}}</h1>
+  <div class="brand-bar"></div>
+  <p class="muted">{{imp_file}}</p>
+
+  <div data-if="imp_phase == 'busy'">
+    <h2>{{imp_heading}}</h2>
+    <p>{{imp_stage}}</p>
+    <div class="progress"><div class="fill" data-style-width="imp_width"></div></div>
+    <div class="btn" data-event-click="import_cancel" autofocus="">Cancel</div>
+  </div>
+
+  <div data-if="imp_phase == 'rejected'">
+    <h2 class="error">{{imp_heading}}</h2>
+    <div class="panel"><p>{{imp_message}}</p></div>
+    <div class="btn" data-event-click="import_retry" autofocus="">Choose another file</div>
+    <div class="btn" data-event-click="import_library">Back to library</div>
+  </div>
+
+  <div data-if="imp_phase == 'done'">
+    <h2>{{imp_heading}}</h2>
+    <div class="panel"><p>{{imp_message}}</p></div>
+    <div class="btn" data-event-click="import_play" autofocus="">Set up players</div>
+    <div class="btn" data-event-click="import_library">Back to library</div>
+  </div>
+
+  <div class="hints">
+    <span class="hint"><span class="glyph south"><span class="d n"></span><span class="d w"></span><span class="d e"></span><span class="d s"></span></span>Select</span>
+    <span class="hint"><span class="glyph east"><span class="d n"></span><span class="d w"></span><span class="d e"></span><span class="d s"></span></span>Back</span>
+  </div>
+</body>
+</rml>

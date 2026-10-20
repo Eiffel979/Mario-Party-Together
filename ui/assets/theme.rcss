@@ -1,0 +1,145 @@
+/* Launcher theme (ADR 0010 §5). Every colour and size the screens use is set here, so
+   the look changes in one place. Original identity: no console-brand colours, logos,
+   fonts or artwork.
+
+   Only features the SDL_Renderer interface draws are used (ADR 0010 §2.4): boxes,
+   borders, rounded corners, text, scissor clipping and vertex-colour gradients. No
+   transform, filter, backdrop-filter, mask-image, box-shadow or shader gradients.
+
+   Tokens
+     ink         #f2efe6   text
+     ink-muted   #a9b0bf
+     ink-error   #ff9a8a
+     night       #151826   page background
+     panel       #20253a
+     panel-hi    #2b3150   hover
+     accent      #5ee0b5   focus ring, progress
+     accent-2    #ffb86b   headings
+     seat-on     #2f6f5e
+*/
+
+body, div, p, h1, h2, span, scrollbarvertical, sliderbar, sliderarrowdec, sliderarrowinc, slidertrack {
+  display: block;
+}
+span { display: inline; }
+
+body {
+  font-family: LatoLatin;
+  font-weight: normal;
+  font-style: normal;
+  font-size: 22dp;
+  color: #f2efe6;
+  background-color: #151826;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 40dp 72dp;
+}
+
+body.overlay {
+  background-color: rgba(10, 12, 20, 200);
+}
+
+h1 { font-size: 46dp; color: #ffb86b; margin-bottom: 6dp; }
+h2 { font-size: 30dp; margin: 18dp 0 8dp 0; }
+p  { margin: 6dp 0; }
+
+.muted { color: #a9b0bf; }
+.error { color: #ff9a8a; }
+.small { font-size: 18dp; }
+
+.brand-bar {
+  height: 6dp;
+  width: 240dp;
+  margin: 4dp 0 24dp 0;
+  border-radius: 3dp;
+  decorator: horizontal-gradient(#5ee0b5 #ffb86b);
+}
+
+.btn {
+  tab-index: auto;
+  focus: auto;
+  nav: auto;
+  padding: 14dp 22dp;
+  margin: 8dp 0;
+  width: 560dp;
+  background-color: #20253a;
+  border: 3dp #20253a;
+  border-radius: 12dp;
+  transition: background-color border-color 0.12s cubic-out;
+}
+.btn:hover  { background-color: #2b3150; }
+.btn:focus  { border-color: #5ee0b5; background-color: #2b3150; }
+.btn:active { background-color: #3a4266; }
+.btn.wide   { width: 100%; }
+
+.title-row .name   { font-size: 28dp; }
+.title-row .detail { color: #a9b0bf; }
+.title-row .status { color: #5ee0b5; font-size: 18dp; }
+
+.panel {
+  background-color: #20253a;
+  border-radius: 14dp;
+  padding: 20dp 24dp;
+  margin: 12dp 0;
+  width: 720dp;
+}
+.panel.center {
+  margin: 120dp auto 0 auto;
+  width: 640dp;
+}
+
+.list {
+  max-height: 380dp;
+  overflow-y: auto;
+  width: 620dp;
+}
+scrollbarvertical { width: 10dp; margin-left: 6dp; }
+scrollbarvertical slidertrack { background-color: #20253a; border-radius: 5dp; }
+scrollbarvertical sliderbar { background-color: #5a6280; border-radius: 5dp; }
+
+.progress {
+  height: 18dp;
+  width: 620dp;
+  margin: 14dp 0;
+  border-radius: 9dp;
+  background-color: #20253a;
+}
+.progress .fill {
+  height: 100%;
+  border-radius: 9dp;
+  background-color: #5ee0b5;
+  transition: width 0.2s cubic-out;
+}
+
+.seats { display: flex; flex-direction: row; margin: 12dp 0 18dp 0; }
+.seat {
+  width: 210dp;
+  height: 96dp;
+  margin-right: 14dp;
+  padding: 12dp 14dp;
+  border-radius: 12dp;
+  background-color: #20253a;
+  border: 3dp #20253a;
+}
+.seat.seated { border-color: #2f6f5e; background-color: #1f3a3a; }
+.seat .label { color: #ffb86b; }
+
+/* Prompts drawn from plain boxes: four dots in a diamond, the lit one marks the button
+   by position (south = confirm, east = back), never console-brand button art. */
+.hints { margin-top: 24dp; color: #a9b0bf; font-size: 18dp; }
+.hint  { display: inline-block; margin-right: 28dp; }
+.glyph { display: inline-block; position: relative; width: 22dp; height: 22dp; margin-right: 8dp; vertical-align: middle; }
+.glyph .d {
+  display: block;
+  position: absolute;
+  width: 7dp;
+  height: 7dp;
+  border-radius: 3.5dp;
+  background-color: #5a6280;
+}
+.glyph .n { left: 7.5dp; top: 0dp; }
+.glyph .s { left: 7.5dp; top: 15dp; }
+.glyph .w { left: 0dp; top: 7.5dp; }
+.glyph .e { left: 15dp; top: 7.5dp; }
+.glyph.south .s, .glyph.east .e { background-color: #5ee0b5; }

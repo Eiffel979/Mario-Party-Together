@@ -66,6 +66,9 @@ find_package(nlohmann_json CONFIG REQUIRED)
 add_subdirectory(asset-import)
 add_subdirectory(core)
 add_subdirectory(input)
+# Player-facing launcher (ADR 0010, P1-23). After core/ and input/: it links their public
+# targets only, never a runtime or adapter.
+add_subdirectory(ui)
 # GX renderer for runtimes/gc_wii (ADR 0007 §6, P1-14 gate amendment). `null` needs no GPU
 # and no Dawn build; `dawn` needs Dawn installed at MPT_DAWN_PREFIX by
 # runtimes/gc_wii/gx/tools/build_dawn.cmake.

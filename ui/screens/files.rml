@@ -1,0 +1,26 @@
+<rml>
+<head>
+  <title>Choose a dump</title>
+  <link type="text/rcss" href="../assets/theme.rcss"/>
+</head>
+<body data-model="ui">
+  <h1>Choose a dump</h1>
+  <p class="muted">{{files_location}}</p>
+  <p class="error">{{files_error}}</p>
+
+  <div class="list">
+    <div class="btn" data-for="f, i : files" data-event-click="file_open(i)" autofocus="">
+      <span data-if="f.kind == 'up'" class="muted">[up] </span>
+      <span data-if="f.kind == 'root' || f.kind == 'folder'" class="muted">[folder] </span>
+      {{f.label}}
+    </div>
+  </div>
+
+  <div class="btn" data-event-click="back">Back</div>
+
+  <div class="hints">
+    <span class="hint"><span class="glyph south"><span class="d n"></span><span class="d w"></span><span class="d e"></span><span class="d s"></span></span>Open</span>
+    <span class="hint"><span class="glyph east"><span class="d n"></span><span class="d w"></span><span class="d e"></span><span class="d s"></span></span>Back</span>
+  </div>
+</body>
+</rml>
