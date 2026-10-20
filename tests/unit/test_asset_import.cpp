@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "../support/temp_dir.h"
 #include "mpt/asset_import/dump_format.h"
 #include "mpt/asset_import/importer.h"
 #include "mpt/asset_import/known_dumps.h"
@@ -60,9 +61,8 @@ std::vector<std::byte> with_magic_at(std::size_t offset, std::initializer_list<s
 class TempDir {
  public:
   TempDir() {
-    path_ = std::filesystem::temp_directory_path() /
-            ("mpt_test_" + std::to_string(reinterpret_cast<std::uintptr_t>(this)));
-    std::filesystem::create_directories(path_);
+    // Per process and per object: the address alone repeats across processes.
+    path_ = mpt::test::make_temp_dir("mpt_test");
   }
   ~TempDir() {
     std::error_code ec;

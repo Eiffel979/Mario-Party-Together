@@ -18,6 +18,7 @@
 #include "../support/fake_adapter.h"
 #include "../support/fake_party_script.h"
 #include "../support/fake_runtime.h"
+#include "../support/temp_dir.h"
 
 using namespace mpt;
 
@@ -128,9 +129,7 @@ TEST_CASE("dump lane: the wrong dump is refused") {
 }
 
 TEST_CASE("dump lane: fixtures are found with their sidecars, sorted") {
-  const std::filesystem::path dir = std::filesystem::temp_directory_path() / "mpt_dump_lane_find_test";
-  std::filesystem::remove_all(dir);
-  std::filesystem::create_directories(dir);
+  const std::filesystem::path dir = test::make_temp_dir("mpt_dump_lane_find_test");
   for (const char* name : {"b.mptr", "a.mptr", "a.trail.txt", "notes.txt"}) std::ofstream(dir / name) << "x";
   const auto found = dump_lane::find_fixtures(dir);
   std::filesystem::remove_all(dir);
