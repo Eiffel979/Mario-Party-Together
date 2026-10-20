@@ -15,6 +15,7 @@ add_executable(mpt_unit_tests
   unit/test_fake_runtime_v1.cpp
   unit/test_golden_trail.cpp
   unit/test_replay.cpp
+  unit/test_runtime_status.cpp
   unit/test_session.cpp
   unit/test_shell.cpp
   unit/test_state_hasher.cpp
