@@ -40,7 +40,7 @@ inline constexpr std::uint32_t kCardMaxBlocks = 2048;  // 16 Mbit + headroom
 
 // ---- Arena layout --------------------------------------------------------------
 inline constexpr std::size_t kStateRegionBytes = 1u << 20;
-inline constexpr std::size_t kMainRamBytes = 24u << 20;  // the default SdkConfig::main_ram_bytes
+inline constexpr std::size_t kMainRamBytes = 24u << 20;  // the console's; the default SdkConfig::main_ram_bytes
 inline constexpr std::size_t kAramBytes = 16u << 20;
 inline constexpr std::size_t kCardRegionBytes = 2u << 20;  // 16 Mbit
 inline constexpr std::size_t kLowMemoryBytes = 0x3100;     // console OS globals area, kept zero

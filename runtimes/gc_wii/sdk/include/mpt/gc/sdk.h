@@ -60,6 +60,9 @@ struct SdkConfig {
   // constant; it is part of the build fingerprint like every other SdkConfig constant. At most 1 GiB,
   // a multiple of 64 KiB.
   std::uint32_t main_ram_bytes = 24u << 20;
+  // When set, an OSAllocFromHeap that cannot be satisfied faults the runtime (ADR 0011) instead of
+  // returning NULL to the game. A per-title constant (ADR 0008 amendment, PR #44).
+  bool fault_on_alloc_failure = false;
   // Arena placement. 0 = anywhere. Fixed bases for fresh-process save states
   // are P1-16 (ADR 0008 §11); create() fails if this address is unavailable.
   std::uintptr_t arena_base = 0;
