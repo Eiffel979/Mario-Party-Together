@@ -65,10 +65,16 @@ set(_gc "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 file(GLOB_RECURSE _module_inputs CONFIGURE_DEPENDS LIST_DIRECTORIES false
   "${_gc}/CMakeLists.txt" "${_gc}/sdk/CMakeLists.txt" "${_gc}/sdk/src/*" "${_gc}/sdk/include/*"
   "${_gc}/gx/CMakeLists.txt" "${_gc}/gx/*.lock" "${_gc}/gx/src/*" "${_gc}/gx/include/*" "${_gc}/gx/patches/*"
-  "${_gc}/musyx/CMakeLists.txt" "${_gc}/musyx/src/*" "${_gc}/musyx/include/*"
+  "${_gc}/musyx/CMakeLists.txt" "${_gc}/musyx/src/*" "${_gc}/musyx/include/*" "${_gc}/musyx/patches/*"
   "${_gc}/mp4/CMakeLists.txt" "${_gc}/mp4/*.cmake" "${_gc}/mp4/decomp.lock" "${_gc}/mp4/src/*" "${_gc}/mp4/include/*"
   "${_gc}/mp4/patches/*" "${_gc}/mp4/tools/*")
 list(SORT _module_inputs)
+# A content change (not only a new or removed file) must re-run this hash.
+# (CMake files are left out of that list: CMake already tracks the ones it reads, and listing one
+# twice is an error. They are still in the hash.)
+set(_module_deps ${_module_inputs})
+list(FILTER _module_deps EXCLUDE REGEX "(CMakeLists\.txt|\.cmake)$")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_module_deps})
 set(_tree "")
 foreach(_f IN LISTS _module_inputs)
   file(SHA256 "${_f}" _h)

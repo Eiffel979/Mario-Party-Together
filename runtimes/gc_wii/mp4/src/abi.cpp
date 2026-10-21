@@ -28,6 +28,9 @@
 #ifndef MPT_MP4_BUILD_ID
 #error "MPT_MP4_BUILD_ID must be defined by runtimes/gc_wii/mp4/CMakeLists.txt"
 #endif
+#ifndef MPT_MP4_MAIN_RAM_BYTES
+#error "MPT_MP4_MAIN_RAM_BYTES comes from runtimes/gc_wii/mp4/layout.cmake"
+#endif
 
 static_assert(sizeof(MptMp4InputFrame) == sizeof(mpt::InputFrame), "MptMp4InputFrame mirrors mpt::InputFrame");
 static_assert(sizeof(MptMp4Pad) == sizeof(mpt::PadState), "MptMp4Pad mirrors mpt::PadState");
@@ -81,7 +84,7 @@ namespace {
 MptMp4Game* g_game = nullptr;
 
 constexpr std::uint32_t kStateMagic = 0x4D503453;  // "MP4S": the module's trailer after the SDK state
-constexpr std::uint32_t kStateFormat = 2;          // the blob's layout version (SaveState::format_version)
+constexpr std::uint32_t kStateFormat = 3;          // the blob's layout version (SaveState::format_version)
 
 void setError(MptMp4Error* error, const std::string& message) {
   if (error == nullptr || error->struct_size < MPT_MP4_ERROR_SIZE_V1_0) return;
@@ -148,9 +151,10 @@ bool boot(MptMp4Game& game, std::optional<mpt::SaveMedia> card, std::string& err
   // `while (HuARDMACheck());` right after ARQPostRequest with no SDK call in the loop, so a callback
   // left for the next call boundary would never run.
   sc.io_callbacks_before_return = true;
-  // Party Board's TARGET_PC heaps are four times the console's (malloc.c, 64-bit structures): 78 MiB of
-  // game heaps plus the rest of OSAlloc's arena. A per-title constant (mp4.md section 19).
-  sc.main_ram_bytes = 96u << 20;
+  // Party Board's TARGET_PC heaps are four times the console's (malloc.c, 64-bit structures): a build
+  // constant (layout.cmake, part of the build ID), and an OSAlloc failure is a fault (PR #44).
+  sc.main_ram_bytes = MPT_MP4_MAIN_RAM_BYTES;
+  sc.fault_on_alloc_failure = true;
   sc.arena_base = game.arena_base;
   sc.audio_engine = mpt::gc::MusyxEngine::engine();
   sc.audio_output = game.audio_output;
@@ -408,6 +412,10 @@ std::vector<std::byte> buildState(const MptMp4Game& game) {
   std::vector<std::byte> state = game.sdk->saveState();
   const std::size_t start = state.size();
   putString(state, MPT_MP4_BUILD_ID);
+  // The arena layout (PR #44): a state only loads into the same layout.
+  putU64(state, game.sdk->mainRam().size());
+  putU64(state, game.sdk->aram().size());
+  putU64(state, game.sdk->arenaSize());
   putU32(state, game.gameplay_flags);
   putU64(state, game.frame_base);
   putU64(state, game.generation_base);
@@ -449,6 +457,9 @@ MptMp4Status loadState(MptMp4Game* game, const std::uint8_t* data, std::size_t s
   const std::size_t sdk_size = size - 12 - trailer;
   Reader r{data + sdk_size, trailer};
   const std::string build = r.str();
+  const std::uint64_t main_ram = r.u64();
+  const std::uint64_t aram = r.u64();
+  const std::uint64_t arena = r.u64();
   const std::uint32_t flags = r.u32();
   const std::uint64_t frame_base = r.u64();
   const std::uint64_t generation_base = r.u64();
@@ -463,6 +474,11 @@ MptMp4Status loadState(MptMp4Game* game, const std::uint8_t* data, std::size_t s
   }
   if (build != MPT_MP4_BUILD_ID) {
     setError(error, "load_state: the state is from build " + build + ", this module is " MPT_MP4_BUILD_ID);
+    return MPT_MP4_ERR_STATE;
+  }
+  if (main_ram != game->sdk->mainRam().size() || aram != game->sdk->aram().size() ||
+      arena != game->sdk->arenaSize()) {
+    setError(error, "load_state: the state's arena layout (main RAM, ARAM, stacks) differs from this module's");
     return MPT_MP4_ERR_STATE;
   }
   mpt::Result result = game->sdk->loadState({reinterpret_cast<const std::byte*>(data), sdk_size});

@@ -190,9 +190,12 @@ target_compile_options(mp4_game PRIVATE ${MPT_MP4_WARN_FLAGS})
 set_target_properties(mp4_game PROPERTIES C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden PREFIX "")
 target_include_directories(mp4_game PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
+# Fixed bases and the main RAM size (ADR 0008 section 11 and its amendment, PR #44).
+include("${CMAKE_CURRENT_SOURCE_DIR}/layout.cmake")
+
 # The build fingerprint save states and golden trails are keyed by (ADR 0008 section 10, ADR 0009): the
 # pinned sources, every patch applied to them, the GX backend and the compiler.
-set(_fp "${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION};${MPT_GX_BACKEND}")
+set(_fp "${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION};${MPT_GX_BACKEND};main_ram=${MPT_MP4_MAIN_RAM_BYTES}")
 foreach(_f "${CMAKE_CURRENT_SOURCE_DIR}/decomp.lock" "${CMAKE_CURRENT_SOURCE_DIR}/../gx/aurora.lock")
   file(SHA256 "${_f}" _h)
   string(APPEND _fp ";${_h}")
@@ -207,7 +210,8 @@ endforeach()
 string(SHA256 _fp_hash "${_fp}")
 string(SUBSTRING "${_fp_hash}" 0 16 _fp_hash)
 set(MPT_MP4_BUILD_ID "mp4-${_fp_hash}" CACHE INTERNAL "MP4 game module build fingerprint")
-target_compile_definitions(mp4_game PRIVATE "MPT_MP4_BUILD_ID=\"${MPT_MP4_BUILD_ID}\"")
+target_compile_definitions(mp4_game PRIVATE "MPT_MP4_BUILD_ID=\"${MPT_MP4_BUILD_ID}\""
+                           MPT_MP4_MAIN_RAM_BYTES=${MPT_MP4_MAIN_RAM_BYTES}u)
 message(STATUS "runtimes/gc_wii/mp4: build ID ${MPT_MP4_BUILD_ID}")
 
 # Every object library, for compile-only builds.
@@ -220,7 +224,6 @@ endforeach()
 # state regions stay valid in a fresh process. Windows: no dynamic base and no relocations, so the
 # loader either maps it there or fails. Linux: lld links the .so at that base; glibc's loader asks the
 # kernel for that address, and the host runtime checks where it landed.
-include("${CMAKE_CURRENT_SOURCE_DIR}/layout.cmake")
 if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
   target_link_options(mp4_game PRIVATE /errorlimit:0 "/BASE:${MPT_MP4_MODULE_BASE}" /DYNAMICBASE:NO /FIXED)
 else()
