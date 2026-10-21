@@ -1,0 +1,46 @@
+{
+  "format": "mpt.input_profile",
+  "version": 1,
+  "name": "Mario Party 4 (default)",
+  "title": "mp4",
+  "options": {
+    "stick_deadzone_percent": 10,
+    "trigger_deadzone_percent": 5,
+    "stick_half_percent": 50,
+    "trigger_button_threshold": 230,
+    "normalize_digital_diagonals": true,
+    "stick_half_affects_triggers": false
+  },
+  "bindings": {
+    "a": ["key:k", "key:space", "button:south"],
+    "b": ["key:j", "button:east"],
+    "x": ["key:l", "button:west"],
+    "y": ["key:i", "button:north"],
+    "l": ["key:q"],
+    "r": ["key:e"],
+    "z": ["key:u", "button:right_shoulder"],
+    "start": ["key:enter", "button:start"],
+    "dpad_up": ["key:up", "button:dpad_up"],
+    "dpad_down": ["key:down", "button:dpad_down"],
+    "dpad_left": ["key:left", "button:dpad_left"],
+    "dpad_right": ["key:right", "button:dpad_right"],
+    "stick_up": ["key:w", "axis:left_y-"],
+    "stick_down": ["key:s", "axis:left_y+"],
+    "stick_left": ["key:a", "axis:left_x-"],
+    "stick_right": ["key:d", "axis:left_x+"],
+    "c_stick_up": ["key:t", "axis:right_y-"],
+    "c_stick_down": ["key:g", "axis:right_y+"],
+    "c_stick_left": ["key:f", "axis:right_x-"],
+    "c_stick_right": ["key:h", "axis:right_x+"],
+    "trigger_l": ["key:q", "axis:left_trigger"],
+    "trigger_r": ["key:e", "axis:right_trigger"],
+    "stick_half": ["key:lshift"]
+  },
+  "minigames": {
+    "mp4.minigame.bowsers_bigger_blast": {
+      "note": "Reads R pressure: a partial pull holds the plunger part-way, the full click commits. Keyboard: lshift+E holds at half pressure, E alone commits. R comes only from the trigger threshold here, so a half press never clicks.",
+      "options": { "stick_half_affects_triggers": true },
+      "bindings": { "r": [] }
+    }
+  }
+}
