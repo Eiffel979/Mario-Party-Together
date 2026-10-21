@@ -239,6 +239,8 @@ void* OSAllocFromHeap(OSHeapHandle heap, u32 size) {
     pushFront(h.alloc_head, off);
     return impl().arena + off + kHeader;
   }
+  if (impl().config.fault_on_alloc_failure)
+    fatal("OSAllocFromHeap: heap " + std::to_string(heap) + " has no free block for " + std::to_string(size) + " bytes");
   return nullptr;
 }
 

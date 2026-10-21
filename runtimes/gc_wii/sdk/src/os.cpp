@@ -604,13 +604,15 @@ u32 OSGetConsoleType(void) {
   boundary();
   return OS_CONSOLE_RETAIL3;
 }
+// The console's 24 MiB whatever SdkConfig::main_ram_bytes is (ADR 0008 amendment, PR #44): hardware
+// answers stay the console's. MP4 only prints them (init.c's meminfo.bin path is not on the disc).
 u32 OSGetPhysicalMemSize(void) {
   boundary();
-  return impl().config.main_ram_bytes;
+  return static_cast<u32>(kMainRamBytes);
 }
 u32 OSGetConsoleSimulatedMemSize(void) {
   boundary();
-  return impl().config.main_ram_bytes;
+  return static_cast<u32>(kMainRamBytes);
 }
 u32 OSGetSoundMode(void) {
   boundary();
