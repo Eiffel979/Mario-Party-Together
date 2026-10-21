@@ -38,10 +38,8 @@ class Mp4Runtime final : public ITitleRuntime {
   std::uint64_t saveMediaGeneration() const override;
   SaveMedia saveMedia() const override;
 
-  // ADR 0011 (core PR #39): becomes the status() override once that interface lands.
-  enum class Health : std::uint8_t { running, halted, faulted };
-  Health health() const { return health_; }
-  const std::string& healthMessage() const { return health_message_; }
+  // ADR 0011: the module's step result and fault text. Part of the save state (the module saves it).
+  RuntimeHealth status() const override { return health_; }
 
   // Raw party reads for Mp4Adapter (MptMp4Party). False before boot.
   bool readParty(MptMp4Party& out) const;
@@ -54,8 +52,7 @@ class Mp4Runtime final : public ITitleRuntime {
 
   const MptMp4Api* api_ = nullptr;
   MptMp4Game* game_ = nullptr;
-  Health health_ = Health::running;
-  std::string health_message_;
+  RuntimeHealth health_{};
   void (*report_)(void*, const char*) = nullptr;
   void* report_user_ = nullptr;
 };

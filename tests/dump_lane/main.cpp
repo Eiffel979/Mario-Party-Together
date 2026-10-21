@@ -124,13 +124,12 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir) {
   for (std::uint64_t f = 0; f < options.frames; ++f) {
     input.frame = f;
     runtime->stepFrame(input);
-#if defined(MPT_DUMP_LANE_MP4)
-    if (mp4 != nullptr && mp4->health() != mpt::mp4::Mp4Runtime::Health::running) {
-      stopped = (mp4->health() == mpt::mp4::Mp4Runtime::Health::halted ? "halted: " : "faulted: ") + mp4->healthMessage();
+    const mpt::RuntimeHealth health = runtime->status();
+    if (health.status != mpt::RuntimeStatus::running) {
+      stopped = (health.status == mpt::RuntimeStatus::halted ? "halted: " : "faulted: ") + health.message;
       std::printf("frame %llu %s\n", static_cast<unsigned long long>(f), stopped.c_str());
       break;
     }
-#endif
     if (options.every != 0 && (f + 1) % options.every == 0) {
       const mpt::FrameOutput video = runtime->video();
       std::printf("frame %llu hash %016llx video %ux%u\n", static_cast<unsigned long long>(f + 1),
