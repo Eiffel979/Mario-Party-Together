@@ -24,7 +24,7 @@ constexpr const char* kSample = R"({
   "minigames": {
     "mp4.minigame.test_mash": {
       "note": "mash A on either face button",
-      "options": { "normalize_digital_diagonals": false },
+      "options": { "normalize_digital_diagonals": false, "stick_half_affects_triggers": true },
       "bindings": { "a": ["button:south", "button:east"], "stick_up": [] }
     }
   }
@@ -65,6 +65,8 @@ TEST_CASE("per-minigame overrides replace listed controls and options only") {
 
   const ResolvedProfile mash = p.resolve("mp4.minigame.test_mash");
   CHECK(mash.options.normalize_digital_diagonals == false);
+  CHECK(mash.options.stick_half_affects_triggers == true);
+  CHECK(base.options.stick_half_affects_triggers == false);  // default
   CHECK(mash.options.stick_deadzone_percent == 20);  // inherited
   REQUIRE(mash.bindings[at(Control::a)].size() == 2);
   CHECK(source_to_string(mash.bindings[at(Control::a)][1]) == "button:east");
@@ -126,6 +128,8 @@ TEST_CASE("profile errors are reported and leave the output unchanged") {
       {with_replaced(s, "\"stick_deadzone_percent\": 20", "\"stick_deadzone_percent\": 2.5"), "integer"},
       {with_replaced(s, "\"stick_deadzone_percent\"", "\"deadzone\""), "unknown option 'deadzone'"},
       {with_replaced(s, "\"normalize_digital_diagonals\": false", "\"normalize_digital_diagonals\": 0"),
+       "true or false"},
+      {with_replaced(s, "\"stick_half_affects_triggers\": true", "\"stick_half_affects_triggers\": 1"),
        "true or false"},
       {with_replaced(s, "\"a\": [\"key:k\"", "\"jump\": [\"key:k\""), "unknown control 'jump'"},
       {with_replaced(s, "\"key:k\"", "\"key:kk\""), "unknown source 'key:kk'"},
