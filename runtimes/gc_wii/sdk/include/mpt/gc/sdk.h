@@ -55,6 +55,11 @@ struct SdkConfig {
   // at the next SDK call boundary. A per-title choice (ADR 0008 §3 allows both).
   bool io_callbacks_before_return = false;
   std::uint32_t thread_stack_bytes = 256 * 1024;  // per SDK thread / coroutine
+  // Emulated main RAM, where OSAlloc's arena lives. 24 MiB is the console's. A 64-bit port whose game
+  // heaps grew (MP4: Party Board's TARGET_PC heaps are 4x the console's) sets a larger per-title
+  // constant; it is part of the build fingerprint like every other SdkConfig constant. At most 1 GiB,
+  // a multiple of 64 KiB.
+  std::uint32_t main_ram_bytes = 24u << 20;
   // Arena placement. 0 = anywhere. Fixed bases for fresh-process save states
   // are P1-16 (ADR 0008 §11); create() fails if this address is unavailable.
   std::uintptr_t arena_base = 0;

@@ -606,11 +606,11 @@ u32 OSGetConsoleType(void) {
 }
 u32 OSGetPhysicalMemSize(void) {
   boundary();
-  return static_cast<u32>(kMainRamBytes);
+  return impl().config.main_ram_bytes;
 }
 u32 OSGetConsoleSimulatedMemSize(void) {
   boundary();
-  return static_cast<u32>(kMainRamBytes);
+  return impl().config.main_ram_bytes;
 }
 u32 OSGetSoundMode(void) {
   boundary();
