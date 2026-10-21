@@ -41,7 +41,7 @@ Cross-platform identity is a **Phase 1 exit requirement** (D5): the same replay 
 6. **Fixed-width types.** No `long` or `unsigned long` in game-state structs or disc-data structs. Disc data is byte-swapped and converted to host structs **at load time**. 32-bit on-disc offsets become host pointers only in loader code.
 
 ### Memory
-7. **One arena.** All game heaps (`HuMem`-style heaps and the SDK's `OSAlloc` arenas), emulated ARAM and coroutine stacks come from one runtime-owned arena, allocated and zeroed at `boot()`. Its size matches the console's main RAM plus emulated ARAM (24 MB + 16 MB), plus a fixed region for coroutine stacks. *(Amended after P1-16 boot: main RAM is a per-title, per-build constant; MP4 uses 96 MiB. See the amendment at the end.)* Game code never calls the host `malloc`. Overlay (REL) code and data live in the game module, not the arena (ADR 0009, P1-15), so the arena layout is the same on every platform.
+7. **One arena.** All game heaps (`HuMem`-style heaps and the SDK's `OSAlloc` arenas), emulated ARAM and coroutine stacks come from one runtime-owned arena, allocated and zeroed at `boot()`. Its size matches the console's main RAM plus emulated ARAM (24 MB + 16 MB), plus a fixed region for coroutine stacks. *(Amended after P1-16 boot: main RAM is a per-title, per-build constant; MP4 uses 112 MiB. See the amendment at the end.)* Game code never calls the host `malloc`. Overlay (REL) code and data live in the game module, not the arena (ADR 0009, P1-15), so the arena layout is the same on every platform.
    - **No host-varying bytes in the arena.** Where game code stores a caller or return address in memory (MP4's `HuMemDirectMalloc` records its caller in heap block headers), it stores a **fixed constant**. Otherwise arena bytes would differ between runs and builds, which breaks save-state comparison and the deep-hash debug mode.
 
 ### State hash: an explicit manifest
@@ -225,7 +225,7 @@ runtime-gc-wii added `SdkConfig::main_ram_bytes`, default 24 MiB, and MP4 uses 9
 Patching Party Board's heap sizes back to console values is rejected. The console sizes were budgeted for 32-bit pointers and the console's own data layout, so the same heaps would run out on a 64-bit host, most likely late in a party, on large boards. That is exactly where an out-of-memory fault is hardest to find. Party Board's multiplier is the upstream port's answer to that, and it is part of the pinned source (ADR 0009).
 
 1. **The size is a build constant of the title's game module, never a runtime option.**
-   - `main_ram_bytes` is set by the module itself (MP4: 96 MiB) when it configures the SDK.
+   - `main_ram_bytes` is set by the module itself (MP4: **112 MiB**, see "Revised for MusyX" below) when it configures the SDK.
    - It is not a field of the module's boot config, `RuntimeConfig` or any user setting, and it is the same on every platform.
    - ARAM stays at the console's 16 MB, and the coroutine-stack region keeps its fixed size (§7).
    - Every title states its size, and why, in `docs/titles/<id>.md`.
@@ -240,12 +240,23 @@ Patching Party Board's heap sizes back to console values is rejected. The consol
    - Changing a title's size changes its `build_id` and requires re-recording that title's golden trails. Fixtures are re-recorded deliberately, as for a pin bump.
 4. **What the game can see stays console-shaped.** Hardware getters keep their fixed console answers (§3). `OSGetPhysicalMemorySize` and similar calls still report 24 MB, so no game logic branches on the host's larger arena. Only `OSGetArenaLo`/`OSGetArenaHi` and the heap calls see the real bounds, because Party Board's heap setup needs them. If Party Board's PC heap setup turns out to derive its sizes from the reported memory size, the module may report the build size there instead. That is still a per-build constant and so still deterministic, and the choice is recorded in `mp4.md`.
 5. **Save-state size:**
-   - A Phase 1 save state is the whole arena (§10): about 96 MiB of main RAM, 16 MiB of ARAM and the stack region, plus the header. That is acceptable for the same-build, same-machine states Phase 1 uses: E5 round trips and dump-lane tests.
+   - A Phase 1 save state is the whole arena (§10): about 112 MiB of main RAM, 16 MiB of ARAM and the stack region, plus the header. That is acceptable for the same-build, same-machine states Phase 1 uses: E5 round trips and dump-lane tests.
    - P1-16 records the save and load times. If E5 or a dump-lane test becomes slow, compressing the zero-filled tail (or run-length encoding the blob) is an allowed layout change inside the module.
    - The Phase 2 ADR that closes §10 must budget netplay state transfer against this size, not against 24 MB.
 6. **Fixed base and spacing (§11):**
    - The arena is reserved as one region at the fixed base, laid out from it in this order: main RAM, ARAM, stacks.
-   - Its total size must stay below the spacing reserved between fixed bases (`0x400000000000`, 64 TiB), which a 96 MiB main RAM does by a very wide margin. A title whose layout would ever exceed it must change the spacing here first.
+   - Its total size must stay below the spacing reserved between fixed bases (`0x400000000000`, 64 TiB), which a 112 MiB main RAM does by a very wide margin. A title whose layout would ever exceed it must change the spacing here first.
    - `boot` still fails with a clear message if the address range cannot be reserved.
 
 §7's "Its size matches the console's main RAM" now reads: **"main RAM is the title's fixed per-build size (the console's 24 MB unless its `docs/titles/<id>.md` gives another and why), plus emulated ARAM (16 MB) and the fixed stack region."**
+
+### Revised for MusyX: MP4 main RAM is 112 MiB (architect, 2026-10-22)
+Integrating MusyX's PC renderer (P1-13b, ADR 0009 musyx pin) moves sample memory out of ARAM.
+- On the console, sample data lived in the 16 MB ARAM. The PC renderer keeps every resident sample, plus a decoded copy of each group, in `msm`'s heap in main RAM.
+- Party Board patch 0018 therefore grows `HEAP_MUSIC` by 16 MB, and sizes the `msm` heap at three times the console size plus 16 MB.
+- MP4's main RAM goes from 96 MiB to **112 MiB**, which still follows the sizing rule (point 2): the built heaps, including these, plus at least 10% margin, in 8 MiB steps.
+- **The sizing rationale for MP4 is 64-bit host structures plus MusyX's PC sample residency.** Emulated ARAM stays 16 MB, because the SDK's ARAM and ARQ still serve the game's own uses of it.
+- Everything else in this amendment is unchanged:
+  - 112 MiB is a build constant set by the module, part of `build_id` and recorded in the save-state layout header;
+  - M1's trails (10,000 frames, seed 1 and 2, separate processes) were recorded at this size;
+  - the P1-16 peak-use measurement must cover the full-party replay with music playing.
