@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 
 #include "mpt/asset_import/byte_source.h"
+#include "mpt/asset_import/fs_retry.h"
 #include "mpt/asset_import/gc_disc.h"
 #include "mpt/core/sha256.h"
 
@@ -414,11 +415,12 @@ std::optional<BuildOutcome> BuildCache::build(const BuildRecipe& recipe, const B
     // An older, incomplete or forced-out build with the same key: move it aside first.
     const fs::path old = recipe_dir / (".old-" + key.substr(0, kKeyDirLength));
     fs::remove_all(old, ec);
-    fs::rename(final_dir, old, ec);
+    rename_with_retry(final_dir, old, ec);
     if (ec) return abandon("Could not replace the previous build: " + ec.message());
     fs::remove_all(old, ec);
   }
-  fs::rename(tmp_dir, final_dir, ec);
+  // A scanner may still hold a file we just wrote; the retry keeps this a single atomic rename.
+  rename_with_retry(tmp_dir, final_dir, ec);
   if (ec) return abandon("Could not move the finished build into place: " + ec.message());
   progress("Finishing", 1.0, {});
   return BuildOutcome{final_dir, std::move(manifest), false};
