@@ -2,6 +2,7 @@ add_library(mpt_asset_import
   src/build.cpp
   src/byte_source.cpp
   src/dump_format.cpp
+  src/fs_retry.cpp
   src/gc_disc.cpp
   src/gclient_deps.cpp
   src/git_tree.cpp

@@ -4,6 +4,7 @@
 #include <sstream>
 
 #include "mpt/asset_import/byte_source.h"
+#include "mpt/asset_import/fs_retry.h"
 #include "mpt/asset_import/gclient_deps.h"
 #include "mpt/asset_import/git_tree.h"
 
@@ -224,7 +225,8 @@ std::optional<ResolvedSource> SourceResolver::fetch(const SourcePin& pin, std::s
     cleanup();
     return std::nullopt;
   }
-  fs::rename(tmp, target, ec);
+  // A scanner may still hold a file git just wrote; the retry keeps this a single atomic rename.
+  rename_with_retry(tmp, target, ec);
   if (ec) {
     cleanup();
     error = "Could not move the checkout of " + pin.name + " into place: " + ec.message();

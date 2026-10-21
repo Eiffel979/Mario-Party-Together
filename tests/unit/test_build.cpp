@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <iterator>
 #include <stdexcept>
 #include <cstdint>
@@ -12,10 +13,12 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "asset_import_test_support.h"
 #include "mpt/asset_import/build.h"
+#include "mpt/asset_import/fs_retry.h"
 #include "mpt/asset_import/gclient_deps.h"
 #include "mpt/asset_import/git_tree.h"
 #include "mpt/asset_import/process.h"
@@ -1150,4 +1153,164 @@ TEST_CASE("a VerifiedDump comes only from an identified dump and its build") {
   fs::remove_all(outcome.build_dir);
   CHECK_FALSE(make_verified(report, outcome, error).has_value());
   CHECK(error.find("Build the game again") != std::string::npos);
+}
+
+// --- Renames that survive transient Windows file locks ----------------------------------
+// Defender or the indexer briefly holding a just-written file makes renaming its folder
+// fail with access denied. The retry loop is tested here with an injected rename, so the
+// tests do not depend on any scanner's timing.
+
+namespace {
+
+struct FakeRename {
+  int transient_failures = 0;  // fail this many times with ec_to_fail, then succeed
+  std::error_code ec_to_fail = std::make_error_code(std::errc::permission_denied);
+  int calls = 0;
+  void operator()(const fs::path&, const fs::path&, std::error_code& ec) {
+    ++calls;
+    if (calls <= transient_failures) ec = ec_to_fail;
+  }
+};
+
+}  // namespace
+
+TEST_CASE("renames retry transient permission errors with bounded backoff") {
+  const fs::path from = "from";
+  const fs::path to = "to";
+  std::vector<std::chrono::milliseconds> sleeps;
+  auto sleep = [&sleeps](std::chrono::milliseconds d) { sleeps.push_back(d); };
+  const RenameRetryPolicy policy;
+
+  SUBCASE("the default bounds are about 4 s of waiting over at most 20 retries") {
+    CHECK(policy.max_retries == 20);
+    CHECK(policy.first_delay == std::chrono::milliseconds(10));
+    CHECK(policy.max_delay == std::chrono::milliseconds(250));
+  }
+
+  SUBCASE("a first-try success does not sleep") {
+    FakeRename fake;
+    std::error_code ec = std::make_error_code(std::errc::io_error);  // stale input is cleared
+    rename_with_retry(from, to, ec, policy, std::ref(fake), sleep);
+    CHECK_FALSE(ec);
+    CHECK(fake.calls == 1);
+    CHECK(sleeps.empty());
+  }
+
+  SUBCASE("a few transient failures are retried until the rename goes through") {
+    FakeRename fake;
+    fake.transient_failures = 3;
+    std::error_code ec;
+    rename_with_retry(from, to, ec, policy, std::ref(fake), sleep);
+    CHECK_FALSE(ec);
+    CHECK(fake.calls == 4);
+    using std::chrono::milliseconds;
+    CHECK(sleeps == std::vector<milliseconds>{milliseconds(10), milliseconds(20), milliseconds(40)});
+  }
+
+  SUBCASE("a failure that never clears gives up after the bounds, with the last error") {
+    FakeRename fake;
+    fake.transient_failures = 1000;
+    std::error_code ec;
+    rename_with_retry(from, to, ec, policy, std::ref(fake), sleep);
+    CHECK(ec == std::errc::permission_denied);
+    CHECK(fake.calls == policy.max_retries + 1);
+    REQUIRE(sleeps.size() == static_cast<std::size_t>(policy.max_retries));
+    std::chrono::milliseconds total{0};
+    for (const auto d : sleeps) {
+      CHECK(d <= policy.max_delay);
+      total += d;
+    }
+    CHECK(total == std::chrono::milliseconds(10 + 20 + 40 + 80 + 160 + 15 * 250));  // 4060 ms
+  }
+
+  SUBCASE("any other error fails at once") {
+    for (const std::errc e : {std::errc::no_such_file_or_directory, std::errc::file_exists,
+                              std::errc::directory_not_empty, std::errc::io_error}) {
+      CAPTURE(static_cast<int>(e));
+      FakeRename fake;
+      fake.transient_failures = 1000;
+      fake.ec_to_fail = std::make_error_code(e);
+      std::error_code ec;
+      sleeps.clear();
+      rename_with_retry(from, to, ec, policy, std::ref(fake), sleep);
+      CHECK(ec == e);
+      CHECK(fake.calls == 1);
+      CHECK(sleeps.empty());
+    }
+  }
+
+  SUBCASE("which errors count as transient") {
+    CHECK_FALSE(is_transient_rename_error({}));
+    CHECK(is_transient_rename_error(std::make_error_code(std::errc::permission_denied)));
+    CHECK_FALSE(is_transient_rename_error(std::make_error_code(std::errc::no_such_file_or_directory)));
+    CHECK_FALSE(is_transient_rename_error(std::make_error_code(std::errc::file_exists)));
+#ifdef _WIN32
+    // ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION; not ERROR_FILE_NOT_FOUND.
+    CHECK(is_transient_rename_error(std::error_code(5, std::system_category())));
+    CHECK(is_transient_rename_error(std::error_code(32, std::system_category())));
+    CHECK(is_transient_rename_error(std::error_code(33, std::system_category())));
+    CHECK_FALSE(is_transient_rename_error(std::error_code(2, std::system_category())));
+#endif
+  }
+
+  SUBCASE("a sharing violation is retried like access denied") {
+#ifdef _WIN32
+    FakeRename fake;
+    fake.transient_failures = 2;
+    fake.ec_to_fail = std::error_code(32, std::system_category());
+    std::error_code ec;
+    rename_with_retry(from, to, ec, policy, std::ref(fake), sleep);
+    CHECK_FALSE(ec);
+    CHECK(fake.calls == 3);
+#endif
+  }
+}
+
+TEST_CASE("rename_with_retry moves a real folder, atomically and in one piece") {
+  TempDir dir;
+  const fs::path from = dir.path() / "tmp-build";
+  const fs::path to = dir.path() / "final";
+  fs::create_directories(from / "sub");
+  std::ofstream(from / "sub" / "file.txt") << "synthetic";
+
+  std::error_code ec;
+  rename_with_retry(from, to, ec);
+  REQUIRE_FALSE(ec);
+  CHECK_FALSE(fs::exists(from));
+  CHECK(fs::exists(to / "sub" / "file.txt"));
+
+  // A missing source is not transient: it fails straight away rather than after the bounds.
+  rename_with_retry(dir.path() / "missing", dir.path() / "elsewhere", ec);
+  CHECK(ec);
+  CHECK_FALSE(is_transient_rename_error(ec));
+
+#ifdef _WIN32
+  SUBCASE("a file held open inside the folder only delays the rename") {
+    // Stands in for a scanner: an open handle without FILE_SHARE_DELETE on a file inside
+    // the folder makes the folder's rename fail with access denied until it is closed.
+    const fs::path held_dir = dir.path() / "held";
+    const fs::path moved = dir.path() / "held-moved";
+    fs::create_directories(held_dir);
+    auto holder = std::make_unique<std::ofstream>(held_dir / "fresh.bin");
+    *holder << "synthetic";
+    holder->flush();
+
+    std::error_code direct;
+    fs::rename(held_dir, moved, direct);
+    if (!direct) {
+      WARN_MESSAGE(false, "this file system allowed the rename with a file open; nothing to check");
+      return;
+    }
+    CHECK(is_transient_rename_error(direct));
+
+    std::thread release([&holder] {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      holder.reset();
+    });
+    rename_with_retry(held_dir, moved, ec);
+    release.join();
+    CHECK_FALSE(ec);
+    CHECK(fs::exists(moved / "fresh.bin"));
+  }
+#endif
 }
