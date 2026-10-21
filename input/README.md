@@ -164,6 +164,7 @@ c_stick_left c_stick_right` (GameCube C-stick / right stick), `trigger_l trigger
 | `stick_half_percent` | 1–100 | 50 | Deflection while `stick_half` is held |
 | `trigger_button_threshold` | 0–255 | 0 | Analog trigger at or above this also presses L/R (GameCube click). 0 = off |
 | `normalize_digital_diagonals` | bool | true | Two direction keys give a 45° vector of radius 1, not a square corner |
+| `stick_half_affects_triggers` | bool | false | While `stick_half` is held, keys and buttons bound to `trigger_l`/`trigger_r` give `stick_half_percent` of full travel instead of 255, so a keyboard can hold a partial trigger. Analog trigger sources are not scaled. Pair it with an unbound `l`/`r` so the digital click comes only from `trigger_button_threshold`. |
 
 All option values are integers, and the mapping core uses integer math only, so a
 profile maps identically on every platform.

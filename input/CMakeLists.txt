@@ -34,12 +34,17 @@ if(MPT_BUILD_TESTS)
     tests/main.cpp
     tests/test_held_mask.cpp
     tests/test_mapper.cpp
+    tests/test_mp4_profile.cpp
     tests/test_names.cpp
     tests/test_ports.cpp
     tests/test_profile.cpp
     tests/test_reserved.cpp
   )
   target_link_libraries(mpt_input_tests PRIVATE mpt::input doctest::doctest)
+  # The shipped profiles and the coverage table they are checked against (read-only).
+  target_compile_definitions(mpt_input_tests PRIVATE
+    "MPT_INPUT_PROFILES_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/profiles\""
+    "MPT_DOCS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../docs\"")
   mpt_set_warnings(mpt_input_tests)
   add_test(NAME input_unit COMMAND mpt_input_tests)
   add_test(NAME input_core_purity

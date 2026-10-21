@@ -88,6 +88,10 @@ struct Options {
   int stick_half_percent = 50;        // deflection while stick_half is held (1..100)
   int trigger_button_threshold = 0;   // 1..255: analog trigger >= this also presses L/R. 0 = off
   bool normalize_digital_diagonals = true;  // keys on two axes give a 45 degree vector of radius 1, not a square corner
+  // While stick_half is held, digital sources bound to trigger_l/trigger_r give
+  // stick_half_percent of full travel instead of a full press (partial trigger
+  // pressure from a key or button). Analog trigger sources are unaffected.
+  bool stick_half_affects_triggers = false;
 
   friend bool operator==(const Options&, const Options&) = default;
 };
@@ -108,6 +112,7 @@ struct ProfileOverride {
   std::optional<int> stick_half_percent;
   std::optional<int> trigger_button_threshold;
   std::optional<bool> normalize_digital_diagonals;
+  std::optional<bool> stick_half_affects_triggers;
   std::array<std::optional<std::vector<Source>>, kControlCount> bindings;
   std::string note;  // why the override exists (free text, for the coverage table)
 

@@ -72,9 +72,11 @@ std::pair<std::int16_t, std::int16_t> make_stick(const ResolvedProfile& profile,
   return {static_cast<std::int16_t>(clamp_axis(x)), static_cast<std::int16_t>(clamp_axis(y))};
 }
 
-std::uint8_t make_trigger(const ControlValue& v) {
-  if (v.digital) return 255;
-  return static_cast<std::uint8_t>((std::int64_t{v.analog} * 255 + kAxisMax / 2) / kAxisMax);
+// `digital_full` is what a held key or button gives: 255, or the half-modifier
+// share of it when the profile lets stick_half scale triggers.
+std::uint8_t make_trigger(const ControlValue& v, std::int64_t digital_full) {
+  const std::int64_t analog = (std::int64_t{v.analog} * 255 + kAxisMax / 2) / kAxisMax;
+  return static_cast<std::uint8_t>(v.digital ? std::max(digital_full, analog) : analog);
 }
 
 }  // namespace
@@ -150,10 +152,14 @@ PadState finalize(const ResolvedProfile& profile, const PortAccumulator& acc, bo
       make_stick(profile, acc, Control::stick_up, Control::stick_down, Control::stick_left, Control::stick_right);
   std::tie(pad.c_stick_x, pad.c_stick_y) = make_stick(profile, acc, Control::c_stick_up, Control::c_stick_down,
                                                       Control::c_stick_left, Control::c_stick_right);
-  pad.trigger_l = make_trigger(acc[idx(Control::trigger_l)]);
-  pad.trigger_r = make_trigger(acc[idx(Control::trigger_r)]);
+  const Options& o = profile.options;
+  const std::int64_t digital_trigger = (o.stick_half_affects_triggers && active(acc[idx(Control::stick_half)]))
+                                           ? (std::int64_t{255} * o.stick_half_percent + 50) / 100
+                                           : 255;
+  pad.trigger_l = make_trigger(acc[idx(Control::trigger_l)], digital_trigger);
+  pad.trigger_r = make_trigger(acc[idx(Control::trigger_r)], digital_trigger);
 
-  const int threshold = profile.options.trigger_button_threshold;
+  const int threshold = o.trigger_button_threshold;
   if (threshold > 0) {
     if (pad.trigger_l >= threshold) pad.buttons |= kButtonL;
     if (pad.trigger_r >= threshold) pad.buttons |= kButtonR;

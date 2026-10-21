@@ -43,7 +43,18 @@ constexpr IntOption kIntOptions[] = {
     {"trigger_button_threshold", &Options::trigger_button_threshold, &ProfileOverride::trigger_button_threshold, 0,
      255},
 };
-constexpr std::string_view kDiagonalsOption = "normalize_digital_diagonals";
+struct BoolOption {
+  std::string_view name;
+  bool Options::*field;
+  std::optional<bool> ProfileOverride::*override_field;
+};
+
+constexpr BoolOption kBoolOptions[] = {
+    {"normalize_digital_diagonals", &Options::normalize_digital_diagonals,
+     &ProfileOverride::normalize_digital_diagonals},
+    {"stick_half_affects_triggers", &Options::stick_half_affects_triggers,
+     &ProfileOverride::stick_half_affects_triggers},
+};
 
 Result fail(std::string where, std::string_view what) { return Result::failure(where + ": " + std::string(what)); }
 
@@ -61,10 +72,14 @@ Result parse_options(const json& j, std::string_view where, Options* base, Profi
   if (!j.is_object()) return fail(std::string(where), "must be an object");
   for (const auto& [key, value] : j.items()) {
     const std::string path = std::string(where) + "." + key;
-    if (key == kDiagonalsOption) {
+    const BoolOption* flag = nullptr;
+    for (const BoolOption& o : kBoolOptions) {
+      if (o.name == key) flag = &o;
+    }
+    if (flag) {
       if (!value.is_boolean()) return fail(path, "must be true or false");
-      if (base) base->normalize_digital_diagonals = value.get<bool>();
-      if (over) over->normalize_digital_diagonals = value.get<bool>();
+      if (base) base->*(flag->field) = value.get<bool>();
+      if (over) over->*(flag->override_field) = value.get<bool>();
       continue;
     }
     const IntOption* option = nullptr;
@@ -254,7 +269,9 @@ ResolvedProfile Profile::resolve(std::string_view minigame_id) const {
   for (const IntOption& option : kIntOptions) {
     if (const auto& v = o.*(option.override_field)) resolved.options.*(option.field) = *v;
   }
-  if (o.normalize_digital_diagonals) resolved.options.normalize_digital_diagonals = *o.normalize_digital_diagonals;
+  for (const BoolOption& option : kBoolOptions) {
+    if (const auto& v = o.*(option.override_field)) resolved.options.*(option.field) = *v;
+  }
   for (std::size_t i = 0; i < kControlCount; ++i) {
     if (o.bindings[i]) resolved.bindings[i] = *o.bindings[i];
   }
@@ -355,7 +372,7 @@ std::string to_json(const Profile& profile) {
 
   ordered_json options;
   for (const IntOption& o : kIntOptions) options[std::string(o.name)] = profile.base.options.*(o.field);
-  options[std::string(kDiagonalsOption)] = profile.base.options.normalize_digital_diagonals;
+  for (const BoolOption& o : kBoolOptions) options[std::string(o.name)] = profile.base.options.*(o.field);
   root["options"] = options;
 
   ordered_json bindings = ordered_json::object();
@@ -375,7 +392,9 @@ std::string to_json(const Profile& profile) {
       for (const IntOption& option : kIntOptions) {
         if (const auto& v = o.*(option.override_field)) over_options[std::string(option.name)] = *v;
       }
-      if (o.normalize_digital_diagonals) over_options[std::string(kDiagonalsOption)] = *o.normalize_digital_diagonals;
+      for (const BoolOption& option : kBoolOptions) {
+        if (const auto& v = o.*(option.override_field)) over_options[std::string(option.name)] = *v;
+      }
       if (!over_options.empty()) entry["options"] = over_options;
       ordered_json over_bindings = ordered_json::object();
       for (std::size_t i = 0; i < kControlCount; ++i) {

@@ -562,6 +562,88 @@ Decide whether the ID counters are hashed. They are stored in game memory (`GXTe
 
 ---
 
+## 18. Input coverage (E2, P1-08)
+
+**Owner of this section:** input-mapping. Sign-off is joint with runtime-gc-wii (E2).
+**Profile:** `input/profiles/mp4/default.json` (GameCube layout, the same bindings as the built-in default). Every GameCube control has a keyboard source and a gamepad source:
+- **Keyboard:** WASD for the stick (left shift gives half tilt), TFGH for the C-stick, arrow keys for the D-pad, K/Space for A, J for B, L for X, I for Y, U for Z, Q/E for L/R (click plus full trigger), Enter for Start.
+- **Gamepad:** positional face buttons (A = south, B = east, X = west, Y = north), the right shoulder for Z, both sticks, analog triggers. L/R click at trigger 230/255.
+
+So a minigame is covered on both devices unless it needs something a key cannot produce. Per-minigame overrides exist only for those cases.
+
+**How the inputs were found.** We read the minigame modules of the pinned Party Board source (`98ac07f`, §1) in place, and copied nothing. The scan collects the pad arrays each module reads with a player's pad index: buttons, stick, C-stick, analog triggers and the stick-as-D-pad. Reads of the literal pad 0 next to debug prints were ignored, and so were CPU writes into the pad arrays. The button lists come from mask tests on those reads. Rows marked † were traced by hand. Button lists can be incomplete where a module tests buttons through tables or reused locals. That cannot cost coverage, because every button is bound on both devices, but the dump lane should confirm it.
+
+**Findings:**
+- **Analog triggers matter in one party minigame, Bowser's Bigger Blast.** It reads R pressure: a partial pull holds the plunger part-way, and the digital R click commits. Its override turns on `stick_half_affects_triggers` and leaves R to the trigger threshold. Left shift + E then holds the plunger at half pressure without clicking, and E alone commits.
+- **Every other trigger read is a threshold or saturates early,** so a full key press is correct:
+  - Photo Finish and Long Claw of the Law: L/R past 20/255;
+  - Makin' Waves: L past 80;
+  - Reversal of Fortune: R past 10;
+  - Mario Speedwagons: throttle saturates at 140/255;
+  - Dungeon Duos: L/R strength scaled by 1/150.
+- **The game turns trigger pressure into digital bits itself.** `HuPadRead` sets its own analog-L/R bits at 192/255. A gamepad reaches that before our 230 click, and a key gives 255.
+- **No stick-rotation minigame was found.** Every `atan2` on stick input is a facing direction. Keyboard stick magnitude is full or half tilt (left shift).
+- **No microphone, motion or GBA input** (§12).
+- **Rapid button presses:** The Great Deflate rewards how fast A is pressed (its CPU path injects A presses). The profile binds A to two keys (K, Space) as on every row. Turbo is an accessibility assist behind a per-ruleset fairness flag, not a profile binding.
+
+**Party-eligible rows** are the §12 categories a regular party can launch: 4-player, 1-vs-3, 2-vs-2, Battle, Bowser, Item and Fortune, giving 49 minigames. Extra Room and Story minigames are excluded (E2). This list is **provisional until P1-17 confirms it** from `board/mg_setup.c`. Nobody has played these with the profile yet, so every row is **to sign off on the dump lane**.
+
+| ID | Display name | Category | Inputs read | Special handling | Keyboard | Gamepad | Sign-off |
+|---|---|---|---|---|---|---|---|
+| `mp4.minigame.manta_rings` | Manta Rings | 4-player | stick, A | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.slime_time` | Slime Time | 4-player | A | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.booksquirm` | Booksquirm | 4-player | stick | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.trace_race` | Trace Race | Battle | stick | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.mario_medley` | Mario Medley | 4-player | A, B, L click, R click (prompted)† | L/R as digital clicks | default | default | to sign off on the dump lane |
+| `mp4.minigame.avalanche` | Avalanche! | 4-player | stick, A | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.domination` | Domination | 4-player | A | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.paratrooper_plunge` | Paratrooper Plunge | 4-player | stick | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.toads_quick_draw` | Toad's Quick Draw | 4-player | stick, A | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.three_throw` | Three Throw | 4-player | A, B | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.photo_finish` | Photo Finish | 4-player | stick, A, L/R past 20/255† | trigger as threshold | default | default | to sign off on the dump lane |
+| `mp4.minigame.mr_blizzards_brigade` | Mr. Blizzard's Brigade | 4-player | stick | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.bob_omb_breakers` | Bob-omb Breakers | 4-player | stick, A, B, X, Y | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.long_claw_of_the_law` | Long Claw of the Law | 4-player | stick, A, L/R past 20/255† | trigger as threshold | default | default | to sign off on the dump lane |
+| `mp4.minigame.stamp_out` | Stamp Out! | 4-player | stick, A† | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.candlelight_flight` | Candlelight Flight | 1-vs-3 | stick, A | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.makin_waves` | Makin' Waves | 1-vs-3 | stick, A, L past 80/255† | trigger as threshold | default | default | to sign off on the dump lane |
+| `mp4.minigame.hide_and_go_boom` | Hide and Go BOOM! | 1-vs-3 | A, B, X, Y | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.tree_stomp` | Tree Stomp | 1-vs-3 | stick, A, B† | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.fish_n_drips` | Fish n' Drips | 1-vs-3 | any of A, B, X, Y, L click, R click | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.hop_or_pop` | Hop or Pop | 1-vs-3 | stick, A | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.money_belts` | Money Belts | 1-vs-3 | stick | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.goooooooal` | GOOOOOOOAL!! | 1-vs-3 | stick, A | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.blame_it_on_the_crane` | Blame it on the Crane | 1-vs-3 | stick, A | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.the_great_deflate` | The Great Deflate | 2-vs-2 | A (press rate)† | rapid presses; turbo is a ruleset assist | default | default | to sign off on the dump lane |
+| `mp4.minigame.revers_a_bomb` | Revers-a-Bomb | 2-vs-2 | stick, A | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.right_oar_left` | Right Oar Left? | 2-vs-2 | A, B | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.cliffhangers` | Cliffhangers | 2-vs-2 | stick, A | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.team_treasure_trek` | Team Treasure Trek | 2-vs-2 | stick, X, Y | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.pair_a_sailing` | Pair-a-sailing | 2-vs-2 | stick, A, B | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.order_up` | Order Up | 2-vs-2 | stick, A | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.dungeon_duos` | Dungeon Duos | 2-vs-2 | stick, A, B, X, Y, L/R analog (strength / 150)† | strength saturates on a full press | default | default | to sign off on the dump lane |
+| `mp4.minigame.cheep_cheep_sweep` | Cheep Cheep Sweep | 2-vs-2 | stick, A, B | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.darts_of_doom` | Darts of Doom | Bowser | A | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.fruits_of_doom` | Fruits of Doom | Bowser | stick, A | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.balloon_of_doom` | Balloon of Doom | Bowser | A, L click | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.chain_chomp_fever` | Chain Chomp Fever | Battle | stick | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.paths_of_peril` | Paths of Peril | Battle | stick | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.bowsers_bigger_blast` | Bowser's Bigger Blast | Battle | R pressure (held part-way) and R click† | partial trigger | override: lshift+E = half pressure, E = commit | default (analog trigger) | to sign off on the dump lane |
+| `mp4.minigame.butterfly_blitz` | Butterfly Blitz | Battle | stick, A, B | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.mario_speedwagons` | Mario Speedwagons | 4-player | A, R throttle (saturates at 140/255)† | full press = full throttle | default | default | to sign off on the dump lane |
+| `mp4.minigame.reversal_of_fortune` | Reversal of Fortune | Fortune | stick, A, R past 10/255† | trigger as threshold | default | default | to sign off on the dump lane |
+| `mp4.minigame.bowser_bop` | Bowser Bop | Item | stick, A† | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.mystic_match_em` | Mystic Match 'Em | Item | A, stick as D-pad (repeat) | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.archaeologuess` | Archaeologuess | Item | stick, A | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.goombas_chip_flip` | Goomba's Chip Flip | Item | stick, A, L click | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.kareening_koopa` | Kareening Koopa | Item | stick | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.rumble_fishing` | Rumble Fishing | Battle | stick, A | — | default | default | to sign off on the dump lane |
+| `mp4.minigame.take_a_breather` | Take a Breather | 4-player | stick, digital buttons (mask excludes the analog-L/R bits) | — | default | default | to sign off on the dump lane |
+
+"default" means the base bindings of `input/profiles/mp4/default.json`. "override" means a `minigames` entry in that profile. `input/tests/test_mp4_profile.cpp` checks that the profile parses, binds no reserved input (Esc, Guide), and that its overrides apply. It also checks that every ID here and in the profile is in the §12 catalog, and that this table has exactly the party-eligible rows.
+
+---
+
 ## Sections still to fill (P1-18)
 - Spike S1 result and the pinned GX backend version (P1-12). **Reported:** `docs/spikes/s1-gx-backend.md`. Recommendation: aurora GX/MTX on Dawn at `514339438178ef2bed1b14e5149d90ece0c6e0cc`, with a host shim, a null backend and a small patch set. A gate runs at the start of P1-14. Folded into ADR 0007 §6 (Accepted). GX surface measured on Party Board's sources: 131 distinct entry points, 104 implemented by aurora at the pin, one real gap (`GXSetZTexture`, m419), no `GD*` calls.
 - Hash manifest. Starting areas: RNGs (§7), `GWSystem`/`GWPlayer`/`GWPlayerCfg`/game stats, HuPrc process list, object manager, overlay history, pad state, data-dir cache and ARAM map, MusyX sequencer and voice state, CARD/save media, virtual clock.

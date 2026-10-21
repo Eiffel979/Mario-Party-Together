@@ -346,3 +346,27 @@ TEST_CASE("per-port profiles are independent") {
   CHECK(f.pads[0].buttons == kButtonA);
   CHECK(f.pads[1].buttons == kButtonB);
 }
+
+TEST_CASE("stick_half_affects_triggers gives keys partial trigger pressure") {
+  const PortLayout layout = port0({kKeyboardDevice});
+  std::array<ResolvedProfile, kMaxPlayers> profiles = defaults();
+  // Off (the default): the half modifier leaves a key-driven trigger at full press.
+  CHECK(map_one({keyboard({"e", "lshift"})}, layout, profiles).trigger_r == 255);
+
+  for (ResolvedProfile& p : profiles) {
+    p.options.stick_half_affects_triggers = true;
+    p.bindings[static_cast<std::size_t>(Control::r)].clear();  // R only from the trigger threshold
+  }
+  PadState p = map_one({keyboard({"e"})}, layout, profiles);
+  CHECK(p.trigger_r == 255);
+  CHECK((p.buttons & kButtonR) != 0);  // 255 >= trigger_button_threshold (230)
+  p = map_one({keyboard({"e", "lshift"})}, layout, profiles);
+  CHECK(p.trigger_r == 128);  // 50% of 255, rounded
+  CHECK((p.buttons & kButtonR) == 0);
+  CHECK(p.stick_x == 0);
+  // Analog trigger sources are not scaled.
+  DeviceSnapshot pad = gamepad(4);
+  pad.gamepad.set(PadAxis::right_trigger, 32767);
+  const PortLayout both = port0({kKeyboardDevice, pad.id});
+  CHECK(map_one({keyboard({"lshift"}), pad}, both, profiles).trigger_r == 255);
+}
