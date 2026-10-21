@@ -404,4 +404,57 @@ inline Problems check_adapter(const Target& t) {
   return problems;
 }
 
+// ADR 0011: status() is running after boot(), stays running on every frame of the
+// target's inputs (conformance inputs never end the game), and a save state taken while
+// running loads into a fresh runtime as running, with the same health as the producer.
+inline Problems check_status(const Target& t) {
+  Problems problems;
+  const auto describe = [](const RuntimeHealth& h) {
+    std::string text = h.status == RuntimeStatus::running ? "running"
+                       : h.status == RuntimeStatus::halted ? "halted"
+                                                          : "faulted";
+    if (!h.message.empty()) text += " (" + h.message + ")";
+    return text;
+  };
+  SaveState saved;
+  RuntimeHealth health_at_save;
+  {
+    detail::Instance producer = detail::boot(t, t.config, problems, false);
+    if (!producer) return problems;
+    ITitleRuntime& runtime = *producer.runtime;
+    if (runtime.status().status != RuntimeStatus::running) {
+      detail::add(problems, "status() after boot() is " + describe(runtime.status()));
+      return problems;
+    }
+    for (std::uint64_t f = 0; f < t.frames; ++f) {
+      runtime.stepFrame(detail::input_at(t.inputs, f));
+      const RuntimeHealth health = runtime.status();
+      if (health.status != RuntimeStatus::running) {
+        detail::add(problems, detail::at(f, "status() left running: " + describe(health)));
+        return problems;  // a stopped runtime must not be stepped again (ADR 0011 rule 2)
+      }
+      if (!health.message.empty()) detail::add(problems, detail::at(f, "running, but with a message"));
+      if (f + 1 == t.save_frame) {
+        saved = runtime.saveState();
+        health_at_save = health;
+      }
+    }
+  }  // destroyed before the consumer exists (rule 10)
+
+  RuntimeConfig other = t.config;
+  other.seed = t.config.seed + 1;
+  other.save_media.reset();
+  detail::Instance consumer = detail::boot(t, other, problems, false);
+  if (!consumer) return problems;
+  if (Result r = consumer.runtime->loadState(saved); !r) {
+    detail::add(problems, "loadState() of a state from the same build failed: " + r.error());
+    return problems;
+  }
+  if (!(consumer.runtime->status() == health_at_save)) {
+    detail::add(problems, "status() after loadState() is " + describe(consumer.runtime->status()) + ", was " +
+                              describe(health_at_save) + " (ADR 0011 rule 1)");
+  }
+  return problems;
+}
+
 }  // namespace mpt::conformance

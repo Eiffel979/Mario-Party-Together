@@ -41,4 +41,5 @@ inline void expect_conforms(const Problems& problems) {
     MPT_CONFORMANCE_CHECK(TARGET_FN, "save media", ::mpt::conformance::check_save_media)                       \
     MPT_CONFORMANCE_CHECK(TARGET_FN, "stick folding", ::mpt::conformance::check_stick_folding)                 \
     MPT_CONFORMANCE_CHECK(TARGET_FN, "adapter snapshots", ::mpt::conformance::check_adapter)                   \
+    MPT_CONFORMANCE_CHECK(TARGET_FN, "runtime status", ::mpt::conformance::check_status)                       \
   }

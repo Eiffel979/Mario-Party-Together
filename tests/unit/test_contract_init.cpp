@@ -24,6 +24,7 @@ TEST_CASE("contract structs accept partial designated initializers") {
   const PadState pad{.buttons = 1};
   const InputFrame input{.frame = 1};
   const FrameRate rate{.numerator = 50};
+  const RuntimeHealth health{.status = RuntimeStatus::running};
 
   CHECK(config.seed == 1);
   CHECK_FALSE(config.save_media.has_value());
@@ -39,4 +40,5 @@ TEST_CASE("contract structs accept partial designated initializers") {
   CHECK(pad.buttons == 1);
   CHECK(input.frame == 1);
   CHECK(rate.denominator == 1);
+  CHECK(health.message.empty());
 }
