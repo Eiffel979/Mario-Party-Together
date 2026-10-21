@@ -38,6 +38,10 @@ void mpt_msm_swap_stream_header(struct MSMStreamHeader_s* header); /* 0x20 bytes
 void mpt_msm_swap_stream_tables(const struct MSMStreamHeader_s* header, unsigned int* list, size_t list_size,
                                 void* packs, size_t packs_size, void* adpcm, size_t adpcm_size);
 
+/* mpt_msm_push_group (src/msm_diag.c) is sndPushGroup with an OSReport saying why MusyX refused a
+ * group. msmsys.c maps sndPushGroup onto it with a macro (patch 0017), which also renames MusyX's own
+ * prototype, so its declaration is MusyX's and it is not declared here. */
+
 #ifdef __cplusplus
 }
 #endif
