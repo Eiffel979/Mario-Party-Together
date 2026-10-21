@@ -115,7 +115,12 @@ add_library(mpt_musyx_core STATIC
   src/musyx_debugger_stubs.c
   src/musyx_glue.h
   src/musyx_state_section.h)
-target_include_directories(mpt_musyx_core PUBLIC "${MPT_MUSYX_DIR}/include" PRIVATE "${_rt}" src)
+# musyx's headers are third-party code: SYSTEM, so their K&R-style "()" declarations
+# (-Wstrict-prototypes under Linux Clang 18) and anything else in them never trip our
+# warnings. Our own glue, adapter and tests keep the full warning set and -Werror.
+# SYSTEM PUBLIC propagates as a system include to everything that links the core.
+target_include_directories(mpt_musyx_core SYSTEM PUBLIC "${MPT_MUSYX_DIR}/include" PRIVATE "${_rt}")
+target_include_directories(mpt_musyx_core PRIVATE src)
 target_link_libraries(mpt_musyx_core PUBLIC mpt::gc_sdk)
 set_target_properties(mpt_musyx_core PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 target_compile_definitions(mpt_musyx_core PUBLIC
