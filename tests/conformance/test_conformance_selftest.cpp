@@ -210,3 +210,61 @@ TEST_CASE("conformance self-test: the checks pass for the unmodified FakeRuntime
   CHECK(conformance::check_save_media(t).empty());
   CHECK(conformance::check_stick_folding(t).empty());
 }
+
+// ADR 0011 status checks: a runtime that halts, faults, starts stopped, or loses its
+// health across a save state must each be caught.
+template <RuntimeStatus How, std::uint64_t StopAt>
+class StopsRuntime final : public DelegatingRuntime {
+ public:
+  void stepFrame(const InputFrame& inputs) override {
+    inner_.stepFrame(inputs);
+    frame_ = inputs.frame + 1;
+  }
+  Result boot(const VerifiedDump& dump, const RuntimeConfig& config) override {
+    frame_ = 0;
+    return inner_.boot(dump, config);
+  }
+  RuntimeHealth status() const override {
+    if (frame_ < StopAt) return {};
+    return RuntimeHealth{How, "synthetic stop"};
+  }
+
+ private:
+  std::uint64_t frame_ = 0;
+};
+
+// Loads states fine but reports itself faulted afterwards: status() is not restored.
+class FaultsAfterLoadRuntime final : public DelegatingRuntime {
+ public:
+  Result loadState(const SaveState& state) override {
+    loaded_ = true;
+    return inner_.loadState(state);
+  }
+  RuntimeHealth status() const override {
+    if (!loaded_) return {};
+    return RuntimeHealth{RuntimeStatus::faulted, "lost on load"};
+  }
+
+ private:
+  bool loaded_ = false;
+};
+
+TEST_CASE("conformance self-test: a runtime that halts or faults mid-run is caught") {
+  const auto halted = conformance::check_status(target_with<StopsRuntime<RuntimeStatus::halted, 100>>());
+  CHECK(mentions(halted, "frame 99: status() left running: halted (synthetic stop)"));
+  const auto faulted = conformance::check_status(target_with<StopsRuntime<RuntimeStatus::faulted, 250>>());
+  CHECK(mentions(faulted, "frame 249: status() left running: faulted"));
+}
+
+TEST_CASE("conformance self-test: a runtime that is not running after boot is caught") {
+  CHECK(mentions(conformance::check_status(target_with<StopsRuntime<RuntimeStatus::faulted, 0>>()),
+                 "status() after boot() is faulted"));
+}
+
+TEST_CASE("conformance self-test: a status that a save state does not restore is caught") {
+  CHECK(mentions(conformance::check_status(target_with<FaultsAfterLoadRuntime>()), "ADR 0011 rule 1"));
+}
+
+TEST_CASE("conformance self-test: FakeRuntime never leaves running") {
+  CHECK(conformance::check_status(target_with<DelegatingRuntime>()).empty());
+}
