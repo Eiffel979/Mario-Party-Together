@@ -148,6 +148,9 @@ bool boot(MptMp4Game& game, std::optional<mpt::SaveMedia> card, std::string& err
   // `while (HuARDMACheck());` right after ARQPostRequest with no SDK call in the loop, so a callback
   // left for the next call boundary would never run.
   sc.io_callbacks_before_return = true;
+  // Party Board's TARGET_PC heaps are four times the console's (malloc.c, 64-bit structures): 78 MiB of
+  // game heaps plus the rest of OSAlloc's arena. A per-title constant (mp4.md section 19).
+  sc.main_ram_bytes = 96u << 20;
   sc.arena_base = game.arena_base;
   sc.audio_engine = mpt::gc::MusyxEngine::engine();
   sc.audio_output = game.audio_output;

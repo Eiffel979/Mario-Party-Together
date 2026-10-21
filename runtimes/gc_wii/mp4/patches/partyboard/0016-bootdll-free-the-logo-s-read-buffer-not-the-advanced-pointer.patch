@@ -1,0 +1,29 @@
+Apply order 0016 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+bootDll: free the logo's read buffer, not the advanced pointer
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+diff --git a/src/REL/bootDll/main.c b/src/REL/bootDll/main.c
+index 37a7b4838f38b5eca17c52edf5e932a861afd5aa..9835875b9355faca095f8674ae822a3bbb67b053 100644
+--- a/src/REL/bootDll/main.c
++++ b/src/REL/bootDll/main.c
+@@ -1080,6 +1080,9 @@ void ObjectSetup(void)
+  void *NintendoDataDecode(void)
+  {
+      u32 *src = (u32 *)nintendoData;
++#ifdef MPT_PC
++     u32 *const read_buf = src; /* GetRelIncludeData's buffer: freed below, not the advanced src */
++#endif
+ 
+      u32 size = *src++;
+      void *dst;
+@@ -1095,7 +1098,9 @@ void ObjectSetup(void)
+      if(dst) {
+          HuDecodeData(src, dst, size, decode_type);
+      }
+-#ifdef TARGET_PC
++#ifdef MPT_PC
++     HuMemDirectFree(read_buf);
++#elif defined(TARGET_PC)
+      HuMemDirectFree(src);
+ #endif
+      return dst;
