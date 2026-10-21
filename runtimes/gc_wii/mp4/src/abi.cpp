@@ -144,8 +144,10 @@ bool boot(MptMp4Game& game, std::optional<mpt::SaveMedia> card, std::string& err
   sc.card.game_code = {{'G', 'M', 'P', 'E'}};
   sc.card.maker_code = {{'0', '1'}};
   sc.card.image = std::move(card);
-  // MP4's I/O callback mode is chosen by P1-16's audit of the completion-wait loops (mp4.md §14).
-  sc.io_callbacks_before_return = false;
+  // MP4's I/O callback mode (P1-16 audit, mp4.md section 14): before return. armem.c spins on
+  // `while (HuARDMACheck());` right after ARQPostRequest with no SDK call in the loop, so a callback
+  // left for the next call boundary would never run.
+  sc.io_callbacks_before_return = true;
   sc.arena_base = game.arena_base;
   sc.audio_engine = mpt::gc::MusyxEngine::engine();
   sc.audio_output = game.audio_output;
