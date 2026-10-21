@@ -316,7 +316,7 @@ Shared by every GameCube/Wii title. Built only with Clang (clang-cl on Windows) 
 
 **Scheduler.** SDK threads and the root coroutine (`main()`, the default thread at priority 16) are coroutines on arena stacks (256 KiB each, 32 threads). We use **our own context switch** (about 40 instructions per ABI, Win64 with TIB stack-bound swap, and SysV, all in `context.cpp` with documented frame layouts), accepted by architect with libco as the named fallback. A test on both OSes checks that every callee-saved register survives a round trip into a coroutine that clobbers them all, including xmm6–15 and the TIB stack fields on Win64, MXCSR and the x87 control word. No exception, `longjmp` or SEH unwind may cross a switch. Each stack has a 256-byte canary at its bottom, checked after every switch, so an overflow that runs through it is a deterministic fault (an overflow that skips over it is not caught). The best ready thread runs (lowest priority value, then FIFO). At every SDK call boundary, due interrupts run on the current thread's stack, and a strictly higher-priority thread that they made ready preempts the caller. Interrupts that fall due while every thread is idle run on a dedicated interrupt coroutine. `OSDisableInterrupts` only tracks its return value (ADR 0007 §7). Blocking inside an interrupt handler is a fault. `OSSetIdleFunction` runs the idle function once per frame step on the lowest-priority thread (P1-13b, §15).
 
-**I/O.** DVD, ARAM DMA/ARQ and CARD complete inside the call. Callbacks run at the **next SDK call boundary** by default, so code that sets its "busy" flag after issuing the call still works. `SdkConfig::io_callbacks_before_return` runs them before the call returns instead. The mode is a **per-title constant** recorded here, never a user option, and part of the build fingerprint (architect ruling). **MP4's mode: to be chosen by P1-16**, by checking every completion-wait loop in `game/dvd.c`, `game/data.c`, `game/armem.c`, `game/card.c` and `msm/msmstream.c` (each loop must contain an SDK call for the default to work). The disc is read through `DirectoryFileSource`, which takes entry order and sizes from the extracted `sys/fst.bin` (P1-09's layout, `files/` beside it), rejects unsafe names (`.`, `..`, separators, control bytes) and files missing or with the wrong size, and keeps recently used files open. Reads past the end of a file return zeros.
+**I/O.** DVD, ARAM DMA/ARQ and CARD complete inside the call. Callbacks run at the **next SDK call boundary** by default, so code that sets its "busy" flag after issuing the call still works. `SdkConfig::io_callbacks_before_return` runs them before the call returns instead. The mode is a **per-title constant** recorded here, never a user option, and part of the build fingerprint (architect ruling). **MP4's mode: callbacks before return** (P1-16 audit, §19). The disc is read through `DirectoryFileSource`, which takes entry order and sizes from the extracted `sys/fst.bin` (P1-09's layout, `files/` beside it), rejects unsafe names (`.`, `..`, separators, control bytes) and files missing or with the wrong size, and keeps recently used files open. Reads past the end of a file return zeros.
 
 **PAD mapping** (canonical `Button` → GameCube):
 
@@ -656,6 +656,56 @@ Decide whether the ID counters are hashed. They are stored in game memory (`GXTe
 - **Linux:** the module has not been built on Linux here, and the ELF section markers and `__start_`/`__stop_` bounds are untested.
 - A soft reset re-creates the SDK. With `arena_base` 0 its arena can move, and states saved before the reset then no longer load; P1-16's fixed arena base removes this. The GX front end's globals are not reset at a soft reset. The game's own `GXInit` at boot re-initializes them; the dump lane should confirm nothing stale is left.
 - The party flags above are derived from the decomp's code paths and have not been observed on a real party yet.
+
+---
+
+## 19. The host runtime (P1-16, `runtimes/gc_wii/mp4/host/`, `adapters/mp4/`)
+
+**Mp4Runtime** is host side, built with the tree's compiler, and drives the module only through `game_abi.h`.
+- `boot()` loads `<build_dir>/module/mp4_game.dll` (`.so`) and creates the game on `<build_dir>/disc`. It uses the fixed arena base and the Phase 1 gameplay flags (none).
+- `status()` (ADR 0011) is the module's step result and fault text, which the module keeps in its save state.
+- `SaveState::format_version` is the module's `state_format()`.
+- If the module was built with the null GX backend, `boot()` falls back to null video.
+
+**Mp4Adapter** (`adapters/mp4`) maps the raw party flags to `PartyPhase` and accepts only an empty ruleset. P1-17 adds the catalog and the ID mapping.
+
+The shell registration (`mpt_register_mp4`) gives `--dump` the asset-import recipe, using this tree's `runtimes/gc_wii`, Clang, Ninja, GX backend and packages.
+
+**Fixed bases** (ADR 0008 §11; `mp4/layout.cmake`, the same on both OSes):
+
+| What | Address | How |
+|---|---|---|
+| Game module image base | `0x500000000000` | **Windows:** `/BASE` with `/DYNAMICBASE:NO /FIXED`, so the image has no relocations and loads there or not at all (checked: `IMAGE_FILE_RELOCS_STRIPPED`, ImageBase `0x500000000000`). **Linux:** lld `--image-base`; glibc asks the kernel for that address. |
+| SDK arena | `0x400000000000` | Reserved by the SDK at `create`, which fails if the address is unavailable. |
+
+The loader refuses a module that landed anywhere else, and `mp4_game_abi` checks the base. **Linux has not been run here.** The fresh-process save/load demonstration (E5) is still to do on both OSes.
+
+**I/O callback mode: before return** (`SdkConfig::io_callbacks_before_return = true`). The audit:
+
+| Code | Wait | SDK call in the loop? |
+|---|---|---|
+| `game/dvd.c` `HuDvdDataReadWait` | `while(!CallBackStatus) HuDvdErrorWatch();` | yes (`DVDGetDriveStatus`) |
+| `game/data.c` `HuDataDVDdirDirectRead` | `while(DVDGetCommandBlockStatus(...))` | yes |
+| `game/data.c`, `game/armem.c` (four sites) | `while (HuARDMACheck());` straight after `ARQPostRequest` | **no**: it only reads `arqCnt` |
+| `game/card.c` | `do CARDProbeEx(...) while (BUSY)` | yes |
+| `msm/msmstream.c` | no waits; completion chains through `msmStreamDvdCallback` | n/a |
+
+The `armem.c` loops would never see their callback under the default mode, so MP4 runs callbacks before return. Ordering was checked:
+- Every caller sets its counters and busy/status fields (`arqCnt++`, `CallBackStatus = 0`, `readBusyF`, `status`) **before** the call.
+- The stream callbacks' nested read (`msmStreamDvdCallback` case 4) touches nothing that `msmStreamDvdCallback2` reads.
+- Stereo streams complete left then right, as on the console.
+
+**Process stack high water.** `src/libco.c` paints each process stack at creation and measures it when the process ends. OSReport prints the largest share used so far once it passes 50%. Long-lived processes that never end are not measured.
+
+**Dump lane.** `mpt_dump_lane --boot mp4 [--frames N] [--every N] [--seed S]` is the M1 check: it boots headless with no input, prints the state hash every N frames and the game's OSReport text, and fails if the runtime halts or faults.
+- The dump comes from `MPT_DUMP_DIR`. It is identified and built through asset-import as `--dump` does, into `MPT_BUILD_CACHE` (default `<MPT_DUMP_DIR>/mpt-build-cache`).
+- `MPT_SOURCE_CACHE` reuses pinned checkouts instead of fetching them.
+
+**Still open in P1-16:**
+- the hash manifest, including the GX front-end state and the function-pointer registration table (E4);
+- the fresh-process save/load demonstration (E5);
+- the Linux build;
+- the conformance suite on the dump lane.
 
 ---
 
