@@ -22,6 +22,7 @@ std::unique_ptr<mpt::asset_import::BuildRecipe> make_mp4_recipe() {
   config.cmake = utf8_path(MPT_MP4_RECIPE_CMAKE);
   config.ninja = utf8_path(MPT_MP4_RECIPE_NINJA);
   for (const char* arg : kMp4RecipeCmakeArgs) config.cmake_args.emplace_back(arg);
+  config.runtime_build_version = MPT_MP4_RECIPE_RUNTIME_VERSION;
   std::string error;
   return mpt::mp4::make_recipe(config, error);  // null if the source tree has no lock: --dump explains
 }

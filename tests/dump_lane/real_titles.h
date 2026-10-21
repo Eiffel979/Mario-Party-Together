@@ -10,10 +10,14 @@
 //                     them). Used instead of fetching; each must still match the lock to count as pinned.
 
 #include <cstdio>
+#include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
+#include <utility>
 #include <variant>
+#include <vector>
 
 #include "mpt/asset_import/build.h"
 #include "mpt/asset_import/importer.h"
@@ -54,14 +58,32 @@ inline std::variant<VerifiedDump, Result> build_dump(TitleId title, const std::f
   std::string error;
   auto known = asset_import::KnownDumps::load(known_dumps_json, error);
   if (!known) return Result::failure(error);
+  // Only files that can be this title's supported dump are read at all: the right size and, for a
+  // disc, the right ID in its first bytes. Other titles' dumps in the folder are never hashed.
+  std::vector<std::pair<std::uint64_t, std::string>> candidates;  // size, disc ID ("" for cartridges)
+  for (const asset_import::KnownDump& k : known->entries())
+    if (k.title == title && k.supported && k.size != 0) candidates.emplace_back(k.size, k.disc_id);
+  auto could_be = [&](const std::filesystem::path& path) {
+    std::error_code size_ec;
+    const std::uint64_t size = std::filesystem::file_size(path, size_ec);
+    if (size_ec) return false;
+    for (const auto& [want_size, disc_id] : candidates) {
+      if (size != want_size) continue;
+      if (disc_id.empty()) return true;
+      std::ifstream in(path, std::ios::binary);
+      std::string head(disc_id.size(), '\0');
+      if (in.read(head.data(), static_cast<std::streamsize>(head.size())) && head == disc_id) return true;
+    }
+    return false;
+  };
   const asset_import::Importer importer(std::move(*known));
   std::error_code ec;
   for (const auto& file : std::filesystem::directory_iterator(dump_dir, ec)) {
-    if (!file.is_regular_file(ec)) continue;
+    if (!file.is_regular_file(ec) || !could_be(file.path())) continue;
     const asset_import::IdentifyReport report = importer.identify(file.path());
     if (!report.match || report.match->title != title) continue;
-    std::printf("dump lane: %s is %s %s %s\n", file.path().filename().string().c_str(), name.c_str(),
-                report.match->region.c_str(), report.match->revision.c_str());
+    std::printf("dump lane: found %s %s %s\n", name.c_str(), report.match->region.c_str(),
+                report.match->revision.c_str());
     std::unique_ptr<asset_import::BuildRecipe> recipe = entry->recipe();
     if (!recipe) return Result::failure("the " + name + " recipe could not be created (no decomp.lock?)");
     auto dump = asset_import::dump_for_build(report, file.path(), error);

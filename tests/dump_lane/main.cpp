@@ -145,6 +145,8 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  // Unbuffered, so a crash still leaves everything printed before it (the boot mode is a diagnostic).
+  std::setvbuf(stdout, nullptr, _IONBF, 0);
   BootOptions boot_options;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];

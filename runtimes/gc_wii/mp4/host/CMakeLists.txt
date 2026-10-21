@@ -59,6 +59,25 @@ endforeach()
 foreach(_v GC_WII_SOURCE_DIR CORE_INCLUDE_DIR CLANG_C CLANG_CXX NINJA)
   string(REPLACE "\\" "/" MPT_MP4_RECIPE_${_v} "${MPT_MP4_RECIPE_${_v}}")
 endforeach()
+# The cached module must be rebuilt whenever the code it is built from changes, so the recipe's runtime
+# version is a hash of every file the module build reads from this tree.
+set(_gc "${CMAKE_CURRENT_SOURCE_DIR}/../..")
+file(GLOB_RECURSE _module_inputs CONFIGURE_DEPENDS LIST_DIRECTORIES false
+  "${_gc}/CMakeLists.txt" "${_gc}/sdk/CMakeLists.txt" "${_gc}/sdk/src/*" "${_gc}/sdk/include/*"
+  "${_gc}/gx/CMakeLists.txt" "${_gc}/gx/*.lock" "${_gc}/gx/src/*" "${_gc}/gx/include/*" "${_gc}/gx/patches/*"
+  "${_gc}/musyx/CMakeLists.txt" "${_gc}/musyx/src/*" "${_gc}/musyx/include/*"
+  "${_gc}/mp4/CMakeLists.txt" "${_gc}/mp4/*.cmake" "${_gc}/mp4/decomp.lock" "${_gc}/mp4/src/*" "${_gc}/mp4/include/*"
+  "${_gc}/mp4/patches/*" "${_gc}/mp4/tools/*")
+list(SORT _module_inputs)
+set(_tree "")
+foreach(_f IN LISTS _module_inputs)
+  file(SHA256 "${_f}" _h)
+  file(RELATIVE_PATH _rel "${_gc}" "${_f}")
+  string(APPEND _tree "${_rel}=${_h};")
+endforeach()
+string(SHA256 _tree_hash "${_tree}")
+string(SUBSTRING "${_tree_hash}" 0 16 _tree_hash)
+set(MPT_MP4_RECIPE_RUNTIME_VERSION "mp4-module-${_tree_hash}")
 configure_file(recipe_config.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/recipe_config.h" @ONLY)
 
 add_library(mpt_mp4_register STATIC src/register.cpp)
