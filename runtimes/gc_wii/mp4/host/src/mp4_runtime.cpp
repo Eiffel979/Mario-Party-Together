@@ -96,29 +96,27 @@ Result Mp4Runtime::boot(const VerifiedDump& dump, const RuntimeConfig& config) {
     return Result::failure("Mp4Runtime: " + message(e));
   }
   api_->set_report(game_, report_, report_user_);
-  health_ = Health::running;
-  health_message_.clear();
+  health_ = RuntimeHealth{};
   return Result::success();
 }
 
 void Mp4Runtime::updateHealth(MptMp4StepResult result) {
   switch (result) {
     case MPT_MP4_STEP_RUNNING:
-      health_ = Health::running;
-      health_message_.clear();
+      health_ = RuntimeHealth{};
       return;
     case MPT_MP4_STEP_HALTED:
-      health_ = Health::halted;
+      health_.status = RuntimeStatus::halted;
       break;
     default:
-      health_ = Health::faulted;
+      health_.status = RuntimeStatus::faulted;
       break;
   }
-  health_message_ = api_->fault(game_);
+  health_.message = api_->fault(game_);
 }
 
 void Mp4Runtime::stepFrame(const InputFrame& inputs) {
-  if (game_ == nullptr || health_ != Health::running) return;
+  if (game_ == nullptr || health_.status != RuntimeStatus::running) return;
   MptMp4InputFrame in;
   std::memcpy(&in, &inputs, sizeof in);
   updateHealth(api_->step(game_, &in));
