@@ -72,7 +72,43 @@ if(NOT _head STREQUAL MPT_MUSYX_LOCKED_COMMIT)
 endif()
 message(STATUS "runtimes/gc_wii/musyx: building MusyX ${MPT_MUSYX_VERSION} from ${MPT_MUSYX_DIR} (${_head})")
 
-set(_rt "${MPT_MUSYX_DIR}/src/musyx/runtime")
+# Our changes to the pin are patch files (patches/*.patch, CC0 like the pin, ADR 0009 section 5),
+# applied with `git apply` to a copy of its src/ in the build tree; the checkout stays pristine.
+file(GLOB _musyx_patches CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/patches/*.patch")
+list(SORT _musyx_patches)
+set(_musyx_src "${MPT_MUSYX_DIR}")
+if(_musyx_patches)
+  set(_musyx_src "${CMAKE_CURRENT_BINARY_DIR}/musyx-patched")
+  set(_stamp_text "${MPT_MUSYX_DIR}")
+  foreach(_p IN LISTS _musyx_patches)
+    file(SHA256 "${_p}" _h)
+    string(APPEND _stamp_text ";${_h}")
+  endforeach()
+  string(SHA256 _stamp "${_stamp_text}")
+  set(_old "")
+  if(EXISTS "${_musyx_src}.stamp")
+    file(READ "${_musyx_src}.stamp" _old)
+  endif()
+  if(NOT _old STREQUAL _stamp OR NOT EXISTS "${_musyx_src}/src")
+    message(STATUS "runtimes/gc_wii/musyx: applying ${CMAKE_CURRENT_SOURCE_DIR}/patches")
+    file(REMOVE_RECURSE "${_musyx_src}")
+    file(MAKE_DIRECTORY "${_musyx_src}")
+    file(COPY "${MPT_MUSYX_DIR}/src" DESTINATION "${_musyx_src}")
+    find_package(Git REQUIRED)
+    foreach(_p IN LISTS _musyx_patches)
+      execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env "GIT_CEILING_DIRECTORIES=${CMAKE_CURRENT_BINARY_DIR}"
+                "${GIT_EXECUTABLE}" apply --whitespace=nowarn "${_p}"
+        WORKING_DIRECTORY "${_musyx_src}" RESULT_VARIABLE _rc ERROR_VARIABLE _err)
+      if(NOT _rc EQUAL 0)
+        file(REMOVE_RECURSE "${_musyx_src}")
+        message(FATAL_ERROR "runtimes/gc_wii/musyx: ${_p} does not apply: ${_err}")
+      endif()
+    endforeach()
+    file(WRITE "${_musyx_src}.stamp" "${_stamp}")
+  endif()
+endif()
+set(_rt "${_musyx_src}/src/musyx/runtime")
 # Upstream's runtime list at the pin, minus hw_pc_sdl.c (threaded SDL device, never
 # used) and minus the files compiled through our wrappers below.
 set(_musyx_sources
