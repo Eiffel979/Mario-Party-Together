@@ -8,6 +8,8 @@
 #define MPT_MP4_RECIPE_CLANG_CXX "@MPT_MP4_RECIPE_CLANG_CXX@"
 #define MPT_MP4_RECIPE_CMAKE "@CMAKE_COMMAND@"
 #define MPT_MP4_RECIPE_NINJA "@MPT_MP4_RECIPE_NINJA@"
+// A hash of every runtimes/gc_wii file the module build reads: a change rebuilds cached modules.
+#define MPT_MP4_RECIPE_RUNTIME_VERSION "@MPT_MP4_RECIPE_RUNTIME_VERSION@"
 
 inline constexpr const char* kMp4RecipeCmakeArgs[] = {
 @MPT_MP4_RECIPE_ARGS@};
