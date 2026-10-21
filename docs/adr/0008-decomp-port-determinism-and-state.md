@@ -41,7 +41,7 @@ Cross-platform identity is a **Phase 1 exit requirement** (D5): the same replay 
 6. **Fixed-width types.** No `long` or `unsigned long` in game-state structs or disc-data structs. Disc data is byte-swapped and converted to host structs **at load time**. 32-bit on-disc offsets become host pointers only in loader code.
 
 ### Memory
-7. **One arena.** All game heaps (`HuMem`-style heaps and the SDK's `OSAlloc` arenas), emulated ARAM and coroutine stacks come from one runtime-owned arena, allocated and zeroed at `boot()`. Its size matches the console's main RAM plus emulated ARAM (24 MB + 16 MB), plus a fixed region for coroutine stacks. Game code never calls the host `malloc`. Overlay (REL) code and data live in the game module, not the arena (ADR 0009, P1-15), so the arena layout is the same on every platform.
+7. **One arena.** All game heaps (`HuMem`-style heaps and the SDK's `OSAlloc` arenas), emulated ARAM and coroutine stacks come from one runtime-owned arena, allocated and zeroed at `boot()`. Its size matches the console's main RAM plus emulated ARAM (24 MB + 16 MB), plus a fixed region for coroutine stacks. *(Amended after P1-16 boot: main RAM is a per-title, per-build constant; MP4 uses 96 MiB. See the amendment at the end.)* Game code never calls the host `malloc`. Overlay (REL) code and data live in the game module, not the arena (ADR 0009, P1-15), so the arena layout is the same on every platform.
    - **No host-varying bytes in the arena.** Where game code stores a caller or return address in memory (MP4's `HuMemDirectMalloc` records its caller in heap block headers), it stores a **fixed constant**. Otherwise arena bytes would differ between runs and builds, which breaks save-state comparison and the deep-hash debug mode.
 
 ### State hash: an explicit manifest
@@ -212,3 +212,40 @@ It covers everything `Mp4Runtime` needs for `ITitleRuntime`: boot, step, frame n
 - For halts and faults, I will write a small additive core ADR before P1-16 merges: a runtime status query that `Session::step` turns into a failed `Result`. Until then, `Mp4Runtime` logs the fault and stops stepping the module, but keeps the frame count.
 
 `rumble()` stays presentation-only. It is derived from game state and may be ignored until the host-feedback follow-up (ADR 0002 review, Phase 4).
+
+## Amendment after P1-16 boot: per-title main-RAM size (architect, 2026-10-21)
+### Context
+§7 sized the arena's main-RAM region at the console's 24 MB. Party Board's `TARGET_PC` build multiplies MP4's game heaps by 4 (78 MiB in total), so boot failed at `OSAlloc(44040192)`. The growth is deliberate:
+- on a 64-bit host, game structures that hold pointers are larger than on the console;
+- the HSF model data is converted at load time into 64-bit host structures (§6).
+
+runtime-gc-wii added `SdkConfig::main_ram_bytes`, default 24 MiB, and MP4 uses 96 MiB. With that, MP4 boots on the user's dump and runs 600 frames without halting or faulting.
+
+### Decision: accept a per-title main-RAM size, fixed per build
+Patching Party Board's heap sizes back to console values is rejected. The console sizes were budgeted for 32-bit pointers and the console's own data layout, so the same heaps would run out on a 64-bit host, most likely late in a party, on large boards. That is exactly where an out-of-memory fault is hardest to find. Party Board's multiplier is the upstream port's answer to that, and it is part of the pinned source (ADR 0009).
+
+1. **The size is a build constant of the title's game module, never a runtime option.**
+   - `main_ram_bytes` is set by the module itself (MP4: 96 MiB) when it configures the SDK.
+   - It is not a field of the module's boot config, `RuntimeConfig` or any user setting, and it is the same on every platform.
+   - ARAM stays at the console's 16 MB, and the coroutine-stack region keeps its fixed size (§7).
+   - Every title states its size, and why, in `docs/titles/<id>.md`.
+2. **Rule for choosing it:**
+   - Use the smallest multiple of 8 MiB that is at least the sum of the game's own heap sizes as built (Party Board's values for MP4) plus the SDK's fixed allocations, plus a margin of at least 10%.
+   - P1-16 measures the peak use over the full-party replay on the dump lane, and shows that the size covers it with the margin to spare. The result goes in `mp4.md`.
+   - An `OSAlloc` failure is a deterministic **fault** (ADR 0011), never a host error, so a size that is too small shows up as a reproducible fault at a fixed frame.
+3. **It is a determinism input through the build, not through the session.**
+   - Heap placement, and therefore arena offsets, depend on the main-RAM size. Hash-manifest pointers are hashed as arena offsets (§8). So the size is part of what makes two builds comparable.
+   - It is included in the module's `build_id` (ADR 0008, ABI review item 6), alongside the pins, patches and compiler. Golden trails and replays already require the same build (ADR 0006, §10), so they also pin the size.
+   - The save-state header records the arena layout: main-RAM size, ARAM size and stack-region size. `load_state` rejects a mismatch with `MPT_MP4_ERR_STATE`, even if `build_id` somehow matched.
+   - Changing a title's size changes its `build_id` and requires re-recording that title's golden trails. Fixtures are re-recorded deliberately, as for a pin bump.
+4. **What the game can see stays console-shaped.** Hardware getters keep their fixed console answers (§3). `OSGetPhysicalMemorySize` and similar calls still report 24 MB, so no game logic branches on the host's larger arena. Only `OSGetArenaLo`/`OSGetArenaHi` and the heap calls see the real bounds, because Party Board's heap setup needs them. If Party Board's PC heap setup turns out to derive its sizes from the reported memory size, the module may report the build size there instead. That is still a per-build constant and so still deterministic, and the choice is recorded in `mp4.md`.
+5. **Save-state size:**
+   - A Phase 1 save state is the whole arena (§10): about 96 MiB of main RAM, 16 MiB of ARAM and the stack region, plus the header. That is acceptable for the same-build, same-machine states Phase 1 uses: E5 round trips and dump-lane tests.
+   - P1-16 records the save and load times. If E5 or a dump-lane test becomes slow, compressing the zero-filled tail (or run-length encoding the blob) is an allowed layout change inside the module.
+   - The Phase 2 ADR that closes §10 must budget netplay state transfer against this size, not against 24 MB.
+6. **Fixed base and spacing (§11):**
+   - The arena is reserved as one region at the fixed base, laid out from it in this order: main RAM, ARAM, stacks.
+   - Its total size must stay below the spacing reserved between fixed bases (`0x400000000000`, 64 TiB), which a 96 MiB main RAM does by a very wide margin. A title whose layout would ever exceed it must change the spacing here first.
+   - `boot` still fails with a clear message if the address range cannot be reserved.
+
+§7's "Its size matches the console's main RAM" now reads: **"main RAM is the title's fixed per-build size (the console's 24 MB unless its `docs/titles/<id>.md` gives another and why), plus emulated ARAM (16 MB) and the fixed stack region."**
