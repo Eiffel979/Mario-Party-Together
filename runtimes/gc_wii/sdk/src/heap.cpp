@@ -290,8 +290,11 @@ void* OSAllocFixed(void** rstart, void** rend) {
 s32 OSCheckHeap(OSHeapHandle heap) {
   boundary();
   HeapSlot& h = heapFor(heap);
+  // The console SDK's answer: each free block's size minus its header, which is what an OSAlloc can
+  // get from it. MP4's HuMemInitAll allocates exactly OSCheckHeap's result for its last heap.
   s32 free_bytes = 0;
-  for (std::uint32_t off = h.free_head; off; off = hdr(off)->next) free_bytes += static_cast<s32>(hdr(off)->size);
+  for (std::uint32_t off = h.free_head; off; off = hdr(off)->next)
+    free_bytes += static_cast<s32>(hdr(off)->size - kHeader);
   return free_bytes;
 }
 

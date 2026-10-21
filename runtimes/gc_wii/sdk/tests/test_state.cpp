@@ -215,11 +215,15 @@ TEST_CASE("OSAlloc heaps live in the arena and coalesce") {
     OSFreeToHeap(h, a);
     OSFreeToHeap(h, c);
     ok = ok && OSCheckHeap(h) == free0;
+    // As on the console, OSCheckHeap is what one OSAlloc can take from a single free block.
+    ok = ok && free0 == 0x10000 - 32;
     ok = ok && OSAllocFromHeap(h, 0x20000) == nullptr;
     void* fs = static_cast<std::byte*>(lo) + 0x1000;
     void* fe = static_cast<std::byte*>(lo) + 0x2000;
     ok = ok && OSAllocFixed(&fs, &fe) != nullptr;
-    ok = ok && OSCheckHeap(h) == free0 - 0x1000;
+    ok = ok && OSCheckHeap(h) == free0 - 0x1000 - 32;  // the carve leaves two free blocks, two headers
+    void* rest = OSAllocFromHeap(h, static_cast<u32>(0x10000 - 0x2000 - 32));
+    ok = ok && rest != nullptr;
   }};
   auto sdk = boot(g);
   CHECK(step(*sdk) == StepStatus::halted);
