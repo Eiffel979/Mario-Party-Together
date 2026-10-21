@@ -1,0 +1,37 @@
+Apply order 0001 against AxioDL/musyx 86851a3a8d51788d166ea42d137b49526f570400 (CC0-1.0; ADR 0009 section 5).
+PC sndPushGroup: skip samples a group names but no directory has, as the console does
+Applied in order by runtimes/gc_wii/musyx/CMakeLists.txt with `git apply`.
+
+diff --git a/src/musyx/runtime/s_data.c b/src/musyx/runtime/s_data.c
+index 847c51c9578386a3246737d00884ec27032b89e2..d57296bd88bb705e50fc5ad8837638579ca67b6f 100644
+--- a/src/musyx/runtime/s_data.c
++++ b/src/musyx/runtime/s_data.c
+@@ -385,6 +385,14 @@ static void pcRemoveRecord(const PCRegistration* record) {
+   }
+ }
+ 
++/* Whether a native sample directory has an entry for `id`. */
++static bool pcDirectoryHas(const SDIR_DATA* sdir, u16 id) {
++  for (; sdir->id != 0xffff; ++sdir)
++    if (sdir->id == id)
++      return true;
++  return false;
++}
++
+ bool sndPushGroup(void* prj_data, u16 gid, void* samples, void* sdir, void* pool) {
+   if (!sndActive || SP_CURRENT == 128 || !prj_data || !sdir)
+     return false;
+@@ -438,6 +446,13 @@ bool sndPushGroup(void* prj_data, u16 gid, void* samples, void* sdir, void* pool
+     switch (record->type) {
+     case 1:
+       if (!dataAddSampleReference(record->id)) {
++        /* The console's ScanIDList skips a sample its group names but neither its own directory
++         * nor a resident group has (dataAddSampleReference just returns FALSE there); Mario Party 4's
++         * groups rely on that. Only that case is skipped: a failed upload still fails the push. */
++        if (!pcDirectoryHas(prepared.assets.directory, record->id)) {
++          record->type = 0xff; /* nothing to remove on pop */
++          break;
++        }
+         while (inserted)
+           pcRemoveRecord(&prepared.records[--inserted]);
+         dataRemoveSDir(prepared.assets.directory);
