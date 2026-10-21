@@ -29,7 +29,7 @@ static MptCoThread* s_current = &s_caller;
 
 /* Stack high-water measurement (P1-16): each process stack is painted at creation, and the
  * untouched paint is measured when the process ends. The largest share used so far is reported
- * through OSReport whenever it grows past 50%, with the stack's size, so the dump lane shows how
+ * through OSReport whenever it grows, with the stack's size, so the dump lane shows how
  * close interrupt work on these stacks (MusyX rendering, ADR 0008 section 1) comes to the canary. */
 #define MPT_CO_PAINT 0xA5u
 static uint32_t s_peak_permille;
@@ -42,7 +42,7 @@ static void measure(const MptCoThread* t) {
   const uint32_t permille = t->usable ? (uint32_t)(used * 1000u / t->usable) : 0;
   if (permille > s_peak_permille) {
     s_peak_permille = permille;
-    if (permille >= 500) {
+    {
       OSReport("libco: process stack high water %u of %u bytes (%u.%u%%)\n", (unsigned)used, (unsigned)t->usable,
                permille / 10, permille % 10);
     }
