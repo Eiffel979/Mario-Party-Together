@@ -701,6 +701,34 @@ The `armem.c` loops would never see their callback under the default mode, so MP
 - The dump comes from `MPT_DUMP_DIR`. It is identified and built through asset-import as `--dump` does, into `MPT_BUILD_CACHE` (default `<MPT_DUMP_DIR>/mpt-build-cache`).
 - `MPT_SOURCE_CACHE` reuses pinned checkouts instead of fetching them.
 
+**Memory (ADR 0008 amendment, PRs #44 and #46): 112 MiB of emulated main RAM.**
+- **What the space holds.** Party Board's `TARGET_PC` multiplies the console's game heaps by 4 for 64-bit pointers and the converted HSF structures (`malloc.c`). With HEAP_MUSIC grown by 16 MB (Party Board patch 0018, below), the heaps are 9 + 21 + 42 + 22 MiB. `HuMemInitAll` gives what OSAlloc's arena has left to its last heap. That is about 16 MiB at 112 MiB, and the console's 24 MiB arena left about 4.5 MiB the same way.
+- **What it is not.** `main_ram_bytes` is a build constant in `layout.cmake`, part of the build ID, and identical on every platform. It is never a setting. ARAM (16 MB) and the stack region keep their fixed sizes.
+- **Save states.** They record the arena layout (main RAM, ARAM, total), and `load_state` rejects a mismatch.
+- **Hardware getters.** `OSGetPhysicalMemSize` and `OSGetConsoleSimulatedMemSize` still answer 24 MiB. `init.c` only prints them; its `meminfo.bin` path is not on the disc.
+- **Failures.** An OSAlloc failure is a deterministic fault (`SdkConfig::fault_on_alloc_failure`).
+- **Still to measure.** The sizing rule is the smallest multiple of 8 MiB that covers the heaps plus the SDK's fixed allocations, with at least 10% margin. Peak arena use over the full-party replay with music playing, and save and load times, are **still to be measured** on the dump lane. The size is confirmed or reduced from that measurement.
+
+**MusyX's PC sample store (Party Board patch 0018).** MusyX's PC renderer keeps every resident sample in msm's heap (through `salMalloc`, `aramStoreData`), where the console kept them in the 16 MB ARAM. It also keeps decoded copies of each pushed group's project, pool and 64-bit sample directory there. The first boots failed `sndPushGroup` with "pool out of memory". Patch 0018 grows HEAP_MUSIC by 16 MB and makes msm's heap three times the console's size plus 16 MB.
+
+**MusyX patch 0001** (`runtimes/gc_wii/musyx/patches/`, applied to a build-tree copy of the pin, CC0, ADR 0009 section 5; approved in PR #46):
+- **Purpose.** A group push succeeds when the group names samples that neither its own sample directory nor a resident group has.
+- **Console behaviour it restores.** On Dolphin, `sndPushGroup` → `InsertSamples` → `ScanIDList` ignores `dataAddSampleReference` returning FALSE, so such samples are skipped. The PC push refused the whole group. MP4 relies on the console behaviour: the first clean-memory boot found group 93 naming 51 such samples, which made `GroupSet` fail with -32.
+- **What it does not change.** Only that case is skipped. A sample that is present but fails to upload still fails the push.
+- **Test.** The synthetic test in `musyx/tests` pushes a group naming a missing sample and checks that the group pushes and its present sample plays. It also checks that a failed upload still fails the push. Without the patch the first check fails.
+- **Build.** The patch hashes are in the module's build ID. Configure fails if a patch does not apply, as it does for aurora's and Party Board's.
+- **Upstream.** To be offered to AxioDL/musyx.
+
+**msm diagnostics (Party Board patch 0017, `src/msm_diag.c`).** msm only reports `MSM_ERR_GRP_FAILPUSH`. Group pushes now go through `mpt_msm_push_group`, which reports why MusyX refused a group through OSReport: the validation error, msm's heap headroom, and the macros, curves, keymaps, layers or samples that do not resolve.
+
+**M1 (boots headless), Windows, 2026-10-21.**
+- **Boot.** `mpt_dump_lane --boot mp4` on the user's GMPE01_00 dump runs clean: no halt or fault, and no msm error. With no input the game stays in bootDll, the boot and title sequence.
+- **Build.** The module builds from the dump in about 70 to 100 s.
+- **Determinism.** 10,000 frames with checkpoints every 100 frames, in two separate processes with seed 1, gave identical trails at all 100 checkpoints. Seed 2 differed at all of them.
+- **Not yet.** Fresh-process save/load (E5) and the Linux runs are still to do.
+- **Stack high water.** Measurement happens when a process ends, and no process ended on the title screen, so there is no number yet.
+- **Hash changes since.** These results predate the libm-redirect change on the P1-15 branch (qa #40), which changes game numerics, so the trails will differ after it.
+
 **Still open in P1-16:**
 - the hash manifest, including the GX front-end state and the function-pointer registration table (E4);
 - the fresh-process save/load demonstration (E5);
