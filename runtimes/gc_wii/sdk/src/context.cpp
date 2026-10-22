@@ -5,6 +5,8 @@
 // this meets them. Recorded as an open question for architect.
 #include "context.h"
 
+#include "mpt_gc/coro.h"
+
 #include <cstring>
 
 #if !defined(__clang__)
@@ -197,3 +199,11 @@ void* make_context(void* stack_lo, std::size_t stack_size, ContextEntry entry, v
 #endif
 
 }  // namespace mpt::gc::detail
+
+// ---- The C API for game-side coroutines (mpt_gc/coro.h) ----------------------------------------------
+
+extern "C" void* mpt_gc_coro_make(void* stack_lo, std::size_t stack_size, void (*entry)(void*), void* arg) {
+  return mpt::gc::detail::make_context(stack_lo, stack_size, entry, arg);
+}
+
+extern "C" void mpt_gc_coro_switch(void** save, void* load) { mpt::gc::detail::mpt_gc_switch_context(save, load); }

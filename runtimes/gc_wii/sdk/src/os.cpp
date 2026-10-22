@@ -640,6 +640,10 @@ BOOL OSGetResetSwitchState(void) {
   boundary();
   return FALSE;
 }
+BOOL OSGetResetButtonState(void) {
+  boundary();
+  return FALSE;
+}
 
 void OSResetSystem(int reset, u32 resetCode, BOOL forceMenu) {
   (void)reset;
@@ -671,6 +675,65 @@ void OSPanic(const char* file, int line, const char* fmt, ...) {
   std::snprintf(msg, sizeof msg, "OSPanic at %s:%d: %s", file ? file : "?", line, buf);
   fatal(msg);
 }
+
+// ---- Stopwatches -----------------------------------------------------------------------------------
+// The public SDK's behaviour: every start, stop and check reads OSGetTime, so each costs one
+// time-query quantum of virtual time, as it costs real time on the console.
+
+void OSInitStopwatch(OSStopwatch* sw, char* name) {
+  boundary();
+  sw->name = name;
+  sw->total = 0;
+  sw->hits = 0;
+  sw->min = 0x00000000FFFFFFFFll;
+  sw->max = 0;
+  sw->last = 0;
+  sw->running = FALSE;
+}
+
+void OSStartStopwatch(OSStopwatch* sw) {
+  sw->running = TRUE;
+  sw->last = OSGetTime();
+}
+
+void OSStopStopwatch(OSStopwatch* sw) {
+  if (!sw->running) {
+    boundary();
+    return;
+  }
+  const OSTime interval = OSGetTime() - sw->last;
+  sw->total += interval;
+  sw->running = FALSE;
+  sw->hits++;
+  if (sw->max < interval) sw->max = interval;
+  if (interval < sw->min) sw->min = interval;
+}
+
+OSTime OSCheckStopwatch(OSStopwatch* sw) {
+  OSTime total = sw->total;
+  if (sw->running) {
+    total += OSGetTime() - sw->last;
+  } else {
+    boundary();
+  }
+  return total;
+}
+
+void OSResetStopwatch(OSStopwatch* sw) { OSInitStopwatch(sw, sw->name); }
+
+void OSDumpStopwatch(OSStopwatch* sw) {
+  boundary();
+  char buf[256];
+  std::snprintf(buf, sizeof buf, "Stopwatch [%s]: hits %u, total %lld ticks, min %lld, max %lld\n",
+                sw->name ? sw->name : "", sw->hits, static_cast<long long>(sw->total),
+                static_cast<long long>(sw->min), static_cast<long long>(sw->max));
+  report(buf);
+}
+
+// ---- Address spaces -------------------------------------------------------------------------------
+
+void* OSCachedToUncached(void* caddr) { return caddr; }
+void* OSUncachedToCached(void* ucaddr) { return ucaddr; }
 
 // ---- Fast casts -------------------------------------------------------------------------------------
 

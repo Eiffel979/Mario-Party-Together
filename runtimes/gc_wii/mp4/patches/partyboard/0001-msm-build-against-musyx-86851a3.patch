@@ -1,0 +1,69 @@
+Apply order 0001 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+msm: build against musyx 86851a3
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+diff --git a/src/msm/msmmus.c b/src/msm/msmmus.c
+index 061da27a47ef1211dd4b4d6c3723918729571420..086a82d4cf5e9725eb0144b77c12a71f201413fc 100755
+--- a/src/msm/msmmus.c
++++ b/src/msm/msmmus.c
+@@ -1,5 +1,6 @@
+ #include "msm/msmmus.h"
+ #include "msm/msmmem.h"
++#include "msm/msmfio.h"
+ 
+ typedef struct MusPlayer_s {
+     /* 0x00 */ s16 musId;
+diff --git a/src/msm/msmse.c b/src/msm/msmse.c
+index cbacf34cc1bf7c2c2a2318177f0e2a429acb7bb1..0c7b04571e86b35a9997ae951d827a5a8dd4b338 100755
+--- a/src/msm/msmse.c
++++ b/src/msm/msmse.c
+@@ -1,6 +1,7 @@
+ #include "msm/msmse.h"
+ #include "msm/msmfio.h"
+ #include "msm/msmmem.h"
++#include <string.h>
+ 
+ #define SE_PLAYER_EMIT (1 << 0)
+ 
+diff --git a/src/msm/msmstream.c b/src/msm/msmstream.c
+index 2afade01bdb306839cc5b7794e3720719778b21a..c1fcf76f3edce65fff7b98199263f407382ca5c6 100755
+--- a/src/msm/msmstream.c
++++ b/src/msm/msmstream.c
+@@ -1,6 +1,8 @@
+ #include "msm/msmstream.h"
+ #include "msm/msmmem.h"
+ #include "msm/msmsys.h"
++#include "msm/msmfio.h"
++#include <string.h>
+ 
+ typedef struct {
+     /* 0x00 */ SND_STREAMID stid;
+diff --git a/src/msm/msmsys.c b/src/msm/msmsys.c
+index 916e03b03011d84651a3548fa5db2a9d4dd37390..3462e989f4d7ba4f7b33a285109ca28bf054d4ba 100644
+--- a/src/msm/msmsys.c
++++ b/src/msm/msmsys.c
+@@ -775,12 +775,24 @@ void msmSysCheckInit(void)
+     sndIsInstalled();
+ }
+ 
++#ifdef MPT_PC
++static void *msmSndMalloc(size_t size)
++{
++    return msmMemAlloc((u32)size);
++}
++#endif
++
+ s32 msmSysInit(MSM_INIT *init, MSM_ARAM *aram)
+ {
+     s32 result;
+     void *temp;
+ 
++#ifdef MPT_PC
++    /* musyx at the 86851a3 pin takes a size_t allocation size. */
++    SND_HOOKS sndHooks = { msmSndMalloc, msmMemFree };
++#else
+     SND_HOOKS sndHooks = { msmMemAlloc, msmMemFree };
++#endif
+     DVDFileInfo sp10;
+     if (sndIsInstalled() == 1) {
+         return MSM_ERR_INSTALLED;

@@ -1,0 +1,17 @@
+Apply order 0014 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+version: no symbol exports from the game module
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+diff --git a/include/version.h b/include/version.h
+index efa6e0ecabf0434cea8a21da306902f531aee3c5..d479e747585a397795e0024a016e042536e15b36 100644
+--- a/include/version.h
++++ b/include/version.h
+@@ -27,7 +27,7 @@
+ #define REFRESH_RATE_OFF_BY_1 (REFRESH_RATE_F - 0.000005f)
+ #define REFRESH_FREQ (1.0f / REFRESH_RATE_F)
+ 
+-#if _WIN32
++#if _WIN32 && !defined(MPT_PC) /* one module: the game core and RELs export nothing (C ABI only) */
+ #ifdef TARGET_DOL
+ #define SHARED_SYM __declspec(dllexport)
+ #else

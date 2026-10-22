@@ -37,6 +37,10 @@ u32 ARGetDMAStatus(void);
 typedef struct ARQRequest ARQRequest;
 typedef void (*ARQCallback)(uintptr_t request);
 
+/* ARQPostRequest writes only next, owner, type and priority: the pinned aurora headers declare 32-bit
+ * source and dest fields (a 40-byte request), so nothing past priority has the same place in the
+ * game's struct. The transfer completes inside the call and the callback is kept in the event. */
+
 struct ARQRequest {
   ARQRequest* next;
   u32 owner;

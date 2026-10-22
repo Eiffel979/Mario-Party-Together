@@ -267,4 +267,14 @@ f64 mpt_cos(f64 x) {
   return sinD(x, true);
 }
 
+f64 mpt_atan2(f64 y, f64 x) { return atan2D(y, x); }
+
+f32 mpt_asinf(f32 x) {
+  const double d = x;
+  if (std::isnan(d) || d > 1.0 || d < -1.0) return std::numeric_limits<f32>::quiet_NaN();
+  return static_cast<f32>(atan2D(d, std::sqrt((1.0 - d) * (1.0 + d))));
+}
+
+f32 mpt_atanf(f32 x) { return static_cast<f32>(atanD(x)); }
+
 }  // extern "C"

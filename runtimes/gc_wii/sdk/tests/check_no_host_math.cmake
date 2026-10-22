@@ -8,8 +8,12 @@
 # module's objects.
 #
 #   cmake -DNM=<llvm-nm|nm> "-DFILES=a.lib;b.obj" -P check_no_host_math.cmake
+# or, for more files than a command line holds, -DFILES_FROM=<file with one path per line>.
+if(FILES_FROM)
+  file(STRINGS "${FILES_FROM}" FILES)
+endif()
 if(NOT NM OR NOT FILES)
-  message(FATAL_ERROR "usage: -DNM=<nm> -DFILES=<objects or archives>")
+  message(FATAL_ERROR "usage: -DNM=<nm> -DFILES=<objects or archives> | -DFILES_FROM=<list file>")
 endif()
 
 set(_bad "")
