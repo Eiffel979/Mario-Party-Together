@@ -38,5 +38,11 @@
 #define tanf(x) mpt_tanf(x)
 #define acosf(x) mpt_acosf(x)
 #define atan2f(y, x) mpt_atan2f(y, x)
+#undef atan2
+#undef asinf
+#undef atanf
+#define atan2(y, x) mpt_atan2(y, x)
+#define asinf(x) mpt_asinf(x)
+#define atanf(x) mpt_atanf(x)
 
 #endif /* MPT_GC_LIBM_REDIRECT_H */

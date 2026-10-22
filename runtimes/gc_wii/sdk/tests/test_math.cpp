@@ -339,3 +339,35 @@ TEST_CASE("golden: pow and double trig outputs") {
   }
   CHECK(h.digest() == 4493003601874101094ull);  // golden: identical on every platform
 }
+
+// ---- double atan2, asinf and atanf for MP4's game code (P1-15, mp4_no_host_math) --------------
+
+TEST_CASE("atan2, asinf and atanf are accurate and pinned by a golden") {
+  int worst = 0;
+  double worst_d = 0.0;
+  for (int i = -20000; i <= 20000; ++i) {
+    const f32 x = static_cast<f32>(i) * 0.001f;
+    const double at = std::atan(static_cast<double>(x));
+    if (std::fabs(at) > 1e-3) worst = std::max(worst, ulpDiff(mpt_atanf(x), static_cast<f32>(at)));
+    if (i >= -1000 && i <= 1000) {
+      const double as = std::asin(static_cast<double>(x));
+      if (std::fabs(as) > 1e-3) worst = std::max(worst, ulpDiff(mpt_asinf(x), static_cast<f32>(as)));
+    }
+    const double y = static_cast<double>(i % 997) * 0.0137 - 6.0;
+    const double ref = std::atan2(y, static_cast<double>(x));
+    if (std::fabs(ref) > 1e-6) worst_d = std::max(worst_d, std::fabs(mpt_atan2(y, x) - ref) / std::fabs(ref));
+  }
+  CHECK(worst <= 2);
+  CHECK(worst_d < 1e-14);
+  CHECK(std::isnan(mpt_asinf(1.5f)));
+  CHECK(mpt_atan2(0.0, -1.0) == 3.14159265358979323846);
+  CHECK(mpt_atanf(0.0f) == 0.0f);
+  StateHasher h;
+  for (int i = -5000; i <= 5000; ++i) {
+    const f32 x = static_cast<f32>(i) * 0.0123f;
+    hashF(h, mpt_atanf(x));
+    hashF(h, mpt_asinf(static_cast<f32>(i) / 5000.0f));
+    h.update_f64(mpt_atan2(static_cast<double>(x), 1.5 - static_cast<double>(x)));
+  }
+  CHECK(h.digest() == 11670455197054810679ull);  // golden: identical on every platform
+}
