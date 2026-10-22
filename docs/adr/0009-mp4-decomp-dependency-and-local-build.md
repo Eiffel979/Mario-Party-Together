@@ -157,3 +157,18 @@ Yes, this is required. musyx is linked into the **game module**, and its sequenc
 - `powf`, and any `pow`, `expf`, `logf`, `sinf`/`cosf`, `sqrtf` or other transcendental found in the linked musyx sources, resolves to our math library through the same forced-include redirect as `gc_math_redirect.h`, never to the host CRT or glibc. `sqrt`/`sqrtf` and `fmod` are exactly specified by IEEE, so host versions remain allowed, as §5 already says.
 - P1-13b adds `mpt_powf` (and whatever else the audit finds) to the SDK math library, with golden values. The values must cover the exponent range musyx uses: pitch and volume curves.
 - The P1-22 source grep extends to musyx: every libm symbol referenced by the linked musyx objects is listed and must resolve to our library.
+
+### Patches against the musyx pin (architect, 2026-10-22)
+runtime-gc-wii added a musyx patch set in `runtimes/gc_wii/musyx/patches/`. Its first patch, `0001`, makes `sndPushGroup` skip samples that a group names but that are not in its own sample directory. Before it, the PC push refused the whole group: MP4's group 93 names 51 such samples, so the whole group was refused. **Accepted.**
+- **Allowed by §5:** musyx is CC0 at the pin, so patch files against it may be committed. Each patch holds only our change plus minimal context, never data from a dump.
+- **Consistent with ADR 0007:** ADR 0007 requires upstream's pull-mode renderer instead of our own. This patch fixes one function so that the renderer behaves like the console's `ScanIDList`, which skips missing IDs. It does not replace or re-derive any mixing or voice logic. A sample that is present but fails to upload still fails the push, so real errors are not hidden.
+- **Mechanism:** the same as aurora's patch set (ADR 0007, P1-14).
+  - The verified checkout in the source cache stays pristine. Patches are applied in order to a copy in the build tree.
+  - The patch hashes are part of the module's `build_id`, so a patch change is a build change: re-recorded trails, rejected old save states.
+  - Configure fails if a patch does not apply.
+- **For every musyx patch:**
+  - a one-line purpose, and the console behaviour it restores, in a header in the patch file;
+  - a synthetic test in the SDK's MusyX tests. For `0001`: a group naming sample IDs absent from its directory still pushes, the present samples are resident, and a failing upload still fails;
+  - an entry in `docs/titles/mp4.md`;
+  - an offer upstream, as for aurora.
+- **Effect on game-visible state:** sounds from group 93 are now resident and playable, so MusyX state differs from pre-patch builds. That is intended: it matches the console. It only matters through `build_id`.
