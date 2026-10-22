@@ -98,10 +98,15 @@ file(GLOB MPT_MP4_MSM_FILES RELATIVE "${MPT_MP4_PB}" "${MPT_MP4_PB}/src/msm/*.c"
 # from mpt::gc_sdk and mpt::gx_math_redirect (ADR 0008 sections 4 and 5).
 set(MPT_MP4_GAME_DEFS TARGET_PC MPT_PC NON_MATCHING OPTIMIZED_TEXTURE_LOADING BYTESWAPPING TARGET_DOL VERSION=0)
 # VERSION=0 is GMPE01_00, the only revision Phase 1 supports (plan D3). Party Board builds VERSION=1.
+# Warnings: off for Party Board's sources only (pinned upstream code, not ours to fix). Our own code
+# (src/, the generated REL table and info records, tests/) builds with the GX layer's warning set and
+# as errors. Party Board's and aurora's headers are SYSTEM includes; ours are not.
 if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
   set(MPT_MP4_NOWARN /w)
+  set(MPT_MP4_WARN_FLAGS /W4 /permissive- /utf-8 /WX)
 else()
   set(MPT_MP4_NOWARN -w)
+  set(MPT_MP4_WARN_FLAGS -Wall -Wextra -Wpedantic -Wshadow -Werror)
 endif()
 
 add_library(mpt_mp4_game_flags INTERFACE)
@@ -109,11 +114,18 @@ add_library(mpt_mp4_game_flags INTERFACE)
 target_compile_definitions(mpt_mp4_game_flags INTERFACE ${MPT_MP4_GAME_DEFS})
 target_include_directories(mpt_mp4_game_flags SYSTEM INTERFACE
   "${MPT_MP4_PB}/include" "${MPT_GX_AURORA_PATCHED}/include" "${MPT_GX_AURORA_PATCHED}/include/dolphin"
-  "${CMAKE_CURRENT_SOURCE_DIR}/include" "${CMAKE_CURRENT_BINARY_DIR}/generated"
   # Only the decomp's THP file-format headers (THPSimple.h); the rest of its SDK is ours.
   "${MPT_MP4_PB}/libs/dolphin/include")
-target_compile_options(mpt_mp4_game_flags INTERFACE ${MPT_MP4_NOWARN})
+target_include_directories(mpt_mp4_game_flags INTERFACE
+  "${CMAKE_CURRENT_SOURCE_DIR}/include" "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(mpt_mp4_game_flags INTERFACE mpt::gc_sdk mpt::gx_math_redirect mpt_gx_frontend mpt_musyx_core)
+# Every transcendental the game's C code calls goes to our deterministic library, never the host CRT
+# or glibc (ADR 0008 section 5); mp4_no_host_math checks the result at link level.
+if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+  target_compile_options(mpt_mp4_game_flags INTERFACE "$<$<COMPILE_LANGUAGE:C>:/FImpt_gc/libm_redirect.h>")
+else()
+  target_compile_options(mpt_mp4_game_flags INTERFACE "$<$<COMPILE_LANGUAGE:C>:SHELL:-include mpt_gc/libm_redirect.h>")
+endif()
 
 # ---- Game core (the DOL), libhu, msm --------------------------------------------------------------
 # Game sources Party Board leaves out because its port layer replaces them; we use the originals:
@@ -127,6 +139,10 @@ list(TRANSFORM MPT_MP4_MSM_FILES PREPEND "${MPT_MP4_PB}/")
 set(MPT_MP4_PORT_FILES src/port.c src/sdk_bridge.c src/libco.c src/layout_check.c src/game_reads.c src/msm_swap.c)
 add_library(mpt_mp4_dol OBJECT ${GAME_FILES} ${MPT_MP4_MSM_FILES} ${MPT_MP4_PORT_FILES})
 target_link_libraries(mpt_mp4_dol PRIVATE mpt_mp4_game_flags)
+set_source_files_properties(${GAME_FILES} ${MPT_MP4_MSM_FILES} TARGET_DIRECTORY mpt_mp4_dol
+                            PROPERTIES COMPILE_OPTIONS "${MPT_MP4_NOWARN}")
+set_source_files_properties(${MPT_MP4_PORT_FILES} TARGET_DIRECTORY mpt_mp4_dol
+                            PROPERTIES COMPILE_OPTIONS "${MPT_MP4_WARN_FLAGS}")
 
 # ---- RELs: compiled separately, then isolated (tools/MptMp4Rel.cmake) ----------------------------
 include("${CMAKE_CURRENT_SOURCE_DIR}/tools/MptMp4Rel.cmake")
@@ -144,7 +160,7 @@ list(REMOVE_DUPLICATES MPT_MP4_RELS)
 if(MPT_MP4_REL_FORMAT STREQUAL "coff")
   set(_game_fi "/FI${CMAKE_CURRENT_SOURCE_DIR}/src/game_section.h")
 else()
-  set(_game_fi -include "${CMAKE_CURRENT_SOURCE_DIR}/src/game_section.h")
+  set(_game_fi "SHELL:-include \"${CMAKE_CURRENT_SOURCE_DIR}/src/game_section.h\"")  # SHELL: so CMake keeps each -include
 endif()
 target_compile_options(mpt_mp4_dol PRIVATE ${MPT_MP4_NOBSS} ${_game_fi})
 
@@ -156,7 +172,7 @@ foreach(_rel IN LISTS MPT_MP4_RELS)
     list(APPEND _srcs "${MPT_MP4_PB}/src/REL/board_executor.c")
   endif()
   mpt_mp4_add_rel(${_rel} SET MPT_MP4_REL DIR "${CMAKE_CURRENT_BINARY_DIR}/rels" TARGET_PREFIX mpt_mp4_rel_
-                  SOURCES ${_srcs} LINK mpt_mp4_game_flags)
+                  SOURCES ${_srcs} LINK mpt_mp4_game_flags OPTIONS ${MPT_MP4_NOWARN})
 endforeach()
 mpt_mp4_write_rel_table(MPT_MP4_REL "${CMAKE_CURRENT_BINARY_DIR}/generated/mpt_mp4_rel_table.c")
 
@@ -170,6 +186,7 @@ add_library(mp4_game SHARED
   src/abi.cpp
   src/copy_trap.cpp)
 target_link_libraries(mp4_game PRIVATE mpt_mp4_game_flags ${MPT_MP4_REL_LIBS} mpt::gx mpt::musyx)
+target_compile_options(mp4_game PRIVATE ${MPT_MP4_WARN_FLAGS})
 set_target_properties(mp4_game PROPERTIES C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden PREFIX "")
 target_include_directories(mp4_game PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
@@ -208,4 +225,17 @@ endif()
 # Unit checks (synthetic data only).
 if(MPT_BUILD_TESTS)
   add_subdirectory(tests)
+  # Link checks on the game code (the DOL objects and every isolated REL): no host libm
+  # transcendental or fma (ADR 0008 section 5), and no host threads, clocks, RNG or heap (ADR 0008
+  # sections 1, 2 and 7). Host-side files (abi.cpp, rel_loader.c, copy_trap.cpp) are not game code.
+  # Hundreds of objects: the list goes through a file, not the command line.
+  string(REPLACE ";" "\n" _rel_lines "${MPT_MP4_REL_LIBS}")
+  file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/mp4_game_code.txt"
+       CONTENT "$<JOIN:$<TARGET_OBJECTS:mpt_mp4_dol>,\n>\n${_rel_lines}\n")
+  add_test(NAME mp4_no_host_math
+    COMMAND "${CMAKE_COMMAND}" "-DNM=${MPT_MP4_NM}" "-DFILES_FROM=${CMAKE_CURRENT_BINARY_DIR}/mp4_game_code.txt"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/../sdk/tests/check_no_host_math.cmake")
+  add_test(NAME mp4_no_host_services
+    COMMAND "${CMAKE_COMMAND}" "-DNM=${MPT_MP4_NM}" "-DFILES_FROM=${CMAKE_CURRENT_BINARY_DIR}/mp4_game_code.txt"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/../musyx/check_no_host_services.cmake")
 endif()

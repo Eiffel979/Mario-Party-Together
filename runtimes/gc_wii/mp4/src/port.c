@@ -102,8 +102,10 @@ static const unsigned char* dol_find(const unsigned char* dol, size_t size, uint
 
 static void set_error(char* error, size_t error_size, const char* message) {
   if (error != NULL && error_size > 0) {
-    strncpy(error, message, error_size - 1);
-    error[error_size - 1] = '\0';
+    size_t n = strlen(message);
+    if (n > error_size - 1) n = error_size - 1;
+    memcpy(error, message, n);
+    error[n] = '\0';
   }
 }
 

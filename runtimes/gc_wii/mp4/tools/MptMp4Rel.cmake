@@ -2,7 +2,8 @@
 # unit test so that the test exercises exactly the module's mechanism.
 #
 #   mpt_mp4_rel_setup()
-#   mpt_mp4_add_rel(<name> SET <set> DIR <dir> TARGET_PREFIX <prefix> SOURCES <src>... [LINK <lib>...])
+#   mpt_mp4_add_rel(<name> SET <set> DIR <dir> TARGET_PREFIX <prefix> SOURCES <src>... [LINK <lib>...]
+#                   [OPTIONS <compile option>...])
 #   mpt_mp4_write_rel_table(<set> <output .c>)
 #
 # Each REL compiles to an object library whose writable data goes to the REL's own section (a
@@ -30,7 +31,7 @@ macro(mpt_mp4_rel_setup)
 endmacro()
 
 function(mpt_mp4_add_rel name)
-  cmake_parse_arguments(PARSE_ARGV 1 A "" "SET;DIR;TARGET_PREFIX" "SOURCES;LINK")
+  cmake_parse_arguments(PARSE_ARGV 1 A "" "SET;DIR;TARGET_PREFIX" "SOURCES;LINK;OPTIONS")
   set(_tgt "${A_TARGET_PREFIX}${name}")
   add_library(${_tgt} OBJECT ${A_SOURCES})
   if(A_LINK)
@@ -46,9 +47,9 @@ function(mpt_mp4_add_rel name)
   else()
     file(CONFIGURE OUTPUT "${_sect_h}" CONTENT "#pragma clang section data=\"mptrel_${name}\"
 ")
-    set(_fi -include "${_sect_h}")
+    set(_fi "SHELL:-include \"${_sect_h}\"")  # SHELL: so CMake keeps each -include
   endif()
-  target_compile_options(${_tgt} PRIVATE ${MPT_MP4_NOBSS} ${_fi})
+  target_compile_options(${_tgt} PRIVATE ${MPT_MP4_NOBSS} ${_fi} ${A_OPTIONS})
   set(_lib "${A_DIR}/${name}${MPT_MP4_REL_LIB_SUFFIX}")
   set(_info "${A_DIR}/${name}_info.c")
   add_custom_command(OUTPUT "${_lib}" "${_info}"

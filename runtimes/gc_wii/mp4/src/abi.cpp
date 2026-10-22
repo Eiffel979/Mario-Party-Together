@@ -197,7 +197,9 @@ MptMp4Status create(const MptMp4BootConfig* in, MptMp4Game** out, MptMp4Error* e
   game->arena_base = config.arena_base;
 
   std::string why;
-  const std::filesystem::path root = std::filesystem::u8path(game->disc_root);
+  // UTF-8 bytes to a path (u8path is deprecated in C++20).
+  const std::filesystem::path root{
+      std::u8string(reinterpret_cast<const char8_t*>(game->disc_root.data()), game->disc_root.size())};
   game->files = mpt::gc::DirectoryFileSource::open(root, why);
   if (!game->files) {
     setError(error, "disc: " + why);
