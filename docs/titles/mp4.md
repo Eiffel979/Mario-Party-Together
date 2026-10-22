@@ -586,6 +586,8 @@ Decide whether the ID counters are hashed. They are stored in game memory (`GXTe
 
    **Gameplay boot flags** (skip boot sequence, unlock minigames, unlock Bowser's Gnarly Party) are determinism inputs. They are hashed and saved with the state. **The fixed Phase 1 set is `MPT_MP4_PHASE1_GAMEPLAY_FLAGS` = none (the console's behaviour), which `Mp4Runtime` always passes.** They are never user settings; later the unlocks become ruleset rules. Debug and presentation settings (copy trap, video backend, scale, audio output, cache dir, arena base) never reach the hash.
 
+   **Test coverage (qa #40):** CI checks the ABI's shape (versioning, sizes, argument handling) through `mp4_game_abi`. The **stick fold** (-32768 to -32767) and the **gameplay flags in the state hash** only run when a game boots, so they are exercised **on the dump lane only**.
+
    **Save states:** the SDK state (arena, card image and generation, registered regions), then a trailer with the full build ID, the gameplay flags, the soft-reset frame and generation bases, the module status and fault text, the GX object IDs, and a layout version (`state_format()`, 2). `load_state` rejects another build or layout. A state is valid for the same build and platform at the same arena and module base.
 
    **`OSResetSystem` is a deterministic soft reset inside the module.** The game core's data returns to its load-time image, MusyX and the renderer reset, and a new SDK boots on the same card from the same seed. Frame numbers and the card generation continue. Halts and faults are terminal module status, kept in the state, for ADR 0011's `status()`.
@@ -600,6 +602,14 @@ Decide whether the ID counters are hashed. They are stored in game memory (`GXTe
    `resultDll` is the minigame results screen (`instDll` switches to it), not the party's. `party()` only reads.
 
    `mp4_game_abi` loads the module and checks versioning and argument handling. The build ID hashes the pins, every patch, the GX backend and the compiler.
+
+**Warnings and link checks (qa #40):**
+- Party Board's sources build with warnings off. Our own module code (`src/`, the generated REL records and table, `tests/`) builds with the GX layer's warning set as errors, and only Party Board's and aurora's headers are SYSTEM includes.
+- `mp4_no_host_math` (the SDK's `check_no_host_math.cmake`) and `mp4_no_host_services` (musyx's `check_no_host_services.cmake`) run over every DOL object and isolated REL. The object list is passed through a file, because it is too long for a Windows command line.
+- The first run of `mp4_no_host_math` found the game's C code calling the host's double `sin`, `cos` and `atan2` (in about 110 objects) and `asinf`/`atanf`.
+  - Game C code is now force-included with `mpt_gc/libm_redirect.h`, as MusyX already was.
+  - The SDK gained `mpt_atan2` (double), `mpt_asinf` and `mpt_atanf`, with accuracy checks and a golden.
+- `mp4_rel_isolation` and `mp4_copy_trap` (`tests/standalone`) need no Party Board checkout, so every Clang build with tests runs them, including public CI.
 
 **Also in this work.**
 - **msm byte order** (patch 0015, `src/msm_swap.c`). Every structure msm reads raw from its `.msm` and `.pdt` files is converted to host order right after its read:

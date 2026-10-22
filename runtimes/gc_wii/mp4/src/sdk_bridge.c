@@ -1,4 +1,4 @@
-/* Calls into the SDK through its own declarations (mpt_gc/*.h), for the few functions whose aurora
+/* Calls into the SDK through its own declarations (the mpt_gc headers), for the few functions whose aurora
  * TARGET_PC declarations differ from the console SDK's. This file must not include aurora headers. */
 #include "mpt_gc/ai.h"
 #include "mpt_gc/card.h"

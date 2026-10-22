@@ -36,7 +36,9 @@ void mpt_mp4_read_party(MptMp4Party* out) {
   out->overlay = (omcurovl >= 0 && omcurovl < DLL_MAX) ? (int32_t)omcurovl : -1;
   memset(out->overlay_name, 0, sizeof out->overlay_name);
   if (out->overlay >= 0 && _ovltbl[out->overlay].name != NULL) {
-    strncpy(out->overlay_name, _ovltbl[out->overlay].name, sizeof out->overlay_name - 1);
+    size_t n = strlen(_ovltbl[out->overlay].name);
+    if (n > sizeof out->overlay_name - 1) n = sizeof out->overlay_name - 1;
+    memcpy(out->overlay_name, _ovltbl[out->overlay].name, n); /* the rest was zeroed above */
   }
   uint32_t flags = 0;
   if (GWSystem.party) flags |= MPT_MP4_PARTY_MODE;
