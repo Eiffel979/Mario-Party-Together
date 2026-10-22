@@ -43,6 +43,12 @@ f64 mpt_pow(f64 x, f64 y);
 f64 mpt_sin(f64 x);
 f64 mpt_cos(f64 x);
 
+/* The rest of what MP4's game code calls (P1-15, found by mp4_no_host_math): double atan2, and
+ * float asin and atan. Same construction as atan2f. */
+f64 mpt_atan2(f64 y, f64 x);
+f32 mpt_asinf(f32 x);
+f32 mpt_atanf(f32 x);
+
 MPT_GC_EXTERN_C_END
 
 #endif /* MPT_GC_GC_MATH_H */
