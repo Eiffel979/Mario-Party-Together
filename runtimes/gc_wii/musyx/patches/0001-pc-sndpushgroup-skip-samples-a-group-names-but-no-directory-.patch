@@ -1,5 +1,14 @@
 Apply order 0001 against AxioDL/musyx 86851a3a8d51788d166ea42d137b49526f570400 (CC0-1.0; ADR 0009 section 5).
 PC sndPushGroup: skip samples a group names but no directory has, as the console does
+Purpose: let a group push succeed when it names samples that neither its
+own sample directory nor an already resident group contains.
+Console behaviour restored: on Dolphin, sndPushGroup's InsertSamples ->
+ScanIDList calls dataAddSampleReference for each id and ignores a FALSE
+result, so such samples are skipped and the group is pushed. The PC push
+aborted the whole group instead. Mario Party 4's groups rely on the
+console behaviour (group 93 names 51 such samples). Only that case is
+skipped: a sample that is present but fails to upload still fails the
+push. Offered upstream to AxioDL/musyx.
 Applied in order by runtimes/gc_wii/musyx/CMakeLists.txt with `git apply`.
 
 diff --git a/src/musyx/runtime/s_data.c b/src/musyx/runtime/s_data.c

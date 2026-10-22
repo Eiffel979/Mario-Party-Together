@@ -249,3 +249,65 @@ TEST_CASE("MusyX state is in the hash (perturbation)") {
   sndSeqPause(g_board->seq);
   CHECK(sdk->stateHash() != changed);
 }
+
+// ---- musyx patch 0001: samples a group names but no directory has ---------------------------------
+
+namespace {
+
+struct PushResults {
+  std::uint32_t pushed_with_missing;  // the SFX group naming sample 99 (in no directory)
+  std::uint32_t fx_started;           // its present sample 5 plays
+  std::uint32_t fx_active;
+  std::uint32_t pushed_with_failed_upload;  // the song group while sample 7's upload cannot allocate
+  std::uint32_t done;
+};
+PushResults* g_push = nullptr;
+bool g_fail_sample_upload = false;
+
+// Fails only allocations the size of one 320-frame PCM16 sample upload (640 bytes plus the PC
+// loader's small header), so the push gets past decoding and fails at the upload itself.
+void* failingMalloc(size_t n) {
+  if (g_fail_sample_upload && n >= 640 && n <= 640 + 64) return nullptr;
+  return OSAlloc(static_cast<u32>(n));
+}
+
+void pushMain(void*) {
+  PushResults& r = *static_cast<PushResults*>(OSAllocFromArenaLo(sizeof(PushResults), 32));
+  std::memset(&r, 0, sizeof r);
+  g_push = &r;
+  void* lo = OSInitAlloc(OSGetArenaLo(), OSGetArenaHi(), 1);
+  OSSetCurrentHeap(OSCreateHeap(lo, OSGetArenaHi()));
+  static SND_HOOKS hooks = {&failingMalloc, &hookFree};
+  sndSetHooks(&hooks);
+  if (sndInit(32, 16, 16, 1, 0, 0x100000) != 0) return;
+  void* project = toArena(g_data->project);
+  void* pool = toArena(g_data->pool);
+  void* samples = toArena(g_data->samples);
+  void* sdir_sfx = toArena(g_data->sdir_sfx);
+  void* sdir_song = toArena(g_data->sdir_song);
+  r.pushed_with_missing = sndPushGroup(project, data::kGroupSfx, samples, sdir_sfx, pool) ? 1u : 0u;
+  const SND_VOICEID vid = sndFXStart(data::kFxOneShot, 127, 64);
+  r.fx_started = vid != SND_ID_ERROR ? 1u : 0u;
+  r.fx_active = sndFXCheck(vid) != SND_ID_ERROR ? 1u : 0u;
+  g_fail_sample_upload = true;
+  r.pushed_with_failed_upload = sndPushGroup(project, data::kGroupSong, samples, sdir_song, pool) ? 1u : 0u;
+  g_fail_sample_upload = false;
+  r.done = 1;
+  for (;;) VIWaitForRetrace();
+}
+
+}  // namespace
+
+TEST_CASE("patch 0001: a group naming a sample no directory has still pushes; a failed upload fails") {
+  const data::Data d = data::make(true);
+  g_data = &d;
+  std::unique_ptr<Sdk> sdk;
+  REQUIRE(Sdk::create(musyxConfig(false), &pushMain, nullptr, sdk).ok());
+  stepN(*sdk, 2);
+  REQUIRE(g_push != nullptr);
+  CHECK(g_push->done == 1);
+  CHECK(g_push->pushed_with_missing == 1);  // the console's ScanIDList skips sample 99
+  CHECK(g_push->fx_started == 1);           // and the group's present sample 5 is resident
+  CHECK(g_push->fx_active == 1);
+  CHECK(g_push->pushed_with_failed_upload == 0);  // present but not uploadable: still a failure
+}
