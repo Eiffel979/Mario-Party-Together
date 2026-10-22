@@ -73,7 +73,7 @@ list(SORT _module_inputs)
 # (CMake files are left out of that list: CMake already tracks the ones it reads, and listing one
 # twice is an error. They are still in the hash.)
 set(_module_deps ${_module_inputs})
-list(FILTER _module_deps EXCLUDE REGEX "(CMakeLists\.txt|\.cmake)$")
+list(FILTER _module_deps EXCLUDE REGEX "(CMakeLists\.txt|\.cmake|\.lock)$")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_module_deps})
 set(_tree "")
 foreach(_f IN LISTS _module_inputs)

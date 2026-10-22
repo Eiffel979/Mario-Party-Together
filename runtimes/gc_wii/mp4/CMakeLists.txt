@@ -194,14 +194,16 @@ target_include_directories(mp4_game PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
 include("${CMAKE_CURRENT_SOURCE_DIR}/layout.cmake")
 
 # The build fingerprint save states and golden trails are keyed by (ADR 0008 section 10, ADR 0009): the
-# pinned sources, every patch applied to them, the GX backend and the compiler.
+# pinned sources, every patch applied to them (Party Board, aurora, musyx), the GX backend, the main
+# RAM size and the compiler.
 set(_fp "${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION};${MPT_GX_BACKEND};main_ram=${MPT_MP4_MAIN_RAM_BYTES}")
 foreach(_f "${CMAKE_CURRENT_SOURCE_DIR}/decomp.lock" "${CMAKE_CURRENT_SOURCE_DIR}/../gx/aurora.lock")
   file(SHA256 "${_f}" _h)
   string(APPEND _fp ";${_h}")
 endforeach()
 file(GLOB _fp_patches "${CMAKE_CURRENT_SOURCE_DIR}/patches/partyboard/*.patch"
-                      "${CMAKE_CURRENT_SOURCE_DIR}/../gx/patches/aurora/*.patch")
+                      "${CMAKE_CURRENT_SOURCE_DIR}/../gx/patches/aurora/*.patch"
+                      "${CMAKE_CURRENT_SOURCE_DIR}/../musyx/patches/*.patch")
 list(SORT _fp_patches)
 foreach(_f IN LISTS _fp_patches)
   file(SHA256 "${_f}" _h)
