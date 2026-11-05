@@ -151,9 +151,11 @@ void* OSAllocFromHeap(OSHeapHandle heap, u32 size);
 void* OSAllocFixed(void** rstart, void** rend);
 void OSFreeToHeap(OSHeapHandle heap, void* ptr);
 s32 OSCheckHeap(OSHeapHandle heap);
-#define OSAlloc(size) OSAllocFromHeap(__OSCurrentHeap, (size))
-#define OSFree(ptr) OSFreeToHeap(__OSCurrentHeap, (ptr))
-extern volatile OSHeapHandle __OSCurrentHeap;
+/* Debug output on the console; here it only checks the handle. */
+void OSDumpHeap(OSHeapHandle heap);
+#define OSAlloc(size) OSAllocFromHeap(__OSCurrHeap, (size))
+#define OSFree(ptr) OSFreeToHeap(__OSCurrHeap, (ptr))
+extern volatile OSHeapHandle __OSCurrHeap;
 
 /* ---- System, settings and fixed hardware answers (ADR 0007 §4) --------------- */
 
@@ -173,6 +175,7 @@ void OSSetProgressiveMode(u32 on);
 u8 OSGetLanguage(void);
 u32 OSGetResetCode(void);
 BOOL OSGetResetSwitchState(void);
+BOOL OSGetResetButtonState(void); /* the same answer as OSGetResetSwitchState: never pressed */
 /* Ends the session: the frame step reports a reset request to the host. */
 void OSResetSystem(int reset, u32 resetCode, BOOL forceMenu);
 
@@ -191,6 +194,32 @@ void OSs8tof32(const s8* in, f32* out);
 void OSu8tof32(const u8* in, f32* out);
 void OSs16tof32(const s16* in, f32* out);
 void OSu16tof32(const u16* in, f32* out);
+
+/* ---- Stopwatches (debug timing) ---------------------------------------------- *
+ * Read virtual time through OSGetTime, as the console's do, so each start, stop and
+ * check costs one time-query quantum. The layout is the public SDK's (asserted
+ * against the pinned aurora headers by the MP4 module). */
+typedef struct OSStopwatch {
+  char* name;
+  u32 hits;
+  OSTime total;
+  OSTime min;
+  OSTime max;
+  OSTime last;
+  BOOL running;
+} OSStopwatch;
+
+void OSInitStopwatch(OSStopwatch* sw, char* name);
+void OSStartStopwatch(OSStopwatch* sw);
+void OSStopStopwatch(OSStopwatch* sw);
+OSTime OSCheckStopwatch(OSStopwatch* sw);
+void OSResetStopwatch(OSStopwatch* sw);
+void OSDumpStopwatch(OSStopwatch* sw);
+
+/* ---- Address spaces ------------------------------------------------------------ *
+ * The host has one address space: cached and uncached views are the same pointer. */
+void* OSCachedToUncached(void* caddr);
+void* OSUncachedToCached(void* ucaddr);
 
 /* ---- Caches and CPU (no-ops) -------------------------------------------------- */
 

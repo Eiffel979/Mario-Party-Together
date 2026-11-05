@@ -1,0 +1,22 @@
+Apply order 0005 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+fault: use the SDK's OSPanic
+The SDK's OSPanic faults the runtime deterministically; the game's version draws into the XFB and halts the CPU.
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+diff --git a/src/game/fault.c b/src/game/fault.c
+index 9b9980556d7bc572da6b5b92186ce456d59db0c1..fd3b5b535d0a8ba76907bc9d492d735d898f30d6 100644
+--- a/src/game/fault.c
++++ b/src/game/fault.c
+@@ -46,6 +46,12 @@ static s32 XFB_putcS(u8 arg0, s32 arg1, s32 arg2);
+ static void XFB_WriteBackCache(void);
+ static void XFB_CR(s32 value, s32* arg1, s32* arg2);
+ 
++#ifdef MPT_PC
++/* The SDK's OSPanic faults the runtime (ADR 0008): it stops the game deterministically instead of
++   drawing into an XFB and halting the CPU. */
++#define OSPanic mpt_mp4_game_OSPanic_unused
++static
++#endif
+ void OSPanic(const char* file, int line, const char* msg, ...) {
+     static char* titleMes = "OSPanic encounterd:";
+     

@@ -5,6 +5,7 @@
       "name": "partyboard",
       "repo": "https://github.com/mariopartyrd/partyboard",
       "commit": "98ac07fd1e8f7ab938bbb6fe75789fad99419010",
+      "tree": "a3471c744d132b4625a4869da4e72cf85c5a1d9a",
       "license": "CC0-1.0",
       "submodules": [
         {
@@ -12,6 +13,10 @@
           "source": "musyx",
           "gitlink": "2a0e01aeff0d06a9ee9e12966c435cb75144af9e",
           "reason": "pull-mode PC renderer (9fc772d) and CC0 (8cb588d) postdate Party Board's pin (ADR 0009, amendment after P1-13b)"
+        },
+        {
+          "path": "extern/aurora",
+          "source": "aurora"
         }
       ]
     },
@@ -21,6 +26,13 @@
       "commit": "86851a3a8d51788d166ea42d137b49526f570400",
       "tree": "7177c167f5a5b1e5f63ab927e44d412982f96588",
       "license": "CC0-1.0"
+    },
+    {
+      "name": "aurora",
+      "repo": "https://github.com/encounter/aurora",
+      "commit": "514339438178ef2bed1b14e5149d90ece0c6e0cc",
+      "tree": "87e25e889e08af3db179efd3e9bedb6b87ded425",
+      "license": "MIT"
     }
   ]
 }

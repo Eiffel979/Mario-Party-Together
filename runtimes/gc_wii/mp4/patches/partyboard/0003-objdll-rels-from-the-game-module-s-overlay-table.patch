@@ -1,0 +1,103 @@
+Apply order 0003 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+objdll: RELs from the game module's overlay table
+omDLLLink finds the REL by name in the generated table, restores its pristine .data and zeroes its .bss, and calls its ObjectSetup. No windows.h in game code.
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+diff --git a/include/game/object.h b/include/game/object.h
+index a9a6085b4ff318d87ec5899492a0eb36eda05d36..4bb764919d2f1649864711ed2de19e3dfec70834 100644
+--- a/include/game/object.h
++++ b/include/game/object.h
+@@ -6,7 +6,7 @@
+ #include "game/process.h"
+ #include "game/dvd.h"
+ 
+-#ifdef _WIN32
++#if defined(_WIN32) && !defined(MPT_PC)
+ #include <windows.h>
+ #endif
+ 
+@@ -67,7 +67,10 @@ typedef struct om_obj_data {
+ 
+ typedef struct om_dll_data {
+ 	char *name;
+-#ifdef _WIN32
++#ifdef MPT_PC
++    /* Every REL is linked into the game module; this is its entry in the generated overlay table. */
++    const struct MptMp4RelInfo *rel;
++#elif defined(_WIN32)
+     HMODULE hModule;
+ #elif defined (__linux__) || defined(__APPLE__)
+     void *handle;
+diff --git a/src/game/objdll.c b/src/game/objdll.c
+index b87d08d808b0048e561e31ff98ff8476322bf024..53e77f28a22015f17d9c96e3f4270e6c0e449d09 100644
+--- a/src/game/objdll.c
++++ b/src/game/objdll.c
+@@ -6,7 +6,9 @@
+ #include <string.h>
+ #endif
+ 
+-#if defined(__linux__) || defined(__APPLE__)
++#ifdef MPT_PC
++#include "mpt_mp4_rel.h"
++#elif defined(__linux__) || defined(__APPLE__)
+ #include <dlfcn.h>
+ #endif
+ 
+@@ -113,7 +115,14 @@ omDllData *omDLLLink(omDllData **dll_ptr, s16 overlay, s16 flag)
+ 	dll = HuMemDirectMalloc(HEAP_SYSTEM, sizeof(omDllData));
+ 	*dll_ptr = dll;
+ 	dll->name = dllFile->name;
+-#ifdef _WIN32
++#ifdef MPT_PC
++	/* Like a fresh OSLink: the REL's .data is restored to its pristine contents and its .bss is
++	   zeroed (P1-15). */
++	dll->rel = mpt_mp4_rel_link(dllFile->name);
++	if (dll->rel == NULL) {
++		OSReport("objdll>++++++++++++++++ DLL Link Failed %s\n", dllFile->name);
++	}
++#elif defined(_WIN32)
+     dll->hModule = LoadLibrary(dllFile->name);
+ 	if (dll->hModule == NULL) {
+ 		OSReport("objdll>++++++++++++++++ DLL Link Failed\n");
+@@ -140,7 +149,11 @@ omDllData *omDLLLink(omDllData **dll_ptr, s16 overlay, s16 flag)
+ #endif
+ 	if(flag == 1) {
+ 		OSReport("objdll> %s prolog start\n", dllFile->name);
+-#ifdef _WIN32
++#ifdef MPT_PC
++		if (dll->rel != NULL) {
++			mpt_mp4_rel_object_setup(dll->rel);
++		}
++#elif defined(_WIN32)
+ 		{
+ 		DLLObjectSetup objectSetup = (DLLObjectSetup)GetProcAddress(dll->hModule, "ObjectSetup");
+ 		objectSetup();
+@@ -159,7 +172,9 @@ omDllData *omDLLLink(omDllData **dll_ptr, s16 overlay, s16 flag)
+ void omDLLUnlink(omDllData *dll_ptr, s16 flag)
+ {
+ 	OSReport("odjdll>Unlink DLL:%s\n", dll_ptr->name);
+-#ifdef _WIN32
++#ifdef MPT_PC
++	mpt_mp4_rel_unlink(dll_ptr->rel);
++#elif defined(_WIN32)
+     FreeLibrary(dll_ptr->hModule);
+ #elif defined(__linux__) || defined(__APPLE__)
+ 	dlclose(dll_ptr->handle);
+diff --git a/src/game/ovllist.c b/src/game/ovllist.c
+index a27e415515b82de2fa044ce0dc25b0afb3ab1b9e..dd3f17e96762e5446784ddc2367c1e58cfb473c2 100644
+--- a/src/game/ovllist.c
++++ b/src/game/ovllist.c
+@@ -1,7 +1,12 @@
+ #include "game/dvd.h"
+ #include "game/object.h"
+ 
+-#ifdef TARGET_PC
++#ifdef MPT_PC
++
++/* RELs are linked into the game module and found by name in its overlay table. */
++#define DLL(name) { #name, 0 },
++
++#elif defined(TARGET_PC)
+ 
+ #ifdef _WIN32
+ #define DLL(name) { #name ".dll", 0 },

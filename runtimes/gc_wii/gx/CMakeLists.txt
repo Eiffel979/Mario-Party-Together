@@ -152,6 +152,8 @@ if(NOT _old_stamp STREQUAL _stamp OR NOT EXISTS "${MPT_GX_AURORA}/lib")
   endforeach()
   file(WRITE "${_stamp_file}" "${_stamp}")
 endif()
+# Siblings (the mp4 game module) compile against the same patched aurora headers.
+set(MPT_GX_AURORA_PATCHED "${MPT_GX_AURORA}" CACHE INTERNAL "Patched aurora copy used by the GX layer")
 list(TRANSFORM MPT_GX_FRONTEND_SOURCES PREPEND "${MPT_GX_AURORA}/")
 list(TRANSFORM MPT_GX_MTX_SOURCES PREPEND "${MPT_GX_AURORA}/")
 list(TRANSFORM MPT_GX_RENDERER_SOURCES PREPEND "${MPT_GX_AURORA}/")

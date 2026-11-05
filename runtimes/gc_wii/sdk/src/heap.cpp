@@ -9,7 +9,7 @@
 using namespace mpt::gc;
 using namespace mpt::gc::detail;
 
-extern "C" volatile OSHeapHandle __OSCurrentHeap = -1;
+extern "C" volatile OSHeapHandle __OSCurrHeap = -1;
 
 namespace {
 
@@ -100,7 +100,7 @@ void carveFree(HeapSlot& heap, std::uint32_t off, std::uint32_t lo, std::uint32_
 
 namespace mpt::gc::detail {
 
-void osSyncGlobalsFromState() { __OSCurrentHeap = st().current_heap; }
+void osSyncGlobalsFromState() { __OSCurrHeap = st().current_heap; }
 
 void heapHash(StateHasher& h) {
   auto& s = st();
@@ -293,6 +293,11 @@ s32 OSCheckHeap(OSHeapHandle heap) {
   s32 free_bytes = 0;
   for (std::uint32_t off = h.free_head; off; off = hdr(off)->next) free_bytes += static_cast<s32>(hdr(off)->size);
   return free_bytes;
+}
+
+void OSDumpHeap(OSHeapHandle heap) {
+  boundary();
+  (void)heapFor(heap);
 }
 
 }  // extern "C"

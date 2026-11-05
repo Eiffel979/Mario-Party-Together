@@ -1,0 +1,18 @@
+Apply order 0004 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+m404: no DebugBreak in the game module
+Party Board breaks into the debugger on an unverified 16-bit read; the game module must never stop the host. The read itself is noted in docs/titles/mp4.md for the dump lane.
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+diff --git a/src/REL/m404Dll/main.c b/src/REL/m404Dll/main.c
+index d01a5ac1a373482a83a69b15888c9b48f069cd93..34143c6c8e699c7c33a24cceb5d1907aba13fed7 100644
+--- a/src/REL/m404Dll/main.c
++++ b/src/REL/m404Dll/main.c
+@@ -1431,7 +1431,7 @@ u16 fn_1_607C(ANIMDATA *arg0, u16 arg1, u16 arg2)
+         case 8:
+             return *var_r29;
+         case 16:
+-#ifdef WIN32
++#if defined(WIN32) && !defined(MPT_PC)
+             // TODO PC do we need to byteswap this?
+             DebugBreak();
+ #endif

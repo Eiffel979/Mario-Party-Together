@@ -1,0 +1,142 @@
+Apply order 0015 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+msm: disc structures to host byte order
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+diff --git a/src/msm/msmmus.c b/src/msm/msmmus.c
+index 813d1d20d6afd52682260aee21a2abc42417a235..14b666ac4b7b5c66c0b5d38ac574e1e82143d92c 100755
+--- a/src/msm/msmmus.c
++++ b/src/msm/msmmus.c
+@@ -1,3 +1,9 @@
++#ifdef MPT_PC
++#include "mpt_msm_swap.h" /* msm's disc structures are big-endian */
++#define MPT_MSM_SWAP(call) call
++#else
++#define MPT_MSM_SWAP(call)
++#endif
+ #include <stdint.h>
+ #include "msm/msmmus.h"
+ #include "msm/msmmem.h"
+@@ -424,6 +430,7 @@ s32 msmMusInit(MSM_SYS* arg0, DVDFileInfo* arg1) {
+     if (msmFioRead(arg1, mus.musData, arg0->header->musSize, arg0->header->musOfs) < 0) {
+         return MSM_ERR_READFAIL;
+     }
++    MPT_MSM_SWAP(mpt_msm_swap_mus(mus.musData, arg0->header->musSize));
+     temp_r4 = arg0->info->dummyMusSize;
+     if (temp_r4 != 0) {
+         if ((mus.musBuf = msmMemAlloc(temp_r4 * arg0->info->musChanMax)) == NULL) {
+diff --git a/src/msm/msmse.c b/src/msm/msmse.c
+index 0c7b04571e86b35a9997ae951d827a5a8dd4b338..b8fdaa3c0393f83088143e531c65bc7940907195 100755
+--- a/src/msm/msmse.c
++++ b/src/msm/msmse.c
+@@ -1,3 +1,9 @@
++#ifdef MPT_PC
++#include "mpt_msm_swap.h" /* msm's disc structures are big-endian */
++#define MPT_MSM_SWAP(call) call
++#else
++#define MPT_MSM_SWAP(call)
++#endif
+ #include "msm/msmse.h"
+ #include "msm/msmfio.h"
+ #include "msm/msmmem.h"
+@@ -627,6 +633,7 @@ s32 msmSeInit(MSM_SYS* arg0, DVDFileInfo* arg1) {
+     if (msmFioRead(arg1, se.seData, arg0->header->seSize, arg0->header->seOfs) < 0) {
+         return MSM_ERR_READFAIL;
+     }
++    MPT_MSM_SWAP(mpt_msm_swap_se(se.seData, arg0->header->seSize));
+     playerSize = arg0->info->sfx * sizeof(SE_PLAYER);
+     if ((se.player = msmMemAlloc(playerSize)) == NULL) {
+         return MSM_ERR_OUTOFMEM;
+diff --git a/src/msm/msmstream.c b/src/msm/msmstream.c
+index abeafb0878ceb509f27005505b8b1f5c3c07ed42..c2f0998839a9d9248a8f655ae58df603916d178e 100755
+--- a/src/msm/msmstream.c
++++ b/src/msm/msmstream.c
+@@ -1,3 +1,9 @@
++#ifdef MPT_PC
++#include "mpt_msm_swap.h" /* msm's disc structures are big-endian */
++#define MPT_MSM_SWAP(call) call
++#else
++#define MPT_MSM_SWAP(call)
++#endif
+ #include <stdint.h>
+ #include "msm/msmstream.h"
+ #include "msm/msmmem.h"
+@@ -327,6 +333,7 @@ s32 msmStreamInit(char *pdtPath) {
+         msmFioClose(&file);
+         return MSM_ERR_READFAIL;
+     }
++    MPT_MSM_SWAP(mpt_msm_swap_stream_header(&StreamInfo.header));
+     if (StreamInfo.header.version != MSM_PDT_FILE_VERSION) {
+         msmFioClose(&file);
+         return MSM_ERR_INVALIDFILE;
+@@ -362,6 +369,9 @@ s32 msmStreamInit(char *pdtPath) {
+             msmFioClose(&file);
+             return MSM_ERR_READFAIL;
+         }
++        MPT_MSM_SWAP(mpt_msm_swap_stream_tables(&StreamInfo.header, StreamInfo.streamPackList,
++            StreamInfo.header.adpcmParamOfs - StreamInfo.header.streamPackListOfs, StreamInfo.streamPackFlag,
++            StreamInfo.header.sampleOfs - StreamInfo.header.streamPackOfs, StreamInfo.adpcmParam, size));
+     }
+     msmFioClose(&file);
+     StreamInfo.sampleFrq = (StreamInfo.header.sampleFrq + (SND_STREAM_ADPCM_BLKSIZE-1)) / SND_STREAM_ADPCM_BLKSIZE ;
+diff --git a/src/msm/msmsys.c b/src/msm/msmsys.c
+index 49f3a5ee899a07b93956d05a343959640977b05d..01bf5cb32b08b52c10f3482c3d0f99be9d441ac1 100644
+--- a/src/msm/msmsys.c
++++ b/src/msm/msmsys.c
+@@ -1,3 +1,9 @@
++#ifdef MPT_PC
++#include "mpt_msm_swap.h" /* msm's disc structures are big-endian */
++#define MPT_MSM_SWAP(call) call
++#else
++#define MPT_MSM_SWAP(call)
++#endif
+ #include <stdint.h>
+ #include "msm/msmsys.h"
+ #include "msm/msmfio.h"
+@@ -118,6 +124,7 @@ static s32 msmSysLoadBaseGroup(void *buf)
+             msmFioClose(&file);
+             return MSM_ERR_READFAIL;
+         }
++        MPT_MSM_SWAP(mpt_msm_swap_grp_head(grpData));
+         if (msmFioRead(&file, buf, grpInfo->sampSize, grpInfo->sampOfs + sys.header->sampOfs) < 0) {
+             msmFioClose(&file);
+             return MSM_ERR_READFAIL;
+@@ -190,6 +197,7 @@ s32 msmSysGroupInit(DVDFileInfo *file)
+     if (msmFioRead(file, sys.grpInfo, sys.header->grpInfoSize, sys.header->grpInfoOfs) < 0) {
+         return MSM_ERR_READFAIL;
+     }
++    MPT_MSM_SWAP(mpt_msm_swap_grp_info(sys.grpInfo, sys.header->grpInfoSize));
+     if ((sys.grpBufA = msmMemAlloc(sys.info->grpBufSizeA * sys.grpStackAMax)) == NULL) {
+         return MSM_ERR_OUTOFMEM;
+     }
+@@ -520,6 +528,7 @@ static s32 msmSysPushGroup(DVDFileInfo *file, void *buf, MSM_GRP_STACK *grp, s32
+     if (msmFioRead(file, grp->buf, grpInfo->dataSize, grpInfo->dataOfs + sys.header->grpDataOfs) < 0) {
+         return MSM_ERR_READFAIL;
+     }
++    MPT_MSM_SWAP(mpt_msm_swap_grp_head((MSM_GRP_HEAD *)grp->buf));
+     if (msmFioRead(file, buf, grpInfo->sampSize, grpInfo->sampOfs + sys.header->sampOfs) < 0) {
+         return MSM_ERR_READFAIL;
+     }
+@@ -825,6 +834,7 @@ s32 msmSysInit(MSM_INIT *init, MSM_ARAM *aram)
+         msmFioClose(&sp10);
+         return MSM_ERR_READFAIL;
+     }
++    MPT_MSM_SWAP(mpt_msm_swap_header(sys.header));
+     if (sys.header->version != MSM_FILE_VERSION) {
+         msmFioClose(&sp10);
+         return MSM_ERR_INVALIDFILE;
+@@ -837,6 +847,7 @@ s32 msmSysInit(MSM_INIT *init, MSM_ARAM *aram)
+         msmFioClose(&sp10);
+         return MSM_ERR_READFAIL;
+     }
++    MPT_MSM_SWAP(mpt_msm_swap_info(sys.info, sys.header->infoSize));
+     if (aram != NULL) {
+         if (aram->skipARInit == 0) {
+             ARInit(aram->stackIndex, aram->aramEnd);
+@@ -887,6 +898,7 @@ s32 msmSysInit(MSM_INIT *init, MSM_ARAM *aram)
+                 result = MSM_ERR_READFAIL;
+             }
+             else {
++                MPT_MSM_SWAP(mpt_msm_swap_aux_params(sys.auxParam, sys.header->auxParamSize));
+                 result = 0;
+             }
+         }
