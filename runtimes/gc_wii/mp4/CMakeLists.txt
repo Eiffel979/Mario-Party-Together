@@ -194,6 +194,10 @@ add_library(mp4_game SHARED
   src/abi.cpp
   src/copy_trap.cpp)
 target_link_libraries(mp4_game PRIVATE mpt_mp4_game_flags ${MPT_MP4_REL_LIBS} mpt::gx mpt::musyx)
+# The shared libraries the module needs at run time (webgpu_dawn with the Dawn backend), one per line,
+# for the asset-import recipe to install next to it. Empty on platforms without DLLs.
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/mp4_game_runtime_deps.txt"
+     CONTENT "$<JOIN:$<TARGET_RUNTIME_DLLS:mp4_game>,\n>\n")
 target_compile_options(mp4_game PRIVATE ${MPT_MP4_WARN_FLAGS})
 set_target_properties(mp4_game PROPERTIES C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden PREFIX "")
 target_include_directories(mp4_game PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")

@@ -1,6 +1,7 @@
 // See mpt/mp4/recipe.h.
 #include "mpt/mp4/recipe.h"
 
+#include <fstream>
 #include <regex>
 #include <system_error>
 #include <utility>
@@ -123,6 +124,17 @@ class InstallStep final : public BuildStep {
     if (ec) return Result::failure("cannot create " + dest_dir.string() + ": " + ec.message());
     fs::copy_file(built, dest_dir / kModuleFileName, fs::copy_options::overwrite_existing, ec);
     if (ec) return Result::failure("the build produced no " + std::string(kModuleFileName) + ": " + ec.message());
+    // Shared libraries the module links (webgpu_dawn with the Dawn backend) go next to it: the loader
+    // resolves them from the module's directory. The module build lists them (Windows only; empty
+    // with the null backend).
+    if (std::ifstream deps{moduleBuildDir(context) / "mp4" / "mp4_game_runtime_deps.txt"}) {
+      for (std::string line; std::getline(deps, line);) {
+        if (line.empty()) continue;
+        const fs::path dep = line;
+        fs::copy_file(dep, dest_dir / dep.filename(), fs::copy_options::overwrite_existing, ec);
+        if (ec) return Result::failure("cannot install " + dep.filename().string() + ": " + ec.message());
+      }
+    }
     // The intermediates hold nothing the runtime needs; keep the cache small.
     fs::remove_all(moduleBuildDir(context), ec);
     return Result::success();
