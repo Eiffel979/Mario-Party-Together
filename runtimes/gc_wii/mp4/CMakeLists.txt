@@ -132,8 +132,6 @@ endif()
 # audio (HuAud* over msm, ADR 0007 section 4), THP playback, and the soft-reset check.
 list(APPEND GAME_FILES src/game/audio.c src/game/THPDraw.c src/game/THPSimple.c src/game/thpmain.c src/game/sreset.c)
 list(TRANSFORM GAME_FILES PREPEND "${MPT_MP4_PB}/")
-# Party Board port code we reuse unchanged: the 64-bit HSF model-format conversion (P1-15 piece 4).
-list(APPEND GAME_FILES "${MPT_MP4_PB}/src/port/byteswap.cpp")
 list(TRANSFORM MPT_MP4_MSM_FILES PREPEND "${MPT_MP4_PB}/")
 # Our replacements for Party Board's port layer (include/mpt_mp4_port.h) and its coroutines.
 set(MPT_MP4_PORT_FILES src/port.c src/sdk_bridge.c src/libco.c src/layout_check.c src/game_reads.c src/msm_swap.c src/msm_diag.c)
@@ -143,6 +141,15 @@ set_source_files_properties(${GAME_FILES} ${MPT_MP4_MSM_FILES} TARGET_DIRECTORY 
                             PROPERTIES COMPILE_OPTIONS "${MPT_MP4_NOWARN}")
 set_source_files_properties(${MPT_MP4_PORT_FILES} TARGET_DIRECTORY mpt_mp4_dol
                             PROPERTIES COMPILE_OPTIONS "${MPT_MP4_WARN_FLAGS}")
+
+# Party Board port code we reuse unchanged: the 64-bit HSF model-format conversion (P1-15 piece 4).
+# Its only file-scope data is a host container (std::unordered_set sVisitedPtrs, cleared but never
+# filled). That is host state, not game state, so the file is built without game_section.h: inside
+# the game data range the container's heap pointers differ per process, which split the state hash,
+# and a load_state would restore them over a live container.
+add_library(mpt_mp4_byteswap OBJECT "${MPT_MP4_PB}/src/port/byteswap.cpp")
+target_link_libraries(mpt_mp4_byteswap PRIVATE mpt_mp4_game_flags)
+target_compile_options(mpt_mp4_byteswap PRIVATE ${MPT_MP4_NOWARN})
 
 # ---- RELs: compiled separately, then isolated (tools/MptMp4Rel.cmake) ----------------------------
 include("${CMAKE_CURRENT_SOURCE_DIR}/tools/MptMp4Rel.cmake")
@@ -179,6 +186,7 @@ mpt_mp4_write_rel_table(MPT_MP4_REL "${CMAKE_CURRENT_BINARY_DIR}/generated/mpt_m
 # ---- The game module -----------------------------------------------------------------------------
 add_library(mp4_game SHARED
   $<TARGET_OBJECTS:mpt_mp4_dol>
+  $<TARGET_OBJECTS:mpt_mp4_byteswap>
   ${MPT_MP4_REL_INFOS}
   "${CMAKE_CURRENT_BINARY_DIR}/generated/mpt_mp4_rel_table.c"
   src/rel_loader.c
@@ -218,7 +226,7 @@ message(STATUS "runtimes/gc_wii/mp4: build ID ${MPT_MP4_BUILD_ID}")
 
 # Every object library, for compile-only builds.
 add_custom_target(mpt_mp4_objects)
-add_dependencies(mpt_mp4_objects mpt_mp4_dol)
+add_dependencies(mpt_mp4_objects mpt_mp4_dol mpt_mp4_byteswap)
 foreach(_rel IN LISTS MPT_MP4_RELS)
   add_dependencies(mpt_mp4_objects mpt_mp4_rel_${_rel})
 endforeach()
@@ -241,7 +249,7 @@ if(MPT_BUILD_TESTS)
   # Hundreds of objects: the list goes through a file, not the command line.
   string(REPLACE ";" "\n" _rel_lines "${MPT_MP4_REL_LIBS}")
   file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/mp4_game_code.txt"
-       CONTENT "$<JOIN:$<TARGET_OBJECTS:mpt_mp4_dol>,\n>\n${_rel_lines}\n")
+       CONTENT "$<JOIN:$<TARGET_OBJECTS:mpt_mp4_dol>,\n>\n$<JOIN:$<TARGET_OBJECTS:mpt_mp4_byteswap>,\n>\n${_rel_lines}\n")
   add_test(NAME mp4_no_host_math
     COMMAND "${CMAKE_COMMAND}" "-DNM=${MPT_MP4_NM}" "-DFILES_FROM=${CMAKE_CURRENT_BINARY_DIR}/mp4_game_code.txt"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/../sdk/tests/check_no_host_math.cmake")
