@@ -81,6 +81,13 @@ set(_mpt_gc_prefix "")
 if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
   set(_mpt_gc_prefix "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
 endif()
+# CMAKE_CACHE_ARGS are written into an initial-cache script, where a native Windows path such as
+# C:\Users\... is an invalid escape. Forward every path in CMake form.
+foreach(_mpt_gc_path_var MPT_CORE_INCLUDE_DIR MPT_DAWN_PREFIX MPT_SOURCE_CACHE MPT_AURORA_DIR MPT_MUSYX_DIR)
+  if(${_mpt_gc_path_var})
+    file(TO_CMAKE_PATH "${${_mpt_gc_path_var}}" ${_mpt_gc_path_var})
+  endif()
+endforeach()
 ExternalProject_Add(mpt_gc_wii_clang
   SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}"
   BINARY_DIR "${_mpt_gc_bin}"
