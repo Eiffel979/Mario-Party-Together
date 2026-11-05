@@ -204,6 +204,11 @@ SaveMedia Mp4Runtime::saveMedia() const {
   return media;
 }
 
+bool Mp4Runtime::debugPerturb(std::uint32_t target) {
+  if (game_ == nullptr || api_->struct_size < MPT_MP4_API_SIZE_V1_2 || api_->debug_perturb == nullptr) return false;
+  return api_->debug_perturb(game_, target) == 1;
+}
+
 bool Mp4Runtime::readParty(MptMp4Party& out) const {
   if (game_ == nullptr) return false;
   out = MptMp4Party{};

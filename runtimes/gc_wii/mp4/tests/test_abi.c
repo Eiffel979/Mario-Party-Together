@@ -45,6 +45,8 @@ int main(int argc, char** argv) {
   if (api == NULL) return 1;
   CHECK(api->struct_size >= MPT_MP4_API_SIZE_V1_1 && api->status != NULL);
   CHECK(mpt_mp4_api_has_v1_1(api));
+  CHECK(api->struct_size >= MPT_MP4_API_SIZE_V1_2 && api->debug_perturb != NULL);
+  CHECK(api->debug_perturb(NULL, MPT_MP4_PERTURB_GAME_DATA) == 0);
   {
     /* A v1.0 table ends at struct_size 160: the host's check rejects it whatever lies past the end
      * (here a copy with a non-NULL status beyond struct_size). */

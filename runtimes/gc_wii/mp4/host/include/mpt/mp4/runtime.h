@@ -44,6 +44,11 @@ class Mp4Runtime final : public ITitleRuntime {
   // Raw party reads for Mp4Adapter (MptMp4Party). False before boot.
   bool readParty(MptMp4Party& out) const;
 
+  // Test only (E4 hash coverage, ABI v1.2 debug_perturb): flips one byte of a memory class
+  // (MptMp4PerturbTarget); the same call again restores it. Between frames only. False if the
+  // module is older than v1.2 or the class has no byte right now.
+  bool debugPerturb(std::uint32_t target);
+
   // The OSReport text sink (presentation only). Called from inside stepFrame.
   void setReportSink(void (*sink)(void* user, const char* text), void* user);
 

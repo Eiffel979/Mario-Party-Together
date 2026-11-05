@@ -224,7 +224,22 @@ typedef struct MptMp4Api {
   /* v1.1: the module's status (RUNNING, HALTED or FAULTED), the same value the last step returned and
    * what a load_state restored (ADR 0011). NULL in a v1.0 module. */
   MptMp4StepResult (*status)(const MptMp4Game* game);
+
+  /* v1.2, test only (E4 hash coverage): flips one byte (XOR 0xFF) of the memory class `target`
+   * (MptMp4PerturbTarget) so a test can check what state_hash covers; the same call again restores
+   * it, as long as no frame ran in between. Between steps only. Returns 1 if it flipped a byte, 0 if
+   * the class has none right now (for example no ARAM in use yet). Never for gameplay. NULL before
+   * v1.2. */
+  int32_t (*debug_perturb)(MptMp4Game* game, uint32_t target);
 } MptMp4Api;
+
+typedef enum MptMp4PerturbTarget {
+  MPT_MP4_PERTURB_GAME_DATA = 1,  /* the game core's data range (middle byte) */
+  MPT_MP4_PERTURB_HEAP_BLOCK = 2, /* data of the first allocated HuMem block of 64+ bytes */
+  MPT_MP4_PERTURB_ARAM = 3,       /* ARAM in use (middle byte) */
+  MPT_MP4_PERTURB_GLOBAL = 4,     /* GWSystem, a global the manifest hashes by name */
+  MPT_MP4_PERTURB_FREE_HEAP = 5   /* data of the first free HuMem block of 64+ bytes: must NOT count */
+} MptMp4PerturbTarget;
 
 /* v1.0 sizes (x86-64). A caller's struct_size must be at least these. */
 #define MPT_MP4_ERROR_SIZE_V1_0 260u
@@ -234,6 +249,7 @@ typedef struct MptMp4Api {
 #define MPT_MP4_PARTY_SIZE_V1_0 136u
 #define MPT_MP4_API_SIZE_V1_0 160u
 #define MPT_MP4_API_SIZE_V1_1 168u /* adds status */
+#define MPT_MP4_API_SIZE_V1_2 176u /* adds debug_perturb */
 
 MPT_MP4_STATIC_ASSERT(sizeof(void*) == 8, "the MP4 game module ABI is defined for 64-bit hosts");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Error) == MPT_MP4_ERROR_SIZE_V1_0, "MptMp4Error v1.0");
@@ -241,8 +257,9 @@ MPT_MP4_STATIC_ASSERT(sizeof(MptMp4BootConfig) == MPT_MP4_BOOT_CONFIG_SIZE_V1_0,
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Video) == MPT_MP4_VIDEO_SIZE_V1_0, "MptMp4Video v1.0");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Audio) == MPT_MP4_AUDIO_SIZE_V1_0, "MptMp4Audio v1.0");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Party) == MPT_MP4_PARTY_SIZE_V1_0, "MptMp4Party v1.0");
-MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Api) == MPT_MP4_API_SIZE_V1_1, "MptMp4Api v1.1");
+MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Api) == MPT_MP4_API_SIZE_V1_2, "MptMp4Api v1.2");
 MPT_MP4_STATIC_ASSERT(offsetof(MptMp4Api, status) == MPT_MP4_API_SIZE_V1_0, "status is the v1.1 append");
+MPT_MP4_STATIC_ASSERT(offsetof(MptMp4Api, debug_perturb) == MPT_MP4_API_SIZE_V1_1, "debug_perturb is the v1.2 append");
 /* Frozen for major version 1. */
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Pad) == 32, "MptMp4Pad is frozen");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4InputFrame) == 136, "MptMp4InputFrame is frozen");
