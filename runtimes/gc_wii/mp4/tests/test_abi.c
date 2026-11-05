@@ -44,6 +44,20 @@ int main(int argc, char** argv) {
   CHECK(api != NULL);
   if (api == NULL) return 1;
   CHECK(api->struct_size >= MPT_MP4_API_SIZE_V1_1 && api->status != NULL);
+  CHECK(mpt_mp4_api_has_v1_1(api));
+  {
+    /* A v1.0 table ends at struct_size 160: the host's check rejects it whatever lies past the end
+     * (here a copy with a non-NULL status beyond struct_size). */
+    MptMp4Api v1_0;
+    memcpy(&v1_0, api, sizeof v1_0);
+    v1_0.struct_size = MPT_MP4_API_SIZE_V1_0;
+    CHECK(!mpt_mp4_api_has_v1_1(&v1_0));
+    v1_0.struct_size = MPT_MP4_API_SIZE_V1_1;
+    CHECK(mpt_mp4_api_has_v1_1(&v1_0));
+    v1_0.status = NULL;
+    CHECK(!mpt_mp4_api_has_v1_1(&v1_0));
+    CHECK(!mpt_mp4_api_has_v1_1(NULL));
+  }
   /* The fixed image base (ADR 0008 section 11, mp4/layout.cmake). */
 #if defined(_WIN32)
   CHECK((uintptr_t)module == (uintptr_t)MPT_MP4_MODULE_BASE);

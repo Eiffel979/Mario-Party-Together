@@ -82,8 +82,7 @@ const MptMp4Api* load_module(const std::filesystem::path& path, std::uintptr_t e
   const auto fn = reinterpret_cast<MptMp4GetApiFn>(get_api);
   const MptMp4Api* api = fn(MPT_MP4_ABI_VERSION);
   // The host calls status() (v1.1), so it needs a v1.1 table.
-  if (api == nullptr || api->struct_size < MPT_MP4_API_SIZE_V1_1 || api->abi_version != MPT_MP4_ABI_VERSION ||
-      api->status == nullptr) {
+  if (!mpt_mp4_api_has_v1_1(api)) {
     error = "the game module does not implement ABI version " + std::to_string(MPT_MP4_ABI_VERSION) + ".1";
     return nullptr;
   }

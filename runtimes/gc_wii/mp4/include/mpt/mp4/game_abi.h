@@ -242,6 +242,7 @@ MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Video) == MPT_MP4_VIDEO_SIZE_V1_0, "MptMp4Vid
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Audio) == MPT_MP4_AUDIO_SIZE_V1_0, "MptMp4Audio v1.0");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Party) == MPT_MP4_PARTY_SIZE_V1_0, "MptMp4Party v1.0");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Api) == MPT_MP4_API_SIZE_V1_1, "MptMp4Api v1.1");
+MPT_MP4_STATIC_ASSERT(offsetof(MptMp4Api, status) == MPT_MP4_API_SIZE_V1_0, "status is the v1.1 append");
 /* Frozen for major version 1. */
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Pad) == 32, "MptMp4Pad is frozen");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4InputFrame) == 136, "MptMp4InputFrame is frozen");
@@ -251,6 +252,13 @@ MPT_MP4_STATIC_ASSERT(sizeof(MptMp4PartyPlayer) == 20, "MptMp4PartyPlayer is fro
 /* The module's only export. Returns NULL if it does not implement `abi_version`. */
 MPT_MP4_EXPORT const MptMp4Api* mpt_mp4_get_api(uint32_t abi_version);
 typedef const MptMp4Api* (*MptMp4GetApiFn)(uint32_t abi_version);
+
+/* Whether a table the module returned implements v1.1 (status). A v1.0 table has struct_size 160
+ * and no status field: a host must not read past struct_size. */
+static inline int mpt_mp4_api_has_v1_1(const MptMp4Api* api) {
+  return api != NULL && api->abi_version == MPT_MP4_ABI_VERSION && api->struct_size >= MPT_MP4_API_SIZE_V1_1 &&
+         api->status != NULL;
+}
 
 #ifdef __cplusplus
 }
