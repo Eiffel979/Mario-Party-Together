@@ -8,8 +8,14 @@
 // `mpt_dump_lane --boot <title> [--frames N] [--every N] [--seed S]` instead boots the title
 // headless on the dump with no input and steps it N frames (default 600), printing the state hash
 // every --every frames (default 60) and the game's OSReport text. It is the M1 check ("boots
-// headless"): exit 0 if the runtime is still running at the end, 1 otherwise.
+// headless"): exit 0 if the runtime is still running at the end, 1 otherwise. It also prints the
+// mean wall time of a stateHash() call (a harness measurement; nothing in the runtime reads a clock).
+//
+// `--perturb` (MP4, E4 hash coverage) adds a check at every checkpoint: for each memory class the
+// hash must cover, flip one byte, require a different stateHash(), flip it back and require the
+// original; for free heap space require the hash to stay the same. Any miss makes the exit 1.
 
+#include <chrono>
 #include <cstddef>
 #include <cstdio>
 #include <cstdint>
@@ -83,9 +89,44 @@ struct BootOptions {
   std::uint64_t frames = 600;
   std::uint64_t every = 60;
   std::uint64_t seed = 1;
+  bool perturb = false;
 };
 
 void print_report(void*, const char* text) { std::fputs(text, stdout); }
+
+#if defined(MPT_DUMP_LANE_MP4)
+// E4: what stateHash() covers. Returns the number of failed checks.
+int perturb_checks(mpt::mp4::Mp4Runtime& mp4, std::uint64_t frame) {
+  struct Target {
+    std::uint32_t id;
+    const char* name;
+    bool must_change;
+  };
+  static constexpr Target kTargets[] = {
+      {MPT_MP4_PERTURB_GAME_DATA, "game data", true},   {MPT_MP4_PERTURB_HEAP_BLOCK, "heap block", true},
+      {MPT_MP4_PERTURB_ARAM, "aram in use", true},      {MPT_MP4_PERTURB_GLOBAL, "registered global", true},
+      {MPT_MP4_PERTURB_FREE_HEAP, "free heap", false},
+  };
+  int failed = 0;
+  const std::uint64_t original = mp4.stateHash();
+  for (const Target& t : kTargets) {
+    if (!mp4.debugPerturb(t.id)) {
+      std::printf("frame %llu perturb %s: no byte to flip\n", static_cast<unsigned long long>(frame), t.name);
+      continue;
+    }
+    const std::uint64_t flipped = mp4.stateHash();
+    mp4.debugPerturb(t.id);
+    const std::uint64_t restored = mp4.stateHash();
+    const bool changed = flipped != original;
+    const bool ok = changed == t.must_change && restored == original;
+    if (!ok) ++failed;
+    std::printf("frame %llu perturb %s: %s, %s -> %s\n", static_cast<unsigned long long>(frame), t.name,
+                changed ? "hash changed" : "hash unchanged", restored == original ? "restored" : "NOT restored",
+                ok ? "ok" : "FAIL");
+  }
+  return failed;
+}
+#endif
 
 // The M1 check: boot headless on the dump, no input, and step.
 int boot(const BootOptions& options, const std::filesystem::path& dump_dir) {
@@ -121,6 +162,9 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir) {
               static_cast<unsigned long long>(options.seed));
   mpt::InputFrame input;
   std::string stopped;
+  int perturb_failures = 0;
+  std::uint64_t hash_calls = 0;
+  std::chrono::steady_clock::duration hash_time{};
   for (std::uint64_t f = 0; f < options.frames; ++f) {
     input.frame = f;
     runtime->stepFrame(input);
@@ -132,9 +176,30 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir) {
     }
     if (options.every != 0 && (f + 1) % options.every == 0) {
       const mpt::FrameOutput video = runtime->video();
+      const auto t0 = std::chrono::steady_clock::now();
+      const std::uint64_t hash = runtime->stateHash();
+      hash_time += std::chrono::steady_clock::now() - t0;
+      ++hash_calls;
       std::printf("frame %llu hash %016llx video %ux%u\n", static_cast<unsigned long long>(f + 1),
-                  static_cast<unsigned long long>(runtime->stateHash()), video.width, video.height);
+                  static_cast<unsigned long long>(hash), video.width, video.height);
+#if defined(MPT_DUMP_LANE_MP4)
+      if (options.perturb && mp4 != nullptr) perturb_failures += perturb_checks(*mp4, f + 1);
+#endif
     }
+  }
+  if (hash_calls != 0) {
+    const double us = std::chrono::duration<double, std::micro>(hash_time).count() / static_cast<double>(hash_calls);
+    std::printf("dump lane: stateHash %.0f us per call (mean of %llu)\n", us, static_cast<unsigned long long>(hash_calls));
+  }
+  if (options.perturb) {
+#if defined(MPT_DUMP_LANE_MP4)
+    if (mp4 == nullptr) std::puts("dump lane: --perturb needs the MP4 runtime");
+    std::printf("dump lane: perturbation checks: %d failed\n", perturb_failures);
+    if (mp4 == nullptr || perturb_failures != 0) return 1;
+#else
+    std::puts("dump lane: --perturb needs the MP4 runtime, which this build does not have");
+    return 1;
+#endif
   }
   if (!stopped.empty()) return 1;
   std::printf("dump lane: %s still running after %llu frames\n", options.title.c_str(),
@@ -159,8 +224,10 @@ int main(int argc, char** argv) {
       boot_options.every = std::strtoull(argv[++i], nullptr, 10);
     } else if (arg == "--seed" && has_value) {
       boot_options.seed = std::strtoull(argv[++i], nullptr, 10);
+    } else if (arg == "--perturb") {
+      boot_options.perturb = true;
     } else {
-      std::printf("usage: mpt_dump_lane [--boot <title> [--frames N] [--every N] [--seed S]]\n");
+      std::printf("usage: mpt_dump_lane [--boot <title> [--frames N] [--every N] [--seed S] [--perturb]]\n");
       return 2;
     }
   }
