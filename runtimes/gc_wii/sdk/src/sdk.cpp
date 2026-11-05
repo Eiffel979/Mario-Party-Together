@@ -200,10 +200,38 @@ void threadEntry(void* arg) {
   exitCurrent(result);
 }
 
+// The interrupt coroutine. Resumed by the frame step between threads (back to the host when done),
+// or by a call boundary inside a thread (runDueOffStack: back to that thread's stack when done).
 void irqEntry(void*) {
   for (;;) {
     runDue();
-    switchToHost();
+    auto& I = impl();
+    if (I.irq_return_slot != nullptr) {
+      void** back = I.irq_return_slot;
+      I.irq_return_slot = nullptr;
+      mpt_gc_switch_context(&st().threads[kIrqSlot].ctx_sp, *back);
+    } else {
+      switchToHost();
+    }
+  }
+}
+
+// Due interrupts at a call boundary run on the interrupt coroutine's own arena stack, not on the
+// caller's: a game process's small libco stack must not also hold MusyX rendering or other handler
+// work (ADR 0008 section 1). Nothing else changes: the same events run in the same order at the same
+// point, s.current still names the interrupted thread (as OSGetCurrentThread does in a handler on
+// the console), and the caller resumes right after.
+void runDueOffStack() {
+  auto& I = impl();
+  auto& s = st();
+  if (I.irq_return_slot != nullptr) fatal("interrupts re-entered from a call boundary");
+  void* caller_sp = nullptr;
+  I.irq_return_slot = &caller_sp;
+  mpt_gc_switch_context(&caller_sp, s.threads[kIrqSlot].ctx_sp);
+  if (!stackCanaryIntact(I, kIrqSlot) && !s.faulted) {
+    s.faulted = 1;
+    I.fault = "stack overflow on the interrupt stack (its " + std::to_string(I.config.thread_stack_bytes / 1024) +
+              " KiB arena stack; raise SdkConfig::thread_stack_bytes)";
   }
 }
 
@@ -294,15 +322,18 @@ std::uint64_t hashPointer(const void* p) {
 
 void switchToHost() {
   auto& s = st();
-  const std::int32_t slot = s.current;
-  mpt_gc_switch_context(&s.threads[slot].ctx_sp, impl().host_sp);
+  auto& I = impl();
+  // On the interrupt stack inside runDueOffStack (a fault in a handler), save that coroutine's
+  // context, not the interrupted thread's: the thread is still parked in runDueOffStack.
+  const std::int32_t slot = I.irq_return_slot != nullptr ? static_cast<std::int32_t>(kIrqSlot) : s.current;
+  mpt_gc_switch_context(&s.threads[slot].ctx_sp, I.host_sp);
 }
 
 void boundary() {
   if (!active()) return;
   auto& s = st();
   if (s.current < 0 || s.current == static_cast<std::int32_t>(kIrqSlot) || s.in_interrupt) return;
-  if (s.now >= g_earliest) runDue();
+  if (s.now >= g_earliest) runDueOffStack();
   if (s.faulted || s.halted || s.reset_requested) switchToHost();
   maybePreempt();
 }

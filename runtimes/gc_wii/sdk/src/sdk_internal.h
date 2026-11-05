@@ -297,6 +297,10 @@ struct Sdk::Impl {
   detail::SdkState* st = nullptr;
 
   void* host_sp = nullptr;
+  // Set while a call boundary runs due interrupts on the interrupt coroutine's stack: where the
+  // interrupted caller's stack pointer was saved, which that coroutine switches back to. Transient
+  // (only inside one SDK call), never in a save state.
+  void** irq_return_slot = nullptr;
   std::vector<detail::DvdEntry> dvd;
   std::string fault;
   std::function<void(const char*)> report_sink;
