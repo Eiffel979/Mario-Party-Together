@@ -82,6 +82,9 @@ foreach(_f IN LISTS _module_inputs)
   file(RELATIVE_PATH _rel "${_gc}" "${_f}")
   string(APPEND _tree "${_rel}=${_h};")
 endforeach()
+# The module build's own options (GX backend, Dawn prefix, prefix path) select a different module
+# from the same tree, so they are part of the key too.
+string(APPEND _tree "args=${MPT_MP4_RECIPE_ARGS}")
 string(SHA256 _tree_hash "${_tree}")
 string(SUBSTRING "${_tree_hash}" 0 16 _tree_hash)
 set(MPT_MP4_RECIPE_RUNTIME_VERSION "mp4-module-${_tree_hash}")
