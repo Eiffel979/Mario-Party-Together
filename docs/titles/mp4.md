@@ -748,7 +748,7 @@ So a minigame is covered on both devices unless it needs something a key cannot 
 - `status()` (ADR 0011) is the module's step result and fault text, which the module keeps in its save state.
 - **ABI minor versions** (append-only, `game_abi.h`):
   - v1.1 appends `status`. The loader requires it (`mpt_mp4_api_has_v1_1`), and `mp4_game_abi` checks that a 160-byte v1.0 table is rejected.
-  - v1.2 appends `debug_perturb`, a test-only hook for the hash coverage proof. `Mp4Runtime::debugPerturb` uses it only when the table is at least 176 bytes.
+  - v1.2 appends `debug_perturb`, a test-only hook for the hash coverage proof (accepted in PR #48). It acts only on a game created with the unhashed boot flag `MPT_MP4_BOOT_DEBUG_HOOKS`; without it, it returns `MPT_MP4_ERR_ARGUMENT` and changes nothing. `Mp4Runtime::setDebugHooks` sets the flag (the dump lane's `--perturb` does), and `debugPerturb` uses the entry only when the table is at least 176 bytes. A dump-lane run without `--perturb` checks on the real game that the module refuses.
 - `SaveState::format_version` is the module's `state_format()`.
 - If the module was built with the null GX backend, `boot()` falls back to null video.
 
@@ -792,6 +792,7 @@ The `armem.c` loops would never see their callback under the default mode, so MP
 - `--press button@frame[+frames][,...]` holds buttons on player 1 (connected whenever a script is given; 6 frames by default). `--capture DIR [--capture-every N]` writes checkpoint frames as PNGs. Captures are the user's own game output: they go only to the directory given, never into the repository.
 - The dump comes from `MPT_DUMP_DIR`. It is identified and built through asset-import as `--dump` does, into `MPT_BUILD_CACHE` (default `<MPT_DUMP_DIR>/mpt-build-cache`).
 - `MPT_SOURCE_CACHE` reuses pinned checkouts instead of fetching them.
+- **Dev-environment quirk.** Processes started from the Claude desktop app see a virtualised `%APPDATA%` (under `%LOCALAPPDATA%\Packages\<app>\LocalCache\Roaming`), so caches built there are not the ones the real launcher uses. The first launch outside it rebuilds into the real `%APPDATA%` cache. No code change is needed.
 
 **Memory (ADR 0008 amendment, PRs #44 and #46): 112 MiB of emulated main RAM.**
 - **What the space holds.** Party Board's `TARGET_PC` multiplies the console's game heaps by 4 for 64-bit pointers and the converted HSF structures (`malloc.c`). With HEAP_MUSIC grown by 16 MB (Party Board patch 0018, below), the heaps are 9 + 21 + 42 + 22 MiB. `HuMemInitAll` gives what OSAlloc's arena has left to its last heap. That is about 16 MiB at 112 MiB, and the console's 24 MiB arena left about 4.5 MiB the same way.
