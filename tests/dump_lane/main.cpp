@@ -25,8 +25,10 @@
 #include <filesystem>
 #include <string>
 #include <variant>
+#include <vector>
 
 #include "dump_lane.h"
+#include "png.h"
 #include "mpt/core/title_id.h"
 #include "real_titles.h"
 #if defined(MPT_DUMP_LANE_MP4)
@@ -90,7 +92,50 @@ struct BootOptions {
   std::uint64_t every = 60;
   std::uint64_t seed = 1;
   bool perturb = false;
+  // M2: scripted input on player 1 and frame captures.
+  struct Press {
+    std::uint32_t buttons;
+    std::uint64_t frame;
+    std::uint64_t frames;
+  };
+  std::vector<Press> presses;
+  std::filesystem::path capture_dir;  // empty: no captures
+  std::uint64_t capture_every = 0;    // 0: at every checkpoint
 };
+
+// "start@600", "a@900+10": a button, the first frame it is held, and for how many frames (default 6).
+std::optional<BootOptions::Press> parse_press(const std::string& spec) {
+  static const std::pair<const char*, std::uint32_t> kNames[] = {
+      {"a", mpt::kButtonA},           {"b", mpt::kButtonB},
+      {"x", mpt::kButtonX},           {"y", mpt::kButtonY},
+      {"l", mpt::kButtonL},           {"r", mpt::kButtonR},
+      {"z", mpt::kButtonZ},           {"start", mpt::kButtonStart},
+      {"up", mpt::kButtonDpadUp},     {"down", mpt::kButtonDpadDown},
+      {"left", mpt::kButtonDpadLeft}, {"right", mpt::kButtonDpadRight},
+  };
+  const std::size_t at = spec.find('@');
+  if (at == std::string::npos) return std::nullopt;
+  const std::string name = spec.substr(0, at);
+  BootOptions::Press p{0, 0, 6};
+  for (const auto& [n, bit] : kNames)
+    if (name == n) p.buttons = bit;
+  if (p.buttons == 0) return std::nullopt;
+  const std::size_t plus = spec.find('+', at);
+  p.frame = std::strtoull(spec.substr(at + 1, plus == std::string::npos ? std::string::npos : plus - at - 1).c_str(),
+                          nullptr, 10);
+  if (plus != std::string::npos) p.frames = std::strtoull(spec.substr(plus + 1).c_str(), nullptr, 10);
+  return p;
+}
+
+// Player 1's pad for frame f: connected whenever a script is given, holding every press due then.
+mpt::PadState scripted_pad(const BootOptions& options, std::uint64_t f) {
+  mpt::PadState pad;
+  if (options.presses.empty()) return pad;
+  pad.connected = 1;
+  for (const BootOptions::Press& p : options.presses)
+    if (f >= p.frame && f < p.frame + p.frames) pad.buttons |= p.buttons;
+  return pad;
+}
 
 void print_report(void*, const char* text) { std::fputs(text, stdout); }
 
@@ -167,6 +212,7 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir) {
   std::chrono::steady_clock::duration hash_time{};
   for (std::uint64_t f = 0; f < options.frames; ++f) {
     input.frame = f;
+    input.pads[0] = scripted_pad(options, f);
     runtime->stepFrame(input);
     const mpt::RuntimeHealth health = runtime->status();
     if (health.status != mpt::RuntimeStatus::running) {
@@ -182,6 +228,13 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir) {
       ++hash_calls;
       std::printf("frame %llu hash %016llx video %ux%u\n", static_cast<unsigned long long>(f + 1),
                   static_cast<unsigned long long>(hash), video.width, video.height);
+      const std::uint64_t cap = options.capture_every != 0 ? options.capture_every : options.every;
+      if (!options.capture_dir.empty() && (f + 1) % cap == 0 && video.kind == mpt::FrameOutput::Kind::cpu_rgba8) {
+        char name[32];
+        std::snprintf(name, sizeof name, "frame_%06llu.png", static_cast<unsigned long long>(f + 1));
+        if (!mpt::dump_lane::write_png(options.capture_dir / name, video.width, video.height, video.pixels))
+          std::printf("dump lane: could not write capture %s\n", name);
+      }
 #if defined(MPT_DUMP_LANE_MP4)
       if (options.perturb && mp4 != nullptr) perturb_failures += perturb_checks(*mp4, f + 1);
 #endif
@@ -226,8 +279,20 @@ int main(int argc, char** argv) {
       boot_options.seed = std::strtoull(argv[++i], nullptr, 10);
     } else if (arg == "--perturb") {
       boot_options.perturb = true;
+    } else if (arg == "--press" && has_value) {
+      const std::optional<BootOptions::Press> p = parse_press(argv[++i]);
+      if (!p) {
+        std::printf("dump lane: bad --press '%s' (button@frame[+frames])\n", argv[i]);
+        return 2;
+      }
+      boot_options.presses.push_back(*p);
+    } else if (arg == "--capture" && has_value) {
+      boot_options.capture_dir = argv[++i];
+    } else if (arg == "--capture-every" && has_value) {
+      boot_options.capture_every = std::strtoull(argv[++i], nullptr, 10);
     } else {
-      std::printf("usage: mpt_dump_lane [--boot <title> [--frames N] [--every N] [--seed S] [--perturb]]\n");
+      std::printf("usage: mpt_dump_lane [--boot <title> [--frames N] [--every N] [--seed S] [--perturb]\n"
+                  "                     [--press button@frame[+frames]]... [--capture DIR [--capture-every N]]]\n");
       return 2;
     }
   }
