@@ -789,6 +789,7 @@ The `armem.c` loops would never see their callback under the default mode, so MP
 
 **Dump lane.** `mpt_dump_lane --boot mp4 [--frames N] [--every N] [--seed S] [--perturb]` is the M1 check: it boots headless with no input, prints the state hash every N frames and the game's OSReport text, and fails if the runtime halts or faults. It also prints the mean wall time of a `stateHash()` call. That timing is a harness measurement; nothing in the runtime reads a clock.
 - `--perturb` runs the coverage checks below at every checkpoint, and fails on any miss.
+- `--press button@frame[+frames][,...]` holds buttons on player 1 (connected whenever a script is given; 6 frames by default). `--capture DIR [--capture-every N]` writes checkpoint frames as PNGs. Captures are the user's own game output: they go only to the directory given, never into the repository.
 - The dump comes from `MPT_DUMP_DIR`. It is identified and built through asset-import as `--dump` does, into `MPT_BUILD_CACHE` (default `<MPT_DUMP_DIR>/mpt-build-cache`).
 - `MPT_SOURCE_CACHE` reuses pinned checkouts instead of fetching them.
 
@@ -829,14 +830,28 @@ The `armem.c` loops would never see their callback under the default mode, so MP
 
 **msm diagnostics (Party Board patch 0017, `src/msm_diag.c`).** msm only reports `MSM_ERR_GRP_FAILPUSH`. Group pushes now go through `mpt_msm_push_group`, which reports why MusyX refused a group through OSReport: the validation error, msm's heap headroom, and the macros, curves, keymaps, layers or samples that do not resolve.
 
-**M1 (boots headless), Windows, rerun 2026-11-05** on the libm redirects (qa #40) and the memory hash manifest.
+**M1 (boots headless), Windows, rerun 2026-11-05** on the libm redirects (qa #40), the memory hash manifest and Party Board patch 0019.
 - **Boot.** `mpt_dump_lane --boot mp4` on the user's GMPE01_00 dump runs clean: no halt or fault. msm's one diagnostic line is unchanged since the first boot. With no input the game stays in bootDll, the boot and title sequence.
 - **Build.** The module builds from the dump in about 70 s. Each 10,000-frame run takes about 12 s.
 - **Determinism.** 10,000 frames, checkpoints every 100 frames, in two separate processes:
-  - seed 1: `5fbc2e851244c603` at frame 10,000 in both, identical at all 100 checkpoints;
-  - seed 2: `ffadbdc219b77ecc`, different at all 100.
+  - seed 1: `c8f8da4267f8d431` at frame 10,000 in both, identical at all 100 checkpoints;
+  - seed 2: `a619f53f9b4f56d5`, different at all 100.
 - **Earlier trail.** The first M1 (2026-10-21) used the coarse hash (SDK state and named globals only). Its trail did not move with the libm change, because it did not cover game memory.
 - **Not yet.** Fresh-process save/load (E5) and the Linux runs are still to do.
+
+**M2 (Dawn backend, title screen, menus), Windows, 2026-11-05.**
+- **Backend.** The host build with `MPT_GX_BACKEND=dawn` passes the backend and Dawn prefix to the recipe, and they are part of the cached module's key. The recipe installs the module's runtime DLLs (`webgpu_dawn.dll`) next to it. The GX layer names vcpkg's static zlib (`zs.lib`), since the Clang build has no vcpkg toolchain. Video is 640x480 RGBA through the readback path.
+- **Boot.** The Nintendo and Hudson logos render from frame 60 to about 540.
+- **Title and menus.** A script of `start@900,start@1200,a@1500,a@1800,a@2100,a@2400` reaches, in order:
+  - the title screen (about frame 960);
+  - "Select a File" with the memory card slots;
+  - the three file slots;
+  - the new-file opening on the blank card.
+- **Fixed on the way.**
+  - **Exit crash.** The Dawn lane ended in a fail-fast (0xC0000409), because the module's static teardown ran at process exit after the other threads were gone. The last `Mp4Runtime` now unloads the module (`release_module`) while the process runs.
+  - **Boot audio.** Party Board patch 0019 restores the boot sound group and the title music (TODO PC upstream).
+- **Opening movie: open.** Party Board skips the movie on PC, so with no input bootDll shows a black screen until START or A. Enabling it showed that `THPSimpleOpen` compares the big-endian THP header (`mVersion`, offsets) on a little-endian host, and fails every frame. The movie needs a THPSimple patch that reads the file and frame headers in host byte order; until then it stays off.
+- **Pipeline cache.** aurora reports that its SQLite pipeline cache cannot open its database. Rendering is unaffected; the cache path is still to fix.
 
 **Still open in P1-16:**
 - the GX front-end state and the function-pointer registration table in the hash manifest (E4; memory is done, above);
