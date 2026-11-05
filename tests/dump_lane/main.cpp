@@ -15,6 +15,7 @@
 // hash must cover, flip one byte, require a different stateHash(), flip it back and require the
 // original; for free heap space require the hash to stay the same. Any miss makes the exit 1.
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
@@ -280,19 +281,26 @@ int main(int argc, char** argv) {
     } else if (arg == "--perturb") {
       boot_options.perturb = true;
     } else if (arg == "--press" && has_value) {
-      const std::optional<BootOptions::Press> p = parse_press(argv[++i]);
-      if (!p) {
-        std::printf("dump lane: bad --press '%s' (button@frame[+frames])\n", argv[i]);
-        return 2;
+      // One press or a comma-separated list: start@900,a@1500+10
+      const std::string list = argv[++i];
+      for (std::size_t from = 0; from <= list.size();) {
+        const std::size_t comma = std::min(list.find(',', from), list.size());
+        const std::string spec = list.substr(from, comma - from);
+        const std::optional<BootOptions::Press> p = parse_press(spec);
+        if (!p) {
+          std::printf("dump lane: bad --press '%s' (button@frame[+frames], comma-separated)\n", spec.c_str());
+          return 2;
+        }
+        boot_options.presses.push_back(*p);
+        from = comma + 1;
       }
-      boot_options.presses.push_back(*p);
     } else if (arg == "--capture" && has_value) {
       boot_options.capture_dir = argv[++i];
     } else if (arg == "--capture-every" && has_value) {
       boot_options.capture_every = std::strtoull(argv[++i], nullptr, 10);
     } else {
       std::printf("usage: mpt_dump_lane [--boot <title> [--frames N] [--every N] [--seed S] [--perturb]\n"
-                  "                     [--press button@frame[+frames]]... [--capture DIR [--capture-every N]]]\n");
+                  "                     [--press button@frame[+frames][,...]]... [--capture DIR [--capture-every N]]]\n");
       return 2;
     }
   }
