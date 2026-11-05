@@ -69,7 +69,8 @@ jobs:
       - name: Install build dependencies, Mesa lavapipe and the Vulkan loader
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang lld ninja-build pkg-config autoconf automake libtool python3 \
+          # llvm: unversioned llvm-nm, llvm-objcopy and llvm-ar for the MP4 REL tools and link checks.
+          sudo apt-get install -y clang llvm lld ninja-build pkg-config autoconf automake libtool python3 \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev \
             libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols \
             libegl1-mesa-dev libgl1-mesa-dev libdrm-dev libgbm-dev \
@@ -81,6 +82,7 @@ jobs:
         id: versions
         run: |
           clang --version
+          llvm-nm --version
           echo "clang=$(clang --version | head -1 | tr -c 'A-Za-z0-9.' '_')" >> "$GITHUB_OUTPUT"
           dpkg-query -W -f='mesa-vulkan-drivers ${Version}\nlibvulkan1 ${Version}\n' mesa-vulkan-drivers libvulkan1
           vulkaninfo --summary || true
