@@ -46,8 +46,9 @@ static void measure(const MptCoThread* t) {
   if (permille > s_peak_permille) {
     s_peak_permille = permille;
     {
-      OSReport("libco: process stack high water %u of %u bytes (%u.%u%%)\n", (unsigned)used, (unsigned)t->usable,
-               permille / 10, permille % 10);
+      /* The entry is an address in the module, which sits at a fixed base: it names the process. */
+      OSReport("libco: process stack high water %u of %u bytes (%u.%u%%), entry %p\n", (unsigned)used,
+               (unsigned)t->usable, permille / 10, permille % 10, (void*)t->entry);
     }
   }
 }
@@ -130,5 +131,10 @@ void co_delete(cothread_t thread) {
   }
   check(t, "co_delete");
   measure(t);
-  t->magic = 0; /* the stack itself belongs to the process heap, which process.c frees */
+  /* The stack itself belongs to the process heap, which process.c frees, and the game may hand the
+   * memory out again. Host frames left values on it that differ per process (stack cookies, host
+   * heap pointers), so scrub it before it is free: a later block that is not fully written must not
+   * carry them into the state hash. */
+  memset((unsigned char*)t + MPT_CO_OVERHEAD, MPT_CO_PAINT, (size_t)t->usable);
+  t->magic = 0;
 }
