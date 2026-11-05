@@ -238,7 +238,8 @@ typedef enum MptMp4PerturbTarget {
   MPT_MP4_PERTURB_HEAP_BLOCK = 2, /* data of the first allocated HuMem block of 64+ bytes */
   MPT_MP4_PERTURB_ARAM = 3,       /* ARAM in use (middle byte) */
   MPT_MP4_PERTURB_GLOBAL = 4,     /* GWSystem, a global the manifest hashes by name */
-  MPT_MP4_PERTURB_FREE_HEAP = 5   /* data of the first free HuMem block of 64+ bytes: must NOT count */
+  MPT_MP4_PERTURB_FREE_HEAP = 5,  /* data of the first free HuMem block of 64+ bytes: must NOT count */
+  MPT_MP4_PERTURB_STACK = 6       /* inside a process coroutine stack: must NOT count */
 } MptMp4PerturbTarget;
 
 /* v1.0 sizes (x86-64). A caller's struct_size must be at least these. */

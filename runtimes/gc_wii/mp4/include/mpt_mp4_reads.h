@@ -22,6 +22,9 @@ int mpt_mp4_hash_humem_heap(const void* base, MptMp4HashFn fields, MptMp4HashFn 
 /* For the perturbation test (mpt_mp4_debug_perturb): the data of the first allocated or the first
  * free HuMem block (heaps in HeapID order) with at least `min_size` data bytes, or NULL. */
 void* mpt_mp4_humem_find_block(int allocated, size_t min_size);
+/* For the perturbation test: a byte inside the first coroutine stack, whose contents the hash
+ * leaves out (mpt_co_stack_record), or NULL. */
+void* mpt_mp4_humem_find_stack(void);
 /* For the perturbation test: GWSystem, a registered global the manifest hashes by name. */
 void* mpt_mp4_registered_global(size_t* size);
 

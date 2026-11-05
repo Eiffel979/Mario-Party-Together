@@ -421,6 +421,8 @@ std::byte* perturbByte(MptMp4Game& game, std::uint32_t target) {
       void* data = mpt_mp4_humem_find_block(target == MPT_MP4_PERTURB_HEAP_BLOCK, 64);
       return data != nullptr ? static_cast<std::byte*>(data) + 32 : nullptr;
     }
+    case MPT_MP4_PERTURB_STACK:
+      return static_cast<std::byte*>(mpt_mp4_humem_find_stack());
     case MPT_MP4_PERTURB_ARAM:
       return middle(game.sdk->aramInUse());
     case MPT_MP4_PERTURB_GLOBAL: {

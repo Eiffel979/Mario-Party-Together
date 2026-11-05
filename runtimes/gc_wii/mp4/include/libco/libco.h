@@ -26,6 +26,12 @@ cothread_t mpt_co_create_on(void* stack, size_t stack_size, void (*entry)(void))
 void co_switch(cothread_t thread);
 void co_delete(cothread_t thread);
 
+/* For the state hash (P1-16): if [p, p + size) holds a live coroutine made by mpt_co_create_on,
+ * writes its position-independent record (entry, usable bytes, saved stack pointer as an offset
+ * from p; 0 while running) and returns 1; otherwise returns 0. The stack's contents are never
+ * hashed: host frames on it carry per-process values (stack cookies, host heap pointers). */
+int mpt_co_stack_record(const void* p, size_t size, unsigned long long out[3]);
+
 #ifdef __cplusplus
 }
 #endif

@@ -75,6 +75,18 @@ static void trampoline(void* arg) {
 
 cothread_t co_active(void) { return s_current; }
 
+int mpt_co_stack_record(const void* p, size_t size, unsigned long long out[3]) {
+  const MptCoThread* t = (const MptCoThread*)p;
+  if (p == 0 || size < MPT_CO_OVERHEAD || ((uintptr_t)p & 15) != 0 || t->magic != MPT_CO_MAGIC || t->entry == 0 ||
+      t->usable > size - MPT_CO_OVERHEAD) {
+    return 0;
+  }
+  out[0] = (unsigned long long)(uintptr_t)t->entry; /* the module sits at a fixed base */
+  out[1] = (unsigned long long)t->usable;
+  out[2] = t->sp ? (unsigned long long)((const unsigned char*)t->sp - (const unsigned char*)p) : 0;
+  return 1;
+}
+
 cothread_t mpt_co_create_on(void* stack, size_t stack_size, void (*entry)(void)) {
   if (stack == 0 || stack_size < MPT_CO_OVERHEAD + 2048 || ((uintptr_t)stack & 15) != 0) {
     OSPanic(__FILE__, __LINE__, "mpt_co_create_on: stack missing, misaligned or too small");

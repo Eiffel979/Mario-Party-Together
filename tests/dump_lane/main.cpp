@@ -105,7 +105,7 @@ int perturb_checks(mpt::mp4::Mp4Runtime& mp4, std::uint64_t frame) {
   static constexpr Target kTargets[] = {
       {MPT_MP4_PERTURB_GAME_DATA, "game data", true},   {MPT_MP4_PERTURB_HEAP_BLOCK, "heap block", true},
       {MPT_MP4_PERTURB_ARAM, "aram in use", true},      {MPT_MP4_PERTURB_GLOBAL, "registered global", true},
-      {MPT_MP4_PERTURB_FREE_HEAP, "free heap", false},
+      {MPT_MP4_PERTURB_FREE_HEAP, "free heap", false},  {MPT_MP4_PERTURB_STACK, "process stack", false},
   };
   int failed = 0;
   const std::uint64_t original = mp4.stateHash();
