@@ -20,9 +20,10 @@ struct Loaded {
   std::filesystem::path path;
   void* handle = nullptr;
   const MptMp4Api* api = nullptr;
+  int holds = 0;
 };
 
-Loaded g_loaded;  // one module per process, for the rest of the process
+Loaded g_loaded;  // one module per process at a time
 
 std::string hex(std::uintptr_t v) {
   char buf[32];
@@ -36,7 +37,10 @@ const MptMp4Api* load_module(const std::filesystem::path& path, std::uintptr_t e
   std::error_code ec;
   const std::filesystem::path canonical = std::filesystem::weakly_canonical(path, ec);
   if (g_loaded.api != nullptr) {
-    if (canonical == g_loaded.path) return g_loaded.api;
+    if (canonical == g_loaded.path) {
+      ++g_loaded.holds;
+      return g_loaded.api;
+    }
     error = "another MP4 game module is already loaded in this process (" + g_loaded.path.string() + ")";
     return nullptr;
   }
@@ -86,8 +90,18 @@ const MptMp4Api* load_module(const std::filesystem::path& path, std::uintptr_t e
     error = "the game module does not implement ABI version " + std::to_string(MPT_MP4_ABI_VERSION) + ".1";
     return nullptr;
   }
-  g_loaded = {canonical, handle, api};
+  g_loaded = {canonical, handle, api, 1};
   return api;
+}
+
+void release_module() {
+  if (g_loaded.api == nullptr || --g_loaded.holds > 0) return;
+#if defined(_WIN32)
+  FreeLibrary(static_cast<HMODULE>(g_loaded.handle));
+#else
+  dlclose(g_loaded.handle);
+#endif
+  g_loaded = {};
 }
 
 }  // namespace mpt::mp4

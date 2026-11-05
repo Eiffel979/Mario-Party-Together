@@ -53,13 +53,18 @@ Mp4Runtime::Mp4Runtime() = default;
 
 Mp4Runtime::~Mp4Runtime() {
   if (api_ != nullptr && game_ != nullptr) api_->destroy(game_);
+  if (holds_module_) release_module();  // the last runtime unloads the module (module_loader.h)
 }
 
 Result Mp4Runtime::boot(const VerifiedDump& dump, const RuntimeConfig& config) {
   if (dump.title != TitleId::mp4) return Result::failure("Mp4Runtime: the dump is not Mario Party 4");
   std::string error;
-  api_ = load_module(dump.build_dir / "module" / kModuleFile, static_cast<std::uintptr_t>(MPT_MP4_MODULE_BASE), error);
-  if (api_ == nullptr) return Result::failure("Mp4Runtime: " + error);
+  const MptMp4Api* api =
+      load_module(dump.build_dir / "module" / kModuleFile, static_cast<std::uintptr_t>(MPT_MP4_MODULE_BASE), error);
+  if (api == nullptr) return Result::failure("Mp4Runtime: " + error);
+  if (holds_module_) release_module();  // a second boot: keep one hold per runtime
+  holds_module_ = true;
+  api_ = api;
   if (game_ != nullptr) {
     api_->destroy(game_);
     game_ = nullptr;

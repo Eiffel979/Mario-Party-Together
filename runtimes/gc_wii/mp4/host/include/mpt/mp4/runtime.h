@@ -56,6 +56,7 @@ class Mp4Runtime final : public ITitleRuntime {
   void updateHealth(MptMp4StepResult result);
 
   const MptMp4Api* api_ = nullptr;
+  bool holds_module_ = false;  // one hold on the loaded module (module_loader.h)
   MptMp4Game* game_ = nullptr;
   RuntimeHealth health_{};
   void (*report_)(void*, const char*) = nullptr;
