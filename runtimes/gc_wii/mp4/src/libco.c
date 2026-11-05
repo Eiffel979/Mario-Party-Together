@@ -28,11 +28,14 @@ static MptCoThread s_caller = {0, 0, MPT_CO_MAGIC, 0};
 static MptCoThread* s_current = &s_caller;
 
 /* Stack high-water measurement (P1-16): each process stack is painted at creation, and the
- * untouched paint is measured when the process ends. The largest share used so far is reported
+ * untouched paint is measured when the process ends and, sampled, when it yields (co_switch).
+ * The largest share used so far is reported
  * through OSReport whenever it grows, with the stack's size, so the dump lane shows how
  * close interrupt work on these stacks (MusyX rendering, ADR 0008 section 1) comes to the canary. */
 #define MPT_CO_PAINT 0xA5u
+#define MPT_CO_SAMPLE_EVERY 256u /* power of two */
 static uint32_t s_peak_permille;
+static uint32_t s_switches;
 
 static void measure(const MptCoThread* t) {
   const unsigned char* lo = (const unsigned char*)t + MPT_CO_OVERHEAD;
@@ -96,6 +99,14 @@ void co_switch(cothread_t thread) {
   MptCoThread* from = s_current;
   check(to, "co_switch");
   check(from, "co_switch (the running coroutine)");
+  /* Long-lived processes (the main loop, the title screen) are never deleted, so also sample the
+   * stack a process leaves behind: one switch in MPT_CO_SAMPLE_EVERY, which keeps the paint scan off
+   * the per-frame path. The scan only reads the stack. The counter and the peak sit in the game data
+   * range like every static here, so they are saved and hashed; both follow from the switch order
+   * alone, which is deterministic. */
+  if (from != &s_caller && (++s_switches & (MPT_CO_SAMPLE_EVERY - 1u)) == 0) {
+    measure(from);
+  }
   s_current = to;
   mpt_gc_coro_switch(&from->sp, to->sp);
 }
