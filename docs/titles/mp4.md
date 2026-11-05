@@ -741,7 +741,7 @@ So a minigame is covered on both devices unless it needs something a key cannot 
 
 ---
 
-## 19. The host runtime (P1-16, `runtimes/gc_wii/mp4/host/`, `adapters/mp4/`)
+## 20. The host runtime (P1-16, `runtimes/gc_wii/mp4/host/`, `adapters/mp4/`)
 
 **Mp4Runtime** is host side, built with the tree's compiler, and drives the module only through `game_abi.h`.
 - `boot()` loads `<build_dir>/module/mp4_game.dll` (`.so`) and creates the game on `<build_dir>/disc`. It uses the fixed arena base and the Phase 1 gameplay flags (none).
