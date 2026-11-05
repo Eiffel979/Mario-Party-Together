@@ -79,7 +79,8 @@ jobs:
         run: |
           sudo apt-get update
           # clang: runtimes/gc_wii is built with Clang on every platform (ADR 0008 rule 4).
-          sudo apt-get install -y clang ninja-build pkg-config autoconf automake libtool \
+          # llvm: unversioned llvm-nm, llvm-objcopy and llvm-ar for the MP4 REL tools and link checks.
+          sudo apt-get install -y clang llvm ninja-build pkg-config autoconf automake libtool \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev \
             libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols \
             libegl1-mesa-dev libgl1-mesa-dev libdrm-dev libgbm-dev \
@@ -100,6 +101,7 @@ jobs:
           else
             clang --version
             clang++ --version
+            llvm-nm --version
           fi
 
       - name: Restore vcpkg binary cache
