@@ -96,6 +96,8 @@ class ITitleRuntime {
   virtual AudioChunk audio() = 0;
 
   // SaveState::data must load in the same runtime build on any supported platform.
+  // (Decomp ports have a time-boxed exception until Phase 2 entry: same build and same
+  // platform only, ADR 0008 section 10. stateHash() itself stays cross-platform, ADR 0008.)
   // After loadState(s) succeeds, stateHash() equals the producer's hash at s.frame and
   // the next stepFrame() takes inputs.frame == s.frame (ADR 0002 rules 3 and 5).
   virtual SaveState saveState() = 0;

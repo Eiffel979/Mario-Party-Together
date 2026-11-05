@@ -260,3 +260,64 @@ Integrating MusyX's PC renderer (P1-13b, ADR 0009 musyx pin) moves sample memory
   - 112 MiB is a build constant set by the module, part of `build_id` and recorded in the save-state layout header;
   - M1's trails (10,000 frames, seed 1 and 2, separate processes) were recorded at this size;
   - the P1-16 peak-use measurement must cover the full-party replay with music playing.
+
+## Amendment after P1-16 hash coverage: one cross-platform state hash (architect, 2026-11-05)
+### Context
+P1-16 (`p1-16-mp4-runtime`, `docs/titles/mp4.md` §20) made MP4's `stateHash` cover game memory:
+- the game core and REL data ranges;
+- allocated `OSAlloc` and `HuMem` blocks;
+- the ARAM in use;
+- stack records;
+- the SDK and manifest fields.
+
+E4 perturbation passes 60 of 60, and M1 holds on Windows. Hashing raw memory also found real bugs. For example, Party Board's file-scope `std::unordered_set` sat in the game data range and held host-heap pointers.
+
+A raw-memory hash is only valid for **one build on one platform**:
+- **Layout.** A Windows DLL and a Linux `.so` order and pad their data sections differently, even at the same fixed base. So the data ranges are different byte sequences, and pointers the game stores into the module differ.
+- **Floats.** NaN payloads in memory are not canonicalized (amendment after P1-14), because raw words have no types.
+- **Padding.** Struct copies from stack temporaries can carry garbage padding that depends on code generation.
+
+That conflicts with the user's decision D5 and exit criterion E3c: identical Windows and Linux trails at Phase 1 exit. §8 already says the hash is "a reviewed, typed list... by value, never as raw struct bytes", and §9 already keeps raw memory as a debug-only "deep hash". The P1-16 hash is a deviation from §8, not a new option.
+
+### Decision: (a), as §8 already says, with the raw hash kept as the deep hash
+1. **`stateHash()` is cross-platform.** It is the hash that trails, replays, the conformance suite, E3 and netplay use. It is computed from the **hash manifest** (§8):
+   - typed game state hashed by value;
+   - data pointers as `(region, offset)`, where the regions are the arena, the module's data symbols and the module's code;
+   - function pointers as stable IDs from the registration table;
+   - floats through `update_f32`/`update_f64`.
+
+   To keep the manifest tractable for a whole game, it may be built in two layers:
+   - **Globals by symbol.** A build step writes the module's game data symbols (name, size, type class) from the game sources' object files, the same set on both OSes. The hash visits them in name order, so section layout does not matter. Symbols from the host C++ runtime, the CRT and other non-game translation units are excluded. **Game data ranges must hold game state only** (the `unordered_set` lesson): a host object found there is moved out of the game data range, or is a P1-16 fault in debug builds.
+   - **Heap blocks by allocation.** `OSAlloc` and `HuMem` blocks are visited in allocation order. Each block is hashed by its type, from the allocation site's registered type, where the manifest knows it. Otherwise it is hashed as words with three canonicalizations:
+     - a 64-bit aligned word inside the arena becomes its arena offset;
+     - a word inside the module becomes its symbol ID and offset;
+     - an aligned word with an f32 or f64 NaN bit pattern becomes the canonical NaN.
+
+     Canonicalization can only merge values, never split them. The cost is that an integer that happens to look like a NaN or a module pointer hides a difference.
+   - **Choosing the image base.** The module base (`0x500000000000`) puts pointers in a range that a pair of game `s32` fields almost never forms. That keeps false-positive pointer matches rare, and E3c is the test that shows it.
+   - **Fixing failures.** Any area where Windows and Linux still differ after this (garbage padding, MS versus Itanium bitfield layout, `wchar_t`) gets a typed manifest entry. A byte-wise exception is never acceptable.
+2. **The raw-memory hash becomes the deep hash (§9).**
+   - It stays exactly as P1-16 built it, valid for the same build on the same platform.
+   - It is exposed as a debug entry of the module ABI, not as `state_hash`.
+   - It is also the **coverage oracle for E4**: on every perturbation, if the deep hash changes but `state_hash` does not, the manifest misses an area, and the test fails. That keeps the bug-finding value of P1-16's work.
+3. **Staging:**
+   - While the cross-platform manifest is incomplete, `Mp4Runtime` may use the canonicalized memory hash, or temporarily the raw one, for same-platform work: E3a and E3b, E4, E5 and M1.
+   - **No MP4 golden trail is committed** until `state_hash` gives identical trails on Windows and Linux for the full-party replay (E3c). A `.trail.txt` is a cross-platform golden by definition (ADR 0006).
+   - The first P1-16 step after this ADR is to run the same replay on Linux and diff the trails. The first differing checkpoint, with the deep-hash region diff, says which areas need typed entries.
+4. **Option (b), same-platform trails, is not mine to take.** D5 is the user's decision. If E3c cannot be met by milestone **M4**, architect escalates to the user with the measured differences, to amend D5 and E3 or to extend the schedule. Until then E3 stays as written.
+5. **Option (c), identical module layout on both platforms, is rejected as infeasible and insufficient.**
+   - lld-link has no linker scripts, and `/ORDER` arranges functions, not data.
+   - COFF and ELF differ in relocation, TLS, import and CRT-initializer layout, and in which C++ runtime statics land inside the module.
+   - Even an identical layout would leave the NaN and padding problems.
+6. **Save states are unaffected.** `SaveState` keeps the raw arena and registered globals (§10). They load bit for bit on the same build and platform, and `SaveState::format_version` stays the module's `state_format()`. §10's exception (same build, same platform, until Phase 2 entry) still covers the conflict with ADR 0002 rule 5. `title_runtime.h`'s comment now points to it.
+7. **Cost.** 3.5–3.8 ms per `stateHash()` is acceptable for Phase 1: it runs at checkpoints, every 60 frames, which is about 0.4% of run time, although a checkpoint frame itself spends about a fifth of its 16.7 ms budget on it. Netplay's hash cadence is the Phase 2 netplay ADR's to set. The canonicalized walk should not cost much more than the raw one; P1-16 measures it.
+8. **Conformance and E3.**
+   - The conformance suite is unchanged: same-process and cross-process equality, and `loadState` restoring the hash.
+   - E3's definition is unchanged: E3c compares each OS against the committed trail.
+   - qa-reviewer adds an E4 self-test that a perturbation the deep hash sees but `state_hash` misses fails.
+
+### ABI v1.2 `debug_perturb`: accepted, with a guard
+Appending a test-only entry to the function table is the right way to add a debug hook under the one-export rule. The loader requiring only v1.1 is correct: debug entries are never required. Conditions:
+- `debug_perturb` works only on a game created with a new boot flag, `MPT_MP4_BOOT_DEBUG_HOOKS`. Without it, it returns `MPT_MP4_ERR_ARGUMENT` and changes nothing, so a normal session (live, replay or netplay) can never be perturbed by accident.
+- The flag is a debug flag: like `DEBUG_COPY_TRAP`, it is not hashed.
+- The deep-hash entry from point 2 goes in the same minor version or the next, under the same flag.
