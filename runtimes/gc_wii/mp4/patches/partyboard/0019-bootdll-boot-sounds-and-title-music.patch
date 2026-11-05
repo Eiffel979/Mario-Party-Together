@@ -1,0 +1,54 @@
+Apply order 0019 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+bootDll: the boot sound group and the title music on MPT_PC
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+Party Board leaves these blocks to __MWERKS__ ("TODO PC"), so the boot sound effects (msm group 0)
+and the title music (stream 20) were missing. We build msm, so the console code runs as written;
+msmSysLoadGroup takes two arguments, as in patch 0007. The opening movie block stays as Party Board
+has it until THPSimple reads the big-endian THP headers (see docs/titles/mp4.md, M2).
+
+diff --git a/src/REL/bootDll/main.c b/src/REL/bootDll/main.c
+index 9714733..88b69b7 100644
+--- a/src/REL/bootDll/main.c
++++ b/src/REL/bootDll/main.c
+@@ -8,6 +8,9 @@
+ #include "game/minigame_seq.h"
+ #include "game/memory.h"
+ #include "game/msm.h"
++#ifdef MPT_PC
++#include "msm/msmsys.h" /* msmSysLoadGroup: declared only here */
++#endif
+ #include "game/object.h"
+ #include "game/pad.h"
+ #include "game/process.h"
+@@ -270,15 +273,19 @@ void ObjectSetup(void)
+              HuPrcVSleep();
+          }
+          if (!SystemInitF) {
+-#ifdef __MWERKS__
++#if defined(__MWERKS__) || defined(MPT_PC)
+              // TODO PC
+              void *group_samp;
+ #endif
+              tick_prev = OSGetTick();
+-#ifdef __MWERKS__
++#if defined(__MWERKS__) || defined(MPT_PC)
+              // TODO PC
+              group_samp = HuMemDirectMalloc(HEAP_DATA, msmSysGetSampSize(0));
++#ifdef MPT_PC
++             msmSysLoadGroup(0, group_samp); /* msm takes two arguments; the third was ignored on the console */
++#else
+              msmSysLoadGroup(0, group_samp, 0);
++#endif
+              HuMemDirectFree(group_samp);
+ #endif
+              while (OSTicksToMilliseconds(OSGetTick() - tick_prev) < 3000) {
+@@ -746,7 +753,7 @@ void ObjectSetup(void)
+      Hu3DModelAttrReset(titleMdlId[1], HU3D_ATTR_DISPOFF);
+      HuSprAttrReset(bootGrpId, 0, HUSPR_ATTR_DISPOFF);
+      HuSprAttrReset(bootGrpId, 1, HUSPR_ATTR_DISPOFF);
+-#ifdef __MWERKS__
++#if defined(__MWERKS__) || defined(MPT_PC)
+      // TODO PC
+      OSReport(">>>>>>>>MSM_SE_SEL_01 %d\n", msmSeGetEntryID(2092, seNo));
+      OSReport(">>>>>>>>SE Num %d\n", msmSeGetNumPlay(0));
