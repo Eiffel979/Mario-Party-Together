@@ -44,9 +44,14 @@ class Mp4Runtime final : public ITitleRuntime {
   // Raw party reads for Mp4Adapter (MptMp4Party). False before boot.
   bool readParty(MptMp4Party& out) const;
 
+  // Test only: boot the next game with MPT_MP4_BOOT_DEBUG_HOOKS, which debugPerturb needs (PR #48).
+  // Not a determinism input and never in a save state. Call before boot().
+  void setDebugHooks(bool on) { debug_hooks_ = on; }
+
   // Test only (E4 hash coverage, ABI v1.2 debug_perturb): flips one byte of a memory class
   // (MptMp4PerturbTarget); the same call again restores it. Between frames only. False if the
-  // module is older than v1.2 or the class has no byte right now.
+  // module is older than v1.2, the game was booted without debug hooks, or the class has no byte
+  // right now.
   bool debugPerturb(std::uint32_t target);
 
   // The OSReport text sink (presentation only). Called from inside stepFrame.
@@ -56,7 +61,8 @@ class Mp4Runtime final : public ITitleRuntime {
   void updateHealth(MptMp4StepResult result);
 
   const MptMp4Api* api_ = nullptr;
-  bool holds_module_ = false;  // one hold on the loaded module (module_loader.h)
+  bool holds_module_ = false;
+  bool debug_hooks_ = false;  // setDebugHooks  // one hold on the loaded module (module_loader.h)
   MptMp4Game* game_ = nullptr;
   RuntimeHealth health_{};
   void (*report_)(void*, const char*) = nullptr;

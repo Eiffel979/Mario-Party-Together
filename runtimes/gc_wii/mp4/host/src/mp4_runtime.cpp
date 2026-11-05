@@ -76,7 +76,7 @@ Result Mp4Runtime::boot(const VerifiedDump& dump, const RuntimeConfig& config) {
   boot.abi_version = MPT_MP4_ABI_VERSION;
   boot.seed = config.seed;
   boot.disc_root = disc.c_str();
-  boot.flags = kGameplayFlags;
+  boot.flags = kGameplayFlags | (debug_hooks_ ? MPT_MP4_BOOT_DEBUG_HOOKS : 0u);
   boot.internal_scale = config.internal_scale == 0 ? 1 : config.internal_scale;
   boot.audio_output = 1;
   if (config.save_media) {
@@ -211,7 +211,7 @@ SaveMedia Mp4Runtime::saveMedia() const {
 
 bool Mp4Runtime::debugPerturb(std::uint32_t target) {
   if (game_ == nullptr || api_->struct_size < MPT_MP4_API_SIZE_V1_2 || api_->debug_perturb == nullptr) return false;
-  return api_->debug_perturb(game_, target) == 1;
+  return api_->debug_perturb(game_, target) == MPT_MP4_OK;
 }
 
 bool Mp4Runtime::readParty(MptMp4Party& out) const {

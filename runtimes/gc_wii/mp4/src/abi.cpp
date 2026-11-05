@@ -57,6 +57,7 @@ struct MptMp4Game {
   bool audio_output = true;
   std::uintptr_t arena_base = 0;
   bool copy_trap = false;
+  bool debug_hooks = false;  // MPT_MP4_BOOT_DEBUG_HOOKS: test-only entries allowed (PR #48)
 
   std::unique_ptr<mpt::gc::DirectoryFileSource> files;
   std::vector<unsigned char> dol;  // the user's main.dol; the game gets copies of its blobs
@@ -251,6 +252,7 @@ MptMp4Status create(const MptMp4BootConfig* in, MptMp4Game** out, MptMp4Error* e
     std::memcpy(media.data.data(), config.save_media, config.save_media_size);
     card = std::move(media);
   }
+  game->debug_hooks = (config.flags & MPT_MP4_BOOT_DEBUG_HOOKS) != 0;
   if ((config.flags & MPT_MP4_BOOT_DEBUG_COPY_TRAP) != 0) {
     mpt::mp4::copy_trap_enable();
     game->copy_trap = true;
@@ -435,11 +437,13 @@ std::byte* perturbByte(MptMp4Game& game, std::uint32_t target) {
 }
 
 std::int32_t debugPerturb(MptMp4Game* game, std::uint32_t target) {
-  if (game == nullptr || game->sdk == nullptr) return 0;
+  if (game == nullptr || game != g_game || !game->debug_hooks || game->sdk == nullptr ||
+      target < MPT_MP4_PERTURB_GAME_DATA || target > MPT_MP4_PERTURB_STACK)
+    return MPT_MP4_ERR_ARGUMENT;
   std::byte* b = perturbByte(*game, target);
-  if (b == nullptr) return 0;
+  if (b == nullptr) return MPT_MP4_ERR_STATE;
   *b ^= std::byte{0xFF};
-  return 1;
+  return MPT_MP4_OK;
 }
 
 void putU32(std::vector<std::byte>& v, std::uint32_t x) {

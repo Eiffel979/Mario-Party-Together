@@ -196,6 +196,7 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir) {
 #if defined(MPT_DUMP_LANE_MP4)
   auto* mp4 = dynamic_cast<mpt::mp4::Mp4Runtime*>(runtime.get());
   if (mp4 != nullptr) mp4->setReportSink(&print_report, nullptr);
+  if (mp4 != nullptr) mp4->setDebugHooks(options.perturb);  // debug_perturb needs MPT_MP4_BOOT_DEBUG_HOOKS
 #endif
   mpt::RuntimeConfig config;
   config.seed = options.seed;
@@ -238,12 +239,22 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir) {
       }
 #if defined(MPT_DUMP_LANE_MP4)
       if (options.perturb && mp4 != nullptr) perturb_failures += perturb_checks(*mp4, f + 1);
+      // Without debug hooks the module must refuse to perturb and change nothing (PR #48).
+      if (!options.perturb && mp4 != nullptr && hash_calls == 1) {
+        const bool refused = !mp4->debugPerturb(MPT_MP4_PERTURB_GAME_DATA) && mp4->stateHash() == hash;
+        std::printf("dump lane: debug hooks off, perturb %s\n", refused ? "refused" : "NOT refused");
+        if (!refused) ++perturb_failures;
+      }
 #endif
     }
   }
   if (hash_calls != 0) {
     const double us = std::chrono::duration<double, std::micro>(hash_time).count() / static_cast<double>(hash_calls);
     std::printf("dump lane: stateHash %.0f us per call (mean of %llu)\n", us, static_cast<unsigned long long>(hash_calls));
+  }
+  if (!options.perturb && perturb_failures != 0) {
+    std::puts("dump lane: the module perturbed a game booted without debug hooks");
+    return 1;
   }
   if (options.perturb) {
 #if defined(MPT_DUMP_LANE_MP4)

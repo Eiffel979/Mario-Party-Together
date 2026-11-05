@@ -89,6 +89,9 @@ typedef enum MptMp4VideoBackend {
 /* Debug flags: never part of the state hash. Trap CPU reads of GXCopyTex destinations (ADR 0007
  * section 5); a read faults the step. */
 #define MPT_MP4_BOOT_DEBUG_COPY_TRAP 0x100u
+/* Debug hooks (ADR 0008 amendment, PR #48): the test-only entries (debug_perturb) act only on a game
+ * created with this flag. Never part of the state hash or a save state. */
+#define MPT_MP4_BOOT_DEBUG_HOOKS 0x200u
 
 /* video_backend, internal_scale, audio_output, cache_dir and arena_base are presentation or placement
  * settings and never change the state hash. Strings are copied during create. */
@@ -227,9 +230,11 @@ typedef struct MptMp4Api {
 
   /* v1.2, test only (E4 hash coverage): flips one byte (XOR 0xFF) of the memory class `target`
    * (MptMp4PerturbTarget) so a test can check what state_hash covers; the same call again restores
-   * it, as long as no frame ran in between. Between steps only. Returns 1 if it flipped a byte, 0 if
-   * the class has none right now (for example no ARAM in use yet). Never for gameplay. NULL before
-   * v1.2. */
+   * it, as long as no frame ran in between. Between steps only. Acts only on a game created with
+   * MPT_MP4_BOOT_DEBUG_HOOKS (PR #48). Returns an MptMp4Status: MPT_MP4_OK when it flipped a byte,
+   * MPT_MP4_ERR_STATE when the class has none right now (for example no ARAM in use yet), and
+   * MPT_MP4_ERR_ARGUMENT, changing nothing, for a game without the flag, a null game or an unknown
+   * target. Never for gameplay. NULL before v1.2. */
   int32_t (*debug_perturb)(MptMp4Game* game, uint32_t target);
 } MptMp4Api;
 
