@@ -746,6 +746,9 @@ So a minigame is covered on both devices unless it needs something a key cannot 
 **Mp4Runtime** is host side, built with the tree's compiler, and drives the module only through `game_abi.h`.
 - `boot()` loads `<build_dir>/module/mp4_game.dll` (`.so`) and creates the game on `<build_dir>/disc`. It uses the fixed arena base and the Phase 1 gameplay flags (none).
 - `status()` (ADR 0011) is the module's step result and fault text, which the module keeps in its save state.
+- **ABI minor versions** (append-only, `game_abi.h`):
+  - v1.1 appends `status`. The loader requires it (`mpt_mp4_api_has_v1_1`), and `mp4_game_abi` checks that a 160-byte v1.0 table is rejected.
+  - v1.2 appends `debug_perturb`, a test-only hook for the hash coverage proof. `Mp4Runtime::debugPerturb` uses it only when the table is at least 176 bytes.
 - `SaveState::format_version` is the module's `state_format()`.
 - If the module was built with the null GX backend, `boot()` falls back to null video.
 
@@ -777,9 +780,15 @@ The `armem.c` loops would never see their callback under the default mode, so MP
 - The stream callbacks' nested read (`msmStreamDvdCallback` case 4) touches nothing that `msmStreamDvdCallback2` reads.
 - Stereo streams complete left then right, as on the console.
 
-**Process stack high water.** `src/libco.c` paints each process stack at creation and measures it when the process ends. OSReport prints the largest share used so far once it passes 50%. Long-lived processes that never end are not measured.
+**Process stacks.**
+- **Size** (Party Board patch 0002). Twice the console's size for 64-bit frames, plus a fixed 16 KiB for the host code under game calls (GX on aurora, the C runtime). That host depth does not scale with the console's stack. The patch hash is in the build ID, so the changed heap layout gets a new one.
+- **High water.** `src/libco.c` paints each stack at creation. It measures the stack when the process ends, and also samples it when the process yields (1 switch in 256), which covers long-lived processes. OSReport prints each new peak with the process's entry address, which is stable because the module sits at a fixed base.
+- **What drove the peak.** Before the headroom, `HuWinProc` (window.c; 0x1000 on the console, 8 KiB here) peaked at 7816 of 7904 bytes (98.8%). Moving interrupts off the stack (below) did not change that, so the depth comes from its own calls into GX and the CRT. With the headroom it peaks at 7720 of 24,288 bytes (31.7%). The largest other peak in the boot window is 15.4% of a 48 KiB stack.
+- **Interrupts.** Due interrupts at an SDK call boundary used to run on whatever stack was current, which could be a game process's coroutine stack. They now run on the SDK's interrupt coroutine and switch straight back (`runDueOffStack`). The same events run in the same order, and a handler still sees the interrupted thread as current. A synthetic SDK test checks both.
+- **Deleted stacks are scrubbed.** `co_delete` repaints a stack before process.c frees it. Host frames leave per-process values on a stack (stack cookies, host heap pointers), and the game may hand the memory out again.
 
-**Dump lane.** `mpt_dump_lane --boot mp4 [--frames N] [--every N] [--seed S]` is the M1 check: it boots headless with no input, prints the state hash every N frames and the game's OSReport text, and fails if the runtime halts or faults.
+**Dump lane.** `mpt_dump_lane --boot mp4 [--frames N] [--every N] [--seed S] [--perturb]` is the M1 check: it boots headless with no input, prints the state hash every N frames and the game's OSReport text, and fails if the runtime halts or faults. It also prints the mean wall time of a `stateHash()` call. That timing is a harness measurement; nothing in the runtime reads a clock.
+- `--perturb` runs the coverage checks below at every checkpoint, and fails on any miss.
 - The dump comes from `MPT_DUMP_DIR`. It is identified and built through asset-import as `--dump` does, into `MPT_BUILD_CACHE` (default `<MPT_DUMP_DIR>/mpt-build-cache`).
 - `MPT_SOURCE_CACHE` reuses pinned checkouts instead of fetching them.
 
@@ -801,18 +810,36 @@ The `armem.c` loops would never see their callback under the default mode, so MP
 - **Build.** The patch hashes are in the module's build ID. Configure fails if a patch does not apply, as it does for aurora's and Party Board's.
 - **Upstream.** To be offered to AxioDL/musyx.
 
+**State hash manifest (E4).** `state_hash` covers, in this order:
+- **Manifest fields.** The gameplay flags, the frame and generation bases, resets and status.
+- **SDK state by value.** Scheduler, events, queues, alarms, mutexes, the heap lists and the attached sound engine.
+- **Named game globals.** GWPlayerCfg, GWPlayer, GWSystem, GWGameStat, the RNG seed and the current overlay.
+- **Game memory** (`hashMemory` in `src/abi.cpp`):
+  - The game core's data range and every REL's, which is what the save state carries.
+  - Main RAM through `Sdk::forEachHashedRamRange`: each allocated OSAlloc block, plus RAM outside the OS heaps. A block that holds one of the HuMem heaps is walked instead. Only its allocated HuMem blocks count, with their headers hashed as offsets and the debug `retaddr` left out. Each process's own HuMem heap is walked the same way. A coroutine stack counts only by its record: entry, size, and the saved stack pointer as an offset.
+  - ARAM below the ARAlloc top.
+- **Left out.** Free OSAlloc and HuMem space, and coroutine stack contents. The SDK's own thread stacks are not hashed either.
+- **Digest.** Raw memory goes through `mpt::gc::memoryDigest` (`sdk/include/mpt/gc/digest.h`), a 64-bit word-wise digest modelled on XXH64, with goldens. Each range's size and digest go into the `StateHasher`.
+- **Cost.** About 3.5 to 3.8 ms per `stateHash()` call on the title screen (Windows, Release; the mean of 100 calls).
+- **Coverage proof** (`--perturb`, ABI v1.2 `debug_perturb`, test only). Flipping one byte must change the hash for: the game data range, an allocated HuMem block, ARAM in use, and GWSystem. It must not change the hash for: a free HuMem block, or a byte inside a process stack. Restoring the byte must give the original hash back. All 60 checks (6 targets at 10 checkpoints over 10,000 frames) pass.
+- **What the proof found.**
+  - Two processes with the same seed differed from frame 100 once memory was hashed. One cause was Party Board's `byteswap.cpp`: its file-scope `std::unordered_set` sat in the game data range, so its host heap pointers were saved and hashed, and a `load_state` would have restored them over the live container. It now builds outside the game section.
+  - The other cause was the coroutine stacks' host frames (stack cookies, host pointers), now hashed by record only.
+- **Floats in memory are hashed as raw bits.** ADR 0008's NaN canonicalisation applies to float fields the manifest hashes by name. Memory is bytes, and the hash cannot tell which words are floats. Within one build on one platform the NaN bits are as deterministic as everything else, which the two-process runs confirm. **Flagged for architect:** across platforms, hashing raw memory can split on NaN payloads. It can also split on pointers the game stores into the module, because the Windows DLL and the Linux .so lay out their code and data differently. A raw-memory hash is therefore same-build, same-platform. Cross-platform sessions need either one platform per session or a hash without raw memory.
+
 **msm diagnostics (Party Board patch 0017, `src/msm_diag.c`).** msm only reports `MSM_ERR_GRP_FAILPUSH`. Group pushes now go through `mpt_msm_push_group`, which reports why MusyX refused a group through OSReport: the validation error, msm's heap headroom, and the macros, curves, keymaps, layers or samples that do not resolve.
 
-**M1 (boots headless), Windows, 2026-10-21.**
-- **Boot.** `mpt_dump_lane --boot mp4` on the user's GMPE01_00 dump runs clean: no halt or fault, and no msm error. With no input the game stays in bootDll, the boot and title sequence.
-- **Build.** The module builds from the dump in about 70 to 100 s.
-- **Determinism.** 10,000 frames with checkpoints every 100 frames, in two separate processes with seed 1, gave identical trails at all 100 checkpoints. Seed 2 differed at all of them.
+**M1 (boots headless), Windows, rerun 2026-11-05** on the libm redirects (qa #40) and the memory hash manifest.
+- **Boot.** `mpt_dump_lane --boot mp4` on the user's GMPE01_00 dump runs clean: no halt or fault. msm's one diagnostic line is unchanged since the first boot. With no input the game stays in bootDll, the boot and title sequence.
+- **Build.** The module builds from the dump in about 70 s. Each 10,000-frame run takes about 12 s.
+- **Determinism.** 10,000 frames, checkpoints every 100 frames, in two separate processes:
+  - seed 1: `5fbc2e851244c603` at frame 10,000 in both, identical at all 100 checkpoints;
+  - seed 2: `ffadbdc219b77ecc`, different at all 100.
+- **Earlier trail.** The first M1 (2026-10-21) used the coarse hash (SDK state and named globals only). Its trail did not move with the libm change, because it did not cover game memory.
 - **Not yet.** Fresh-process save/load (E5) and the Linux runs are still to do.
-- **Stack high water.** Measurement happens when a process ends, and no process ended on the title screen, so there is no number yet.
-- **Hash changes since.** These results predate the libm-redirect change on the P1-15 branch (qa #40), which changes game numerics, so the trails will differ after it.
 
 **Still open in P1-16:**
-- the hash manifest, including the GX front-end state and the function-pointer registration table (E4);
+- the GX front-end state and the function-pointer registration table in the hash manifest (E4; memory is done, above);
 - the fresh-process save/load demonstration (E5);
 - the Linux build;
 - the conformance suite on the dump lane.
