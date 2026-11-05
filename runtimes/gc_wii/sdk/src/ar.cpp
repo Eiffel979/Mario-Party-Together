@@ -34,6 +34,8 @@ void arDispatch(const Event& e) {
   }
 }
 
+std::uint32_t arTop() { return st().ar_initialized ? st().ar_top : 0; }
+
 }  // namespace mpt::gc::detail
 
 extern "C" {

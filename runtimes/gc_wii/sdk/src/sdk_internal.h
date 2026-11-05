@@ -379,6 +379,8 @@ Result cardBoot(Sdk::Impl& impl);
 void cardHash(StateHasher& h);
 std::vector<std::byte> cardSerialize();
 void heapHash(StateHasher& h);
+void heapForEachHashedRamRange(const std::function<void(const Sdk::RamRange&)>& fn);
+std::uint32_t arTop();
 void osSyncGlobalsFromState();
 
 // Pointers hashed by value: null, an arena offset, or "outside the arena" (module

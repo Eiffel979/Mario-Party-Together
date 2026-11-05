@@ -690,6 +690,12 @@ std::byte* Sdk::arenaBase() const { return impl_->arena; }
 std::size_t Sdk::arenaSize() const { return impl_->arena_size; }
 std::span<std::byte> Sdk::mainRam() const { return {impl_->mainRam(), impl_->config.main_ram_bytes}; }
 std::span<std::byte> Sdk::aram() const { return {impl_->aramBase(), kAramBytes}; }
+void Sdk::forEachHashedRamRange(const std::function<void(const RamRange&)>& fn) const {
+  detail::heapForEachHashedRamRange(fn);
+}
+std::span<const std::byte> Sdk::aramInUse() const {
+  return {impl_->aramBase(), std::min<std::size_t>(detail::arTop(), kAramBytes)};
+}
 std::vector<std::int16_t> Sdk::takeAudio() { return std::exchange(impl_->pcm, {}); }
 std::uint32_t Sdk::audioRate() const { return impl_->st->ai.dsp_rate == AI_SAMPLERATE_48KHZ ? kAiRate48k : kAiRate32k; }
 std::uint64_t Sdk::audioFrames() const { return impl_->st->ai.frames_out; }

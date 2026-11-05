@@ -3,6 +3,8 @@
 #include <cstring>
 
 #include "harness.h"
+#include "mpt/gc/digest.h"
+#include "mpt_gc/ar.h"
 #include "mpt_gc/card.h"
 #include "mpt_gc/os.h"
 #include "mpt_gc/pad.h"
@@ -228,4 +230,71 @@ TEST_CASE("OSAlloc heaps live in the arena and coalesce") {
   auto sdk = boot(g);
   CHECK(step(*sdk) == StepStatus::halted);
   CHECK(ok);
+}
+
+// P1-16: the memory a title's state hash covers. Free heap space never appears; allocated blocks
+// and main RAM outside every heap do, in address order.
+TEST_CASE("hashed RAM ranges cover allocated blocks and RAM outside heaps, never free space") {
+  std::byte* heap_lo = nullptr;
+  void* kept = nullptr;
+  void* freed = nullptr;
+  Game g{[&] {
+    void* lo = OSInitAlloc(OSGetArenaLo(), OSGetArenaHi(), 1);
+    heap_lo = static_cast<std::byte*>(lo);
+    const OSHeapHandle h = OSCreateHeap(lo, heap_lo + 0x10000);
+    kept = OSAllocFromHeap(h, 100);
+    freed = OSAllocFromHeap(h, 200);
+    OSFreeToHeap(h, freed);
+    u32 stack[8];
+    ARInit(stack, 8);
+    ARAlloc(0x1000);
+  }};
+  auto sdk = boot(g);
+  CHECK(step(*sdk) == StepStatus::halted);
+  REQUIRE(heap_lo != nullptr);
+
+  const std::span<std::byte> ram = sdk->mainRam();
+  std::vector<Sdk::RamRange> ranges;
+  sdk->forEachHashedRamRange([&](const Sdk::RamRange& r) { ranges.push_back(r); });
+  std::size_t covered = 0;
+  bool kept_seen = false;
+  const std::byte* last_end = ram.data();
+  for (const Sdk::RamRange& r : ranges) {
+    CHECK(r.bytes.data() >= last_end);  // address order, no overlap
+    last_end = r.bytes.data() + r.bytes.size();
+    CHECK(last_end <= ram.data() + ram.size());
+    const bool in_heap = r.bytes.data() >= heap_lo && r.bytes.data() < heap_lo + 0x10000;
+    CHECK(in_heap == (r.data != nullptr));
+    if (r.data == kept) {
+      kept_seen = true;
+      CHECK(r.data_size >= 100);
+      CHECK(r.bytes.data() + (r.bytes.size() - r.data_size) == r.data);
+    }
+    const std::byte* f = static_cast<const std::byte*>(freed);
+    CHECK_FALSE((f >= r.bytes.data() && f < last_end));  // the freed block's data
+    covered += r.bytes.size();
+  }
+  CHECK(kept_seen);
+  // Everything but the heap's free space: main RAM less the heap, plus the one allocated block.
+  CHECK(covered == ram.size() - 0x10000 + (128 + 32));
+  CHECK(sdk->aramInUse().size() == AR_RESERVED_BYTES + 0x1000);
+  CHECK(sdk->aramInUse().data() == sdk->aram().data());
+}
+
+TEST_CASE("memoryDigest depends on contents and length, never on the address") {
+  std::vector<std::byte> a(1000), b(1003);
+  for (std::size_t i = 0; i < a.size(); ++i) a[i] = static_cast<std::byte>((i * 37 + 11) & 0xFF);
+  std::memcpy(b.data() + 3, a.data(), a.size());  // same bytes, misaligned copy
+  const std::uint64_t d = memoryDigest(a);
+  CHECK(memoryDigest(std::span<const std::byte>(b).subspan(3)) == d);
+  for (std::size_t at : {std::size_t{0}, std::size_t{31}, std::size_t{32}, std::size_t{995}, std::size_t{999}}) {
+    a[at] ^= std::byte{1};
+    CHECK(memoryDigest(a) != d);
+    a[at] ^= std::byte{1};
+  }
+  CHECK(memoryDigest(std::span<const std::byte>(a).first(999)) != d);
+  // Goldens: the digest is part of the hash manifest, so it must not change silently and must
+  // match on every platform.
+  CHECK(memoryDigest({}) == 0xEF46DB3751D8E999ull);
+  CHECK(d == 0x128DA10CFBDC59D9ull);
 }

@@ -158,6 +158,19 @@ class Sdk {
   std::span<std::byte> mainRam() const;
   std::span<std::byte> aram() const;
 
+  // The memory a title's state hash covers (P1-16): main RAM except free OSAlloc heap space, and
+  // ARAM in use. Ranges are reported in address order: each allocated block of an active heap
+  // (header and data; `data` is what OSAlloc returned) and every stretch of main RAM outside all
+  // active heaps (`data` == nullptr). Free blocks never appear, so their bytes never reach a hash.
+  struct RamRange {
+    std::span<const std::byte> bytes;
+    const std::byte* data = nullptr;  // allocated blocks only
+    std::size_t data_size = 0;
+  };
+  void forEachHashedRamRange(const std::function<void(const RamRange&)>& fn) const;
+  // ARAM below the ARAlloc top: the reserved base plus everything ARAlloc handed out.
+  std::span<const std::byte> aramInUse() const;
+
   struct Impl;
 
  private:
