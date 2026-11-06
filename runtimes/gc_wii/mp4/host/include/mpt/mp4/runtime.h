@@ -61,6 +61,11 @@ class Mp4Runtime final : public ITitleRuntime {
   // is older than v1.3 or the game was booted without debug hooks.
   std::optional<std::uint64_t> debugDeepHash() const;
 
+  // Test only (ABI v1.3 debug_hash_items): state_hash's parts with their digests, in hash order, as
+  // "name size digest" lines, for diffing two platforms (E3c). Empty under the same conditions as
+  // debugDeepHash.
+  std::string debugHashItems() const;
+
   // The OSReport text sink (presentation only). Called from inside stepFrame.
   void setReportSink(void (*sink)(void* user, const char* text), void* user);
 
