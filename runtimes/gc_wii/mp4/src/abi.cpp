@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "copy_trap.h"
+#include "module_symbols.h"
 #include "mpt/core/input.h"
 #include "mpt/core/state.h"
 #include "mpt/gc/digest.h"
@@ -84,6 +85,46 @@ struct MptMp4Game {
 namespace {
 
 MptMp4Game* g_game = nullptr;
+
+// The module's own symbol table (module_symbols.h), read once per process at the first create. Host
+// side: never saved or hashed itself; it names what the state hash visits.
+mpt::mp4::ModuleSymbols g_symbols;
+bool g_symbols_loaded = false;
+
+// SdkConfig::pointer_id: a stable ID for a pointer into the module (a function or a module data
+// symbol, by name and offset), 0 for anything else.
+std::uint64_t modulePointerId(const void* p) { return g_symbols_loaded ? g_symbols.idOf(p) : 0; }
+
+// The game's data ranges and their names, which qualify the symbols in them.
+std::vector<mpt::mp4::GameRange> gameRanges() {
+  std::vector<mpt::mp4::GameRange> ranges;
+  ranges.push_back({"core", reinterpret_cast<std::uintptr_t>(mpt_mp4_game_data_lo()),
+                    reinterpret_cast<std::uintptr_t>(mpt_mp4_game_data_hi())});
+  for (unsigned i = 0; i < mpt_mp4_rel_count; ++i) {
+    const MptMp4RelInfo* rel = mpt_mp4_rel_table[i];
+    ranges.push_back({rel->name, reinterpret_cast<std::uintptr_t>(rel->data_lo),
+                      reinterpret_cast<std::uintptr_t>(rel->data_hi)});
+  }
+  return ranges;
+}
+
+// Loads the symbol table and checks that the game data ranges hold game state only (ADR 0008
+// amendment after P1-16: a host C++ object there is moved out, as byteswap.cpp's was).
+bool loadSymbols(std::string& error) {
+  if (g_symbols_loaded) return true;
+  if (!g_symbols.load(gameRanges(), error)) {
+    error = "symbol table: " + error;
+    return false;
+  }
+  if (!g_symbols.hostSymbolsInGameData().empty()) {
+    error = "a host C++ object sits in the game data range:";
+    for (std::size_t i = 0; i < g_symbols.hostSymbolsInGameData().size() && i < 5; ++i)
+      error += " " + g_symbols.hostSymbolsInGameData()[i];
+    return false;
+  }
+  g_symbols_loaded = true;
+  return true;
+}
 
 constexpr std::uint32_t kStateMagic = 0x4D503453;  // "MP4S": the module's trailer after the SDK state
 constexpr std::uint32_t kStateFormat = 3;          // the blob's layout version (SaveState::format_version)
@@ -161,6 +202,7 @@ bool boot(MptMp4Game& game, std::optional<mpt::SaveMedia> card, std::string& err
   sc.audio_engine = mpt::gc::MusyxEngine::engine();
   sc.audio_output = game.audio_output;
   sc.state_regions = mpt::gc::MusyxEngine::stateRegions();
+  sc.pointer_id = &modulePointerId;  // stable function and module-data IDs in the SDK's manifest
   for (auto r : gameStateRegions()) sc.state_regions.push_back(r);
 
   mpt::gc::MusyxEngine::reset();
@@ -222,6 +264,10 @@ MptMp4Status create(const MptMp4BootConfig* in, MptMp4Game** out, MptMp4Error* e
   }
   if (!mpt_mp4_rel_init()) {
     setError(error, "out of memory for the overlay table");
+    return MPT_MP4_ERR_SDK;
+  }
+  if (!loadSymbols(why)) {
+    setError(error, why);
     return MPT_MP4_ERR_SDK;
   }
 
@@ -415,9 +461,166 @@ std::uint64_t deepHash(const MptMp4Game& game) {
   return h.digest();
 }
 
+// ---- The cross-platform state hash (ADR 0008 section 8 and its amendment after P1-16) ------------
+//
+// Untyped memory is digested as 64-bit words, each canonicalized first. Canonicalizing can only merge
+// values, never split them:
+//  - a word inside the SDK arena becomes a tagged arena offset;
+//  - a word inside the module becomes its symbol by name and offset, or a string literal by its text
+//    (ModuleSymbols::canonical), because the DLL and the .so lay the module out differently;
+//  - the x86 default NaNs become the canonical quiet NaN: an f32 half 0xFFC00000 becomes 0x7FC00000, and
+//    the f64 word 0xFFF8000000000000 becomes 0x7FF8000000000000. Only the default NaN's sign is merged:
+//    merging every NaN bit pattern, as typed fields do (update_f32/update_f64), would merge every s32
+//    from -1 to -8388607 in untyped words. docs/titles/mp4.md section 20 has the argument.
+std::uint64_t splitmix(std::uint64_t x) {
+  x ^= x >> 30;
+  x *= 0xBF58476D1CE4E5B9ull;
+  x ^= x >> 27;
+  x *= 0x94D049BB133111EBull;
+  x ^= x >> 31;
+  return x;
+}
+
+struct Canon {
+  std::uint64_t arena_lo = 0, arena_size = 0;
+  std::uint64_t module_lo = 0, module_size = 0;
+  const mpt::mp4::ModuleSymbols* symbols = nullptr;
+
+  static constexpr std::uint64_t kArenaTag = 0xA7E4'0000'0000'0000ull;  // arena offsets are below 2^40
+  static constexpr std::uint32_t kNan32 = 0x7FC0'0000u;
+  static constexpr std::uint64_t kNan64 = 0x7FF8'0000'0000'0000ull;
+
+  std::uint64_t operator()(std::uint64_t w) const {
+    const std::uint32_t lo = static_cast<std::uint32_t>(w), hi = static_cast<std::uint32_t>(w >> 32);
+    const bool special = (w - arena_lo < arena_size) | (w - module_lo < module_size) | (lo == 0xFFC0'0000u) |
+                         (hi == 0xFFC0'0000u) | (w == 0xFFF8'0000'0000'0000ull);
+    if (!special) [[likely]]
+      return w;
+    return slow(w);
+  }
+  std::uint64_t slow(std::uint64_t w) const {
+    if (w - arena_lo < arena_size) return kArenaTag | (w - arena_lo);
+    if (w - module_lo < module_size) return symbols->canonical(static_cast<std::uintptr_t>(w));
+    if (w == 0xFFF8'0000'0000'0000ull) return kNan64;
+    std::uint32_t lo = static_cast<std::uint32_t>(w), hi = static_cast<std::uint32_t>(w >> 32);
+    if (lo == 0xFFC0'0000u) lo = kNan32;
+    if (hi == 0xFFC0'0000u) hi = kNan32;
+    return (std::uint64_t{hi} << 32) | lo;
+  }
+};
+
+Canon canonFor(const MptMp4Game& game) {
+  Canon c;
+  c.arena_lo = reinterpret_cast<std::uintptr_t>(game.sdk->arenaBase());
+  c.arena_size = game.sdk->arenaSize();
+  c.module_lo = g_symbols.base();
+  c.module_size = g_symbols.end() - g_symbols.base();
+  c.symbols = &g_symbols;
+  return c;
+}
+
+// A range of untyped memory: its size and its canonical digest.
+void hashCanonRange(mpt::StateHasher& h, std::span<const std::byte> bytes, const Canon& c) {
+  h.update_u64(bytes.size());
+  h.update_u64(mpt::gc::memoryDigestWords(bytes, c));
+}
+
+struct CanonSink {
+  mpt::StateHasher* h;
+  const Canon* canon;
+};
+// Header fields and stack records: whole words canonicalized (a record's entry is a function).
+void canonFields(void* user, const void* data, std::size_t size) {
+  const auto* sink = static_cast<const CanonSink*>(user);
+  const auto* b = static_cast<const unsigned char*>(data);
+  std::size_t i = 0;
+  for (; i + 8 <= size; i += 8) {
+    std::uint64_t w;
+    std::memcpy(&w, b + i, 8);
+    sink->h->update_u64((*sink->canon)(w));
+  }
+  if (i < size) sink->h->update({reinterpret_cast<const std::byte*>(b + i), size - i});
+}
+void canonMemory(void* user, const void* data, std::size_t size) {
+  const auto* sink = static_cast<const CanonSink*>(user);
+  hashCanonRange(*sink->h, {static_cast<const std::byte*>(data), size}, *sink->canon);
+}
+
+// Globals by symbol: every game data symbol in name order, so section layout does not matter. A
+// symbol's bytes run to the next symbol; they are canonicalized as words from the symbol's start and
+// trailing zeros are dropped, so alignment padding (always zero in these ranges, which are restored
+// from their load-time image) never counts. Static symbols of one name in one range are combined
+// order-free, because the two linkers need not order archive members alike.
+void hashGameSymbols(mpt::StateHasher& h, const Canon& c) {
+  static std::vector<std::byte> scratch;  // host side, reused between calls
+  static std::vector<std::uint64_t> out;
+  out.clear();
+  const std::vector<mpt::mp4::ModuleSymbol>& syms = g_symbols.gameData();
+  for (std::size_t i = 0; i < syms.size();) {
+    std::uint64_t acc = 0;
+    std::size_t j = i;
+    for (; j < syms.size() && syms[j].id == syms[i].id; ++j) {
+      const mpt::mp4::ModuleSymbol& s = syms[j];
+      scratch.resize(static_cast<std::size_t>(s.gap));
+      std::memcpy(scratch.data(), reinterpret_cast<const void*>(s.addr), scratch.size());
+      for (std::size_t k = 0; k + 8 <= scratch.size(); k += 8) {
+        std::uint64_t w;
+        std::memcpy(&w, scratch.data() + k, 8);
+        w = c(w);
+        std::memcpy(scratch.data() + k, &w, 8);
+      }
+      std::size_t n = scratch.size();
+      while (n > 0 && scratch[n - 1] == std::byte{0}) --n;
+      acc += splitmix(mpt::gc::memoryDigest({scratch.data(), n}) ^ n);
+    }
+    out.push_back(syms[i].id);
+    out.push_back(acc);
+    out.push_back(j - i);
+    i = j;
+  }
+  h.update_u64(out.size());
+  h.update_u64(mpt::gc::memoryDigest(std::as_bytes(std::span(out))));
+}
+
+// Heap blocks and the rest of main RAM, as hashMemory walks them, and ARAM in use; every range is
+// canonicalized. Blocks are visited in address order, which for two builds that make the same
+// allocations with the same sizes is the same permutation of allocation order; a build whose sizes
+// differ already splits on every pointer's arena offset.
+void hashMemoryXplat(const MptMp4Game& game, mpt::StateHasher& h, const Canon& c) {
+  h.update_u64(0x4D50'3458'504C'0001ull);  // "MP4XPL", manifest part version 1
+  CanonSink sink{&h, &c};
+  std::uint64_t broken = 0;
+  game.sdk->forEachHashedRamRange([&](const mpt::gc::Sdk::RamRange& r) {
+    h.update_u64(mpt::gc::hashGamePointer(r.bytes.data()));
+    if (r.data != nullptr) {
+      const int humem = mpt_mp4_hash_humem_heap(r.data, &canonFields, &canonMemory, &sink);
+      if (humem == 1) {
+        hashCanonRange(h, r.bytes.first(r.bytes.size() - r.data_size), c);  // the OSAlloc header
+        return;
+      }
+      if (humem < 0) ++broken;
+    }
+    hashCanonRange(h, r.bytes, c);
+  });
+  h.update_u64(broken);
+  hashCanonRange(h, game.sdk->aramInUse(), c);
+}
+
+std::uint64_t crossPlatformHash(const MptMp4Game& game) {
+  const Canon c = canonFor(game);
+  mpt::StateHasher h;
+  h.update_u64(0x4D50'3448'4153'4801ull);  // "MP4HASH", manifest version 1
+  hashManifestFields(game, h);
+  game.sdk->hashState(h);  // the SDK and the sound engine by value; module pointers by symbol
+  mpt_mp4_hash_game(&hashBytes, &h);
+  hashGameSymbols(h, c);
+  hashMemoryXplat(game, h, c);
+  return h.digest();
+}
+
 std::uint64_t stateHash(const MptMp4Game* game) {
   if (game == nullptr) return 0;
-  return deepHash(*game);
+  return crossPlatformHash(*game);
 }
 
 // Test only (ABI v1.3): the deep hash, on a game created with MPT_MP4_BOOT_DEBUG_HOOKS.

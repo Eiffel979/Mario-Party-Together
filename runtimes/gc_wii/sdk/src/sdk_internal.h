@@ -387,9 +387,10 @@ void heapForEachHashedRamRange(const std::function<void(const Sdk::RamRange&)>& 
 std::uint32_t arTop();
 void osSyncGlobalsFromState();
 
-// Pointers hashed by value: null, an arena offset, or "outside the arena" (module
-// or host memory; stable IDs for those come with the P1-16 registration table).
+// Pointers hashed by value: null, an arena offset, a stable ID from the title's registration table
+// (SdkConfig::pointer_id), or the "outside the arena" sentinel. Functions: null, a stable ID, or a
+// presence sentinel.
 std::uint64_t hashPointer(const void* p);
-inline std::uint64_t hashFunction(const void* f) { return f ? 0xF0F0'F0F0'F0F0'F0F1ull : 0; }
+std::uint64_t hashFunction(const void* f);
 
 }  // namespace mpt::gc::detail

@@ -45,9 +45,18 @@ inline std::uint64_t merge(std::uint64_t acc, std::uint64_t lane) {
   acc ^= round(0, lane);
   return acc * kP1 + kP4;
 }
+
+struct IdentityWord {
+  std::uint64_t operator()(std::uint64_t word) const { return word; }
+};
 }  // namespace digest_detail
 
-inline std::uint64_t memoryDigest(std::span<const std::byte> bytes) {
+// The digest of `bytes` with every whole 64-bit word (at offsets 0, 8, 16, ... from the start of the
+// span) replaced by word_fn(word) first; trailing bytes are digested as they are. memoryDigest is the
+// identity case. A title uses this to canonicalize pointers and NaNs in untyped memory (ADR 0008
+// amendment after P1-16 hash coverage) without copying it.
+template <typename WordFn>
+inline std::uint64_t memoryDigestWords(std::span<const std::byte> bytes, const WordFn& word_fn) {
   using namespace digest_detail;
   const std::byte* p = bytes.data();
   std::size_t left = bytes.size();
@@ -55,10 +64,10 @@ inline std::uint64_t memoryDigest(std::span<const std::byte> bytes) {
   if (left >= 32) {
     std::uint64_t v1 = kP1 + kP2, v2 = kP2, v3 = 0, v4 = 0 - kP1;
     do {
-      v1 = round(v1, load64(p));
-      v2 = round(v2, load64(p + 8));
-      v3 = round(v3, load64(p + 16));
-      v4 = round(v4, load64(p + 24));
+      v1 = round(v1, word_fn(load64(p)));
+      v2 = round(v2, word_fn(load64(p + 8)));
+      v3 = round(v3, word_fn(load64(p + 16)));
+      v4 = round(v4, word_fn(load64(p + 24)));
       p += 32;
       left -= 32;
     } while (left >= 32);
@@ -72,7 +81,7 @@ inline std::uint64_t memoryDigest(std::span<const std::byte> bytes) {
   }
   h += static_cast<std::uint64_t>(bytes.size());
   while (left >= 8) {
-    h ^= round(0, load64(p));
+    h ^= round(0, word_fn(load64(p)));
     h = std::rotl(h, 27) * kP1 + kP4;
     p += 8;
     left -= 8;
@@ -89,6 +98,10 @@ inline std::uint64_t memoryDigest(std::span<const std::byte> bytes) {
   h *= kP3;
   h ^= h >> 32;
   return h;
+}
+
+inline std::uint64_t memoryDigest(std::span<const std::byte> bytes) {
+  return memoryDigestWords(bytes, digest_detail::IdentityWord{});
 }
 
 }  // namespace mpt::gc
