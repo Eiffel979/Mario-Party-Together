@@ -902,10 +902,11 @@ The #49 review moved libco's stack high-water statics out of the range as well.
   - seed 1: `8f557606d1449fcd` at frame 10,000 in both, identical at all 100 checkpoints;
   - seed 2: `b8c08c09683489b8`, different at all 100.
   - `stateHash()` cost 3.9 to 5.4 ms per call (means of 100).
-- **Rerun with the cross-platform `state_hash` (2026-11-06).** Same check, 10,000 frames, checkpoints every 100, separate processes:
-  - seed 1: `8eefae0667aae794` at frame 10,000 in both, identical at all 100 checkpoints;
-  - seed 2: `a93d7072ebb73373`, different at all 100;
-  - `stateHash()` 5.8 to 6.0 ms per call. No halt or fault.
+- **Rerun with the final cross-platform `state_hash` (2026-11-06).** This is after the #55 review: no raw GW part, C++ pointers as one value, and the AI callback's C name. Same check, 10,000 frames, checkpoints every 100, separate processes:
+  - seed 1: `e98de7b50ea4c3cc` at frame 10,000 in both, identical at all 100 checkpoints;
+  - seed 2: `55a1fe7e09ecbe5e`, different at all 100;
+  - `stateHash()` 6.4 to 6.6 ms per call. No halt or fault.
+  - The first cross-platform run (`8eefae0667aae794` / `a93d7072ebb73373`) is superseded.
 - **Earlier trail.** The first M1 (2026-10-21) used the coarse hash (SDK state and named globals only). Its trail did not move with the libm change, because it did not cover game memory.
 - **Not yet.** Fresh-process save/load (E5) and the Linux runs are still to do.
 
