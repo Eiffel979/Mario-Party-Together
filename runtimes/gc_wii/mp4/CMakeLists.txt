@@ -206,25 +206,28 @@ target_include_directories(mp4_game PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
 # Fixed bases and the main RAM size (ADR 0008 section 11 and its amendment, PR #44).
 include("${CMAKE_CURRENT_SOURCE_DIR}/layout.cmake")
 
-# The build fingerprint save states and golden trails are keyed by (ADR 0008 section 10, ADR 0009): the
-# pinned sources, every patch applied to them (Party Board, aurora, musyx), the GX backend, the main
-# RAM size and the compiler.
-set(_fp "${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION};${MPT_GX_BACKEND};main_ram=${MPT_MP4_MAIN_RAM_BYTES}")
-foreach(_f "${CMAKE_CURRENT_SOURCE_DIR}/decomp.lock" "${CMAKE_CURRENT_SOURCE_DIR}/../gx/aurora.lock")
-  file(SHA256 "${_f}" _h)
-  string(APPEND _fp ";${_h}")
-endforeach()
-file(GLOB _fp_patches "${CMAKE_CURRENT_SOURCE_DIR}/patches/partyboard/*.patch"
-                      "${CMAKE_CURRENT_SOURCE_DIR}/../gx/patches/aurora/*.patch"
-                      "${CMAKE_CURRENT_SOURCE_DIR}/../musyx/patches/*.patch")
-list(SORT _fp_patches)
-foreach(_f IN LISTS _fp_patches)
-  file(SHA256 "${_f}" _h)
-  string(APPEND _fp ";${_h}")
-endforeach()
-string(SHA256 _fp_hash "${_fp}")
-string(SUBSTRING "${_fp_hash}" 0 16 _fp_hash)
-set(MPT_MP4_BUILD_ID "mp4-${_fp_hash}" CACHE INTERNAL "MP4 game module build fingerprint")
+# The build fingerprint (build_id.cmake, ADR 0009 amendment after P1-16): one id for save states,
+# replays, golden trails and the recipe's cache key. The recipe passes MPT_MP4_SOURCE_STATES (what its
+# resolver found for each pin) and MPT_MP4_RECIPE_ARGS_HASH; a developer build without them records its
+# sources as unverified. Every input is a configure dependency, so a content change re-runs this.
+set(MPT_MP4_SOURCE_STATES "" CACHE STRING "Set by the asset-import recipe: <pin>=pinned|unpinned:<fingerprint>, ...")
+set(MPT_MP4_RECIPE_ARGS_HASH "" CACHE STRING "Set by the asset-import recipe: a hash of its module-build arguments")
+include("${CMAKE_CURRENT_SOURCE_DIR}/build_id.cmake")
+if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+  set(_mp4_msvc_frontend TRUE)
+else()
+  set(_mp4_msvc_frontend FALSE)
+endif()
+mpt_mp4_build_id(ID _mp4_id MANIFEST _mp4_manifest INPUTS _mp4_id_inputs
+  GC_WII_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.." CORE_INCLUDE_DIR "${MPT_CORE_INCLUDE_DIR}"
+  COMPILER "${CMAKE_C_COMPILER}" BUILD_TYPE "${CMAKE_BUILD_TYPE}" GX_BACKEND "${MPT_GX_BACKEND}"
+  MSVC_FRONTEND ${_mp4_msvc_frontend} RECIPE_ARGS_HASH "${MPT_MP4_RECIPE_ARGS_HASH}" SOURCE_STATES ${MPT_MP4_SOURCE_STATES})
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_mp4_id_inputs})
+set(MPT_MP4_BUILD_ID "${_mp4_id}" CACHE INTERNAL "MP4 game module build fingerprint")
+mpt_mp4_tree_state("${CMAKE_CURRENT_SOURCE_DIR}/.." "${MPT_CORE_INCLUDE_DIR}" _mp4_tree_state)
+# The manifest: every component with its hash, then the commit and the dirty flag. The recipe installs
+# it next to the module and checks its id against runtime_build_version.
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/mp4_game_build_id.txt" CONTENT "${_mp4_manifest}${_mp4_tree_state}" @ONLY)
 target_compile_definitions(mp4_game PRIVATE "MPT_MP4_BUILD_ID=\"${MPT_MP4_BUILD_ID}\""
                            MPT_MP4_MAIN_RAM_BYTES=${MPT_MP4_MAIN_RAM_BYTES}u)
 message(STATUS "runtimes/gc_wii/mp4: build ID ${MPT_MP4_BUILD_ID}")
