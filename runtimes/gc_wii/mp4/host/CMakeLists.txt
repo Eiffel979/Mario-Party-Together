@@ -57,12 +57,42 @@ option(MPT_MP4_RECIPE_LAYOUT_PROBE "Test only: the recipe builds the MP4 module 
 if(MPT_MP4_RECIPE_LAYOUT_PROBE)
   list(APPEND _args "-DMPT_MP4_LAYOUT_PROBE=ON")
 endif()
-# The arguments select a different module from the same tree (Dawn prefix, package prefix), so their
-# hash goes into the build ID; the module build gets the same hash as one more argument.
+# The arguments select a different module from the same tree, so they go into the build ID, but by a
+# path-independent identity: two developers building the same commit get the same id (#55 review).
+#  - MPT_DAWN_PREFIX: whether one is given. Dawn's pin is gx/dawn.lock, in the id's tree group, and the
+#    backend is a constant.
+#  - CMAKE_PREFIX_PATH (vcpkg's installed tree): the triplet, vcpkg.json and vcpkg-configuration.json,
+#    which hold the packages and the registry baseline that fix their versions.
+#  - Every other argument as it is.
+# The paths themselves go only into the host's manifest (mp4_recipe_build_id.txt). The module build
+# gets the hash as one more argument.
 set(_args_text "")
+set(_args_paths "")
 foreach(_a IN LISTS _args)
   string(REPLACE "\\" "/" _a "${_a}")
-  string(APPEND _args_text "${_a}\n")
+  if(_a MATCHES "^-DMPT_DAWN_PREFIX=(.*)$")
+    if(CMAKE_MATCH_1)
+      string(APPEND _args_text "dawn_prefix set\n")
+    else()
+      string(APPEND _args_text "dawn_prefix unset\n")
+    endif()
+    string(APPEND _args_paths "path MPT_DAWN_PREFIX ${CMAKE_MATCH_1}\n")
+  elseif(_a MATCHES "^-DCMAKE_PREFIX_PATH=(.*)$")
+    string(APPEND _args_paths "path CMAKE_PREFIX_PATH ${CMAKE_MATCH_1}\n")
+    string(APPEND _args_text "vcpkg triplet ${VCPKG_TARGET_TRIPLET}\n")
+    foreach(_vf vcpkg.json vcpkg-configuration.json)
+      set(_vp "${CMAKE_SOURCE_DIR}/${_vf}")
+      if(EXISTS "${_vp}")
+        file(SHA256 "${_vp}" _vh)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_vp}")
+      else()
+        set(_vh none)
+      endif()
+      string(APPEND _args_text "vcpkg ${_vf} ${_vh}\n")
+    endforeach()
+  else()
+    string(APPEND _args_text "${_a}\n")
+  endif()
 endforeach()
 string(SHA256 _args_hash "${_args_text}")
 list(APPEND _args "-DMPT_MP4_RECIPE_ARGS_HASH=${_args_hash}")
@@ -80,13 +110,21 @@ endforeach()
 # taken as pinned. A pinned recipe build therefore gets this exact id, which its install step checks.
 # Every input is a configure dependency, so a content change re-runs this, not only a new file.
 include("${CMAKE_CURRENT_SOURCE_DIR}/../build_id.cmake")
+# The FP flag set follows the recipe's compiler driver: clang-cl takes the MSVC-style spelling.
+get_filename_component(_recipe_cc_name "${MPT_MP4_RECIPE_CLANG_C}" NAME_WE)
+if(_recipe_cc_name MATCHES "^clang-cl")
+  set(_recipe_msvc_frontend TRUE)
+else()
+  set(_recipe_msvc_frontend FALSE)
+endif()
 mpt_mp4_build_id(ID MPT_MP4_RECIPE_RUNTIME_VERSION MANIFEST _mp4_manifest INPUTS _mp4_id_inputs
   GC_WII_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../.." CORE_INCLUDE_DIR "${MPT_MP4_RECIPE_CORE_INCLUDE_DIR}"
   COMPILER "${MPT_MP4_RECIPE_CLANG_C}" BUILD_TYPE "${MPT_MP4_RECIPE_BUILD_TYPE}" GX_BACKEND "${MPT_GX_BACKEND}"
-  MSVC_FRONTEND ${WIN32} RECIPE_ARGS_HASH "${_args_hash}"
+  MSVC_FRONTEND ${_recipe_msvc_frontend} RECIPE_ARGS_HASH "${_args_hash}"
   SOURCE_STATES partyboard=pinned musyx=pinned aurora=pinned)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_mp4_id_inputs})
-file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/mp4_recipe_build_id.txt" CONTENT "${_mp4_manifest}" @ONLY)
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/mp4_recipe_build_id.txt"
+     CONTENT "${_mp4_manifest}recipe_args ${_args_hash}\n${_args_text}${_args_paths}" @ONLY)
 message(STATUS "runtimes/gc_wii/mp4/host: the recipe builds MP4 module ${MPT_MP4_RECIPE_RUNTIME_VERSION}")
 configure_file(recipe_config.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/recipe_config.h" @ONLY)
 

@@ -8,8 +8,11 @@
 #
 # The id is "mp4-" and the first 16 hex digits of the SHA-256 of a canonical text with one line per
 # component, in groups:
-#   tree       every file the module build reads from runtimes/gc_wii, by content (sdk, gx, musyx, mp4:
-#              CMake files and scripts, locks, src, include, tools); tests, docs and patches excluded
+#   tree       the module build's files in runtimes/gc_wii, by content: of sdk, gx, musyx and mp4, the
+#              CMakeLists.txt, every top-level *.cmake (which includes musyx's link-check script, run
+#              only by tests: harmless, since it can only make the id change more often), locks, src,
+#              include and mp4/tools. Test directories, docs, the host side and patches are left out
+#              (patches have their own group)
 #   core       core/include, by content
 #   patches    the Party Board, aurora and musyx patch sets, each in apply order
 #   sources    every lock entry (name, commit, tree) with its state: pinned, unpinned:<fingerprint>
