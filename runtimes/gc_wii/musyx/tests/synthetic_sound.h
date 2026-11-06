@@ -47,7 +47,8 @@ struct Data {
   std::vector<std::uint8_t> project, pool, sdir_sfx, sdir_song, samples, song;
 };
 
-inline Data make() {
+// missing_sample: group 1 also names sample 99, which no directory has (musyx patch 0001).
+inline Data make(bool missing_sample = false) {
   Data d;
 
   // ---- samples: PCM16, big-endian ------------------------------------------------------------
@@ -117,7 +118,10 @@ inline Data make() {
     j.u16(0xFFFF);
   };
   list(g1 + 8, {1, 3});   // macros
-  list(g1 + 12, {5, 6});  // samples
+  if (missing_sample)
+    list(g1 + 12, {5, 6, 99});  // samples; 99 is in no directory
+  else
+    list(g1 + 12, {5, 6});  // samples
   list(g1 + 16, {});      // curves
   list(g1 + 20, {});      // keymaps
   list(g1 + 24, {});      // layers

@@ -55,6 +55,14 @@ struct SdkConfig {
   // at the next SDK call boundary. A per-title choice (ADR 0008 §3 allows both).
   bool io_callbacks_before_return = false;
   std::uint32_t thread_stack_bytes = 256 * 1024;  // per SDK thread / coroutine
+  // Emulated main RAM, where OSAlloc's arena lives. 24 MiB is the console's. A 64-bit port whose game
+  // heaps grew (MP4: Party Board's TARGET_PC heaps are 4x the console's) sets a larger per-title
+  // constant; it is part of the build fingerprint like every other SdkConfig constant. At most 1 GiB,
+  // a multiple of 64 KiB.
+  std::uint32_t main_ram_bytes = 24u << 20;
+  // When set, an OSAllocFromHeap that cannot be satisfied faults the runtime (ADR 0011) instead of
+  // returning NULL to the game. A per-title constant (ADR 0008 amendment, PR #44).
+  bool fault_on_alloc_failure = false;
   // Arena placement. 0 = anywhere. Fixed bases for fresh-process save states
   // are P1-16 (ADR 0008 §11); create() fails if this address is unavailable.
   std::uintptr_t arena_base = 0;
@@ -149,6 +157,19 @@ class Sdk {
   std::size_t arenaSize() const;
   std::span<std::byte> mainRam() const;
   std::span<std::byte> aram() const;
+
+  // The memory a title's state hash covers (P1-16): main RAM except free OSAlloc heap space, and
+  // ARAM in use. Ranges are reported in address order: each allocated block of an active heap
+  // (header and data; `data` is what OSAlloc returned) and every stretch of main RAM outside all
+  // active heaps (`data` == nullptr). Free blocks never appear, so their bytes never reach a hash.
+  struct RamRange {
+    std::span<const std::byte> bytes;
+    const std::byte* data = nullptr;  // allocated blocks only
+    std::size_t data_size = 0;
+  };
+  void forEachHashedRamRange(const std::function<void(const RamRange&)>& fn) const;
+  // ARAM below the ARAlloc top: the reserved base plus everything ARAlloc handed out.
+  std::span<const std::byte> aramInUse() const;
 
   struct Impl;
 

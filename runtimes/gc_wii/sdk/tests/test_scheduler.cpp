@@ -1,5 +1,6 @@
 ﻿// Cooperative scheduling determinism and virtual-interrupt ordering (E10,
 // ADR 0008 Â§1-2).
+#include <cstdint>
 #include <cstdio>
 
 #include "harness.h"
@@ -371,4 +372,42 @@ TEST_CASE("a coroutine stack overflow is a deterministic fault") {
   auto sdk = boot(g, cfg);
   CHECK(step(*sdk) == StepStatus::faulted);
   CHECK(sdk->fault().find("stack overflow in SDK thread slot 1") != std::string::npos);
+}
+
+namespace {
+volatile std::uintptr_t g_handler_local = 0;
+OSThread* volatile g_handler_current = nullptr;
+void recordStack(OSAlarm*, OSContext*) {
+  volatile int local = 0;
+  g_handler_local = reinterpret_cast<std::uintptr_t>(&local);
+  g_handler_current = OSGetCurrentThread();
+}
+}  // namespace
+
+// P1-16: due interrupts at a call boundary run on the interrupt coroutine's own stack, so a small
+// caller stack (a game process's coroutine) never also holds handler work. Nothing else changes:
+// the handler still sees the interrupted thread as current, and the caller resumes after the call.
+TEST_CASE("interrupts at a call boundary run on the interrupt stack, not the caller's") {
+  std::uintptr_t caller_local = 0;
+  OSThread* caller = nullptr;
+  int resumed = 0;
+  Game g{[&] {
+    static OSAlarm alarm;
+    OSCreateAlarm(&alarm);
+    OSSetAlarm(&alarm, 1, &recordStack);
+    volatile int local = 0;
+    caller_local = reinterpret_cast<std::uintptr_t>(&local);
+    caller = OSGetCurrentThread();
+    OSGetTick();  // the boundary where the alarm is due
+    resumed = 1;
+  }};
+  SdkConfig config;
+  auto sdk = boot(g, config);
+  CHECK(step(*sdk) == StepStatus::halted);
+  CHECK(resumed == 1);
+  REQUIRE(g_handler_local != 0);
+  CHECK(g_handler_current == caller);
+  const std::uintptr_t distance =
+      caller_local > g_handler_local ? caller_local - g_handler_local : g_handler_local - caller_local;
+  CHECK(distance >= config.thread_stack_bytes / 2);  // another arena stack, not frames below the caller's
 }

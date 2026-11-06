@@ -6,20 +6,23 @@ diff --git a/src/game/process.c b/src/game/process.c
 index 8c6df68b404f232bdf49b01c3f5fe1bd30215ae8..5f8a462da54147a8ce455b1e63768b195ce70cf9 100644
 --- a/src/game/process.c
 +++ b/src/game/process.c
-@@ -76,7 +76,11 @@ Process *HuPrcCreate(void (*func)(void), u16 prio, u32 stack_size, s32 extra_siz
+@@ -76,7 +76,14 @@ Process *HuPrcCreate(void (*func)(void), u16 prio, u32 stack_size, s32 extra_siz
      if (stack_size == 0) {
          stack_size = 2048;
      }
 -#ifdef TARGET_PC
 +#ifdef MPT_PC
-+    /* The stack comes from the process heap, as on the console, so it is game memory (save states). */
-+    stack_size *= 2;
++    /* The stack comes from the process heap, as on the console, so it is game memory (save states).
++     * Twice the console's size for 64-bit frames, plus a fixed 16 KiB for the host code under game
++     * calls (GX on aurora, the C runtime), whose depth does not scale with the console's stack:
++     * HuWinProc's 0x1000 doubled peaked at 98.8% (P1-16). */
++    stack_size = stack_size * 2 + 0x4000;
 +    alloc_size = HuMemMemoryAllocSizeGet(sizeof(Process)) + HuMemMemoryAllocSizeGet(stack_size) + HuMemMemoryAllocSizeGet(extra_size);
 +#elif defined(TARGET_PC)
      stack_size *= 2;
      alloc_size = HuMemMemoryAllocSizeGet(sizeof(Process)) + HuMemMemoryAllocSizeGet(extra_size);
  #else
-@@ -93,7 +97,9 @@ Process *HuPrcCreate(void (*func)(void), u16 prio, u32 stack_size, s32 extra_siz
+@@ -93,7 +100,9 @@ Process *HuPrcCreate(void (*func)(void), u16 prio, u32 stack_size, s32 extra_siz
      process->stat = 0;
      process->prio = prio;
      process->sleep_time = 0;

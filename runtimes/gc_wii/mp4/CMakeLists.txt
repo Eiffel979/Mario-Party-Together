@@ -132,17 +132,24 @@ endif()
 # audio (HuAud* over msm, ADR 0007 section 4), THP playback, and the soft-reset check.
 list(APPEND GAME_FILES src/game/audio.c src/game/THPDraw.c src/game/THPSimple.c src/game/thpmain.c src/game/sreset.c)
 list(TRANSFORM GAME_FILES PREPEND "${MPT_MP4_PB}/")
-# Party Board port code we reuse unchanged: the 64-bit HSF model-format conversion (P1-15 piece 4).
-list(APPEND GAME_FILES "${MPT_MP4_PB}/src/port/byteswap.cpp")
 list(TRANSFORM MPT_MP4_MSM_FILES PREPEND "${MPT_MP4_PB}/")
 # Our replacements for Party Board's port layer (include/mpt_mp4_port.h) and its coroutines.
-set(MPT_MP4_PORT_FILES src/port.c src/sdk_bridge.c src/libco.c src/layout_check.c src/game_reads.c src/msm_swap.c)
+set(MPT_MP4_PORT_FILES src/port.c src/sdk_bridge.c src/libco.c src/layout_check.c src/game_reads.c src/msm_swap.c src/msm_diag.c)
 add_library(mpt_mp4_dol OBJECT ${GAME_FILES} ${MPT_MP4_MSM_FILES} ${MPT_MP4_PORT_FILES})
 target_link_libraries(mpt_mp4_dol PRIVATE mpt_mp4_game_flags)
 set_source_files_properties(${GAME_FILES} ${MPT_MP4_MSM_FILES} TARGET_DIRECTORY mpt_mp4_dol
                             PROPERTIES COMPILE_OPTIONS "${MPT_MP4_NOWARN}")
 set_source_files_properties(${MPT_MP4_PORT_FILES} TARGET_DIRECTORY mpt_mp4_dol
                             PROPERTIES COMPILE_OPTIONS "${MPT_MP4_WARN_FLAGS}")
+
+# Party Board port code we reuse unchanged: the 64-bit HSF model-format conversion (P1-15 piece 4).
+# Its only file-scope data is a host container (std::unordered_set sVisitedPtrs, cleared but never
+# filled). That is host state, not game state, so the file is built without game_section.h: inside
+# the game data range the container's heap pointers differ per process, which split the state hash,
+# and a load_state would restore them over a live container.
+add_library(mpt_mp4_byteswap OBJECT "${MPT_MP4_PB}/src/port/byteswap.cpp")
+target_link_libraries(mpt_mp4_byteswap PRIVATE mpt_mp4_game_flags)
+target_compile_options(mpt_mp4_byteswap PRIVATE ${MPT_MP4_NOWARN})
 
 # ---- RELs: compiled separately, then isolated (tools/MptMp4Rel.cmake) ----------------------------
 include("${CMAKE_CURRENT_SOURCE_DIR}/tools/MptMp4Rel.cmake")
@@ -179,6 +186,7 @@ mpt_mp4_write_rel_table(MPT_MP4_REL "${CMAKE_CURRENT_BINARY_DIR}/generated/mpt_m
 # ---- The game module -----------------------------------------------------------------------------
 add_library(mp4_game SHARED
   $<TARGET_OBJECTS:mpt_mp4_dol>
+  $<TARGET_OBJECTS:mpt_mp4_byteswap>
   ${MPT_MP4_REL_INFOS}
   "${CMAKE_CURRENT_BINARY_DIR}/generated/mpt_mp4_rel_table.c"
   src/rel_loader.c
@@ -186,19 +194,28 @@ add_library(mp4_game SHARED
   src/abi.cpp
   src/copy_trap.cpp)
 target_link_libraries(mp4_game PRIVATE mpt_mp4_game_flags ${MPT_MP4_REL_LIBS} mpt::gx mpt::musyx)
+# The shared libraries the module needs at run time (webgpu_dawn with the Dawn backend), one per line,
+# for the asset-import recipe to install next to it. Empty on platforms without DLLs.
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/mp4_game_runtime_deps.txt"
+     CONTENT "$<JOIN:$<TARGET_RUNTIME_DLLS:mp4_game>,\n>\n")
 target_compile_options(mp4_game PRIVATE ${MPT_MP4_WARN_FLAGS})
 set_target_properties(mp4_game PROPERTIES C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden PREFIX "")
 target_include_directories(mp4_game PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
+# Fixed bases and the main RAM size (ADR 0008 section 11 and its amendment, PR #44).
+include("${CMAKE_CURRENT_SOURCE_DIR}/layout.cmake")
+
 # The build fingerprint save states and golden trails are keyed by (ADR 0008 section 10, ADR 0009): the
-# pinned sources, every patch applied to them, the GX backend and the compiler.
-set(_fp "${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION};${MPT_GX_BACKEND}")
+# pinned sources, every patch applied to them (Party Board, aurora, musyx), the GX backend, the main
+# RAM size and the compiler.
+set(_fp "${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION};${MPT_GX_BACKEND};main_ram=${MPT_MP4_MAIN_RAM_BYTES}")
 foreach(_f "${CMAKE_CURRENT_SOURCE_DIR}/decomp.lock" "${CMAKE_CURRENT_SOURCE_DIR}/../gx/aurora.lock")
   file(SHA256 "${_f}" _h)
   string(APPEND _fp ";${_h}")
 endforeach()
 file(GLOB _fp_patches "${CMAKE_CURRENT_SOURCE_DIR}/patches/partyboard/*.patch"
-                      "${CMAKE_CURRENT_SOURCE_DIR}/../gx/patches/aurora/*.patch")
+                      "${CMAKE_CURRENT_SOURCE_DIR}/../gx/patches/aurora/*.patch"
+                      "${CMAKE_CURRENT_SOURCE_DIR}/../musyx/patches/*.patch")
 list(SORT _fp_patches)
 foreach(_f IN LISTS _fp_patches)
   file(SHA256 "${_f}" _h)
@@ -207,19 +224,24 @@ endforeach()
 string(SHA256 _fp_hash "${_fp}")
 string(SUBSTRING "${_fp_hash}" 0 16 _fp_hash)
 set(MPT_MP4_BUILD_ID "mp4-${_fp_hash}" CACHE INTERNAL "MP4 game module build fingerprint")
-target_compile_definitions(mp4_game PRIVATE "MPT_MP4_BUILD_ID=\"${MPT_MP4_BUILD_ID}\"")
+target_compile_definitions(mp4_game PRIVATE "MPT_MP4_BUILD_ID=\"${MPT_MP4_BUILD_ID}\""
+                           MPT_MP4_MAIN_RAM_BYTES=${MPT_MP4_MAIN_RAM_BYTES}u)
 message(STATUS "runtimes/gc_wii/mp4: build ID ${MPT_MP4_BUILD_ID}")
 
 # Every object library, for compile-only builds.
 add_custom_target(mpt_mp4_objects)
-add_dependencies(mpt_mp4_objects mpt_mp4_dol)
+add_dependencies(mpt_mp4_objects mpt_mp4_dol mpt_mp4_byteswap)
 foreach(_rel IN LISTS MPT_MP4_RELS)
   add_dependencies(mpt_mp4_objects mpt_mp4_rel_${_rel})
 endforeach()
+# A fixed image base (ADR 0008 section 11): function pointers the game stores in the arena and in its
+# state regions stay valid in a fresh process. Windows: no dynamic base and no relocations, so the
+# loader either maps it there or fails. Linux: lld links the .so at that base; glibc's loader asks the
+# kernel for that address, and the host runtime checks where it landed.
 if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-  target_link_options(mp4_game PRIVATE /errorlimit:0)
+  target_link_options(mp4_game PRIVATE /errorlimit:0 "/BASE:${MPT_MP4_MODULE_BASE}" /DYNAMICBASE:NO /FIXED)
 else()
-  target_link_options(mp4_game PRIVATE -Wl,--error-limit=0)
+  target_link_options(mp4_game PRIVATE -Wl,--error-limit=0 -fuse-ld=lld "-Wl,--image-base=${MPT_MP4_MODULE_BASE}")
 endif()
 
 # Unit checks (synthetic data only).
@@ -231,7 +253,7 @@ if(MPT_BUILD_TESTS)
   # Hundreds of objects: the list goes through a file, not the command line.
   string(REPLACE ";" "\n" _rel_lines "${MPT_MP4_REL_LIBS}")
   file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/mp4_game_code.txt"
-       CONTENT "$<JOIN:$<TARGET_OBJECTS:mpt_mp4_dol>,\n>\n${_rel_lines}\n")
+       CONTENT "$<JOIN:$<TARGET_OBJECTS:mpt_mp4_dol>,\n>\n$<JOIN:$<TARGET_OBJECTS:mpt_mp4_byteswap>,\n>\n${_rel_lines}\n")
   add_test(NAME mp4_no_host_math
     COMMAND "${CMAKE_COMMAND}" "-DNM=${MPT_MP4_NM}" "-DFILES_FROM=${CMAKE_CURRENT_BINARY_DIR}/mp4_game_code.txt"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/../sdk/tests/check_no_host_math.cmake")

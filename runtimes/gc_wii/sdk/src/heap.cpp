@@ -2,7 +2,9 @@
 //
 // Block headers sit in game memory like the SDK's, but link by arena offset
 // instead of pointer, so the arena's bytes do not depend on where it is mapped.
+#include <algorithm>
 #include <cstring>
+#include <vector>
 
 #include "sdk_internal.h"
 
@@ -123,6 +125,40 @@ void heapHash(StateHasher& h) {
   }
 }
 
+void heapForEachHashedRamRange(const std::function<void(const Sdk::RamRange&)>& fn) {
+  auto& s = st();
+  Sdk::Impl& im = impl();
+  const std::uint32_t ram_lo = im.offsetOf(im.mainRam());
+  const std::uint32_t ram_hi = ram_lo + static_cast<std::uint32_t>(im.config.main_ram_bytes);
+
+  // Active heaps by start, then each one's allocated blocks by address (the allocated list is
+  // most-recent-first, which the hash must not depend on).
+  std::vector<const HeapSlot*> heaps;
+  for (std::int32_t i = 0; i < s.heap_count && i < static_cast<std::int32_t>(kMaxHeaps); ++i)
+    if (s.heaps[i].active) heaps.push_back(&s.heaps[i]);
+  std::sort(heaps.begin(), heaps.end(), [](const HeapSlot* a, const HeapSlot* b) { return a->start < b->start; });
+
+  auto outside = [&](std::uint32_t lo, std::uint32_t hi) {
+    lo = std::max(lo, ram_lo);
+    hi = std::min(hi, ram_hi);
+    if (lo < hi) fn(Sdk::RamRange{{im.arena + lo, hi - lo}, nullptr, 0});
+  };
+  std::uint32_t cursor = ram_lo;
+  std::vector<std::uint32_t> blocks;
+  for (const HeapSlot* heap : heaps) {
+    outside(cursor, heap->start);
+    blocks.clear();
+    for (std::uint32_t off = heap->alloc_head; off; off = hdr(off)->next) blocks.push_back(off);
+    std::sort(blocks.begin(), blocks.end());
+    for (std::uint32_t off : blocks) {
+      const std::uint32_t size = hdr(off)->size;
+      fn(Sdk::RamRange{{im.arena + off, size}, im.arena + off + kHeader, size - kHeader});
+    }
+    cursor = std::max(cursor, heap->end);
+  }
+  outside(cursor, ram_hi);
+}
+
 }  // namespace mpt::gc::detail
 
 extern "C" {
@@ -239,6 +275,8 @@ void* OSAllocFromHeap(OSHeapHandle heap, u32 size) {
     pushFront(h.alloc_head, off);
     return impl().arena + off + kHeader;
   }
+  if (impl().config.fault_on_alloc_failure)
+    fatal("OSAllocFromHeap: heap " + std::to_string(heap) + " has no free block for " + std::to_string(size) + " bytes");
   return nullptr;
 }
 
@@ -290,8 +328,11 @@ void* OSAllocFixed(void** rstart, void** rend) {
 s32 OSCheckHeap(OSHeapHandle heap) {
   boundary();
   HeapSlot& h = heapFor(heap);
+  // The console SDK's answer: each free block's size minus its header, which is what an OSAlloc can
+  // get from it. MP4's HuMemInitAll allocates exactly OSCheckHeap's result for its last heap.
   s32 free_bytes = 0;
-  for (std::uint32_t off = h.free_head; off; off = hdr(off)->next) free_bytes += static_cast<s32>(hdr(off)->size);
+  for (std::uint32_t off = h.free_head; off; off = hdr(off)->next)
+    free_bytes += static_cast<s32>(hdr(off)->size - kHeader);
   return free_bytes;
 }
 

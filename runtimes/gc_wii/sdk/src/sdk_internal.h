@@ -40,7 +40,7 @@ inline constexpr std::uint32_t kCardMaxBlocks = 2048;  // 16 Mbit + headroom
 
 // ---- Arena layout --------------------------------------------------------------
 inline constexpr std::size_t kStateRegionBytes = 1u << 20;
-inline constexpr std::size_t kMainRamBytes = 24u << 20;
+inline constexpr std::size_t kMainRamBytes = 24u << 20;  // the console's; the default SdkConfig::main_ram_bytes
 inline constexpr std::size_t kAramBytes = 16u << 20;
 inline constexpr std::size_t kCardRegionBytes = 2u << 20;  // 16 Mbit
 inline constexpr std::size_t kLowMemoryBytes = 0x3100;     // console OS globals area, kept zero
@@ -297,6 +297,10 @@ struct Sdk::Impl {
   detail::SdkState* st = nullptr;
 
   void* host_sp = nullptr;
+  // Set while a call boundary runs due interrupts on the interrupt coroutine's stack: where the
+  // interrupted caller's stack pointer was saved, which that coroutine switches back to. Transient
+  // (only inside one SDK call), never in a save state.
+  void** irq_return_slot = nullptr;
   std::vector<detail::DvdEntry> dvd;
   std::string fault;
   std::function<void(const char*)> report_sink;
@@ -379,6 +383,8 @@ Result cardBoot(Sdk::Impl& impl);
 void cardHash(StateHasher& h);
 std::vector<std::byte> cardSerialize();
 void heapHash(StateHasher& h);
+void heapForEachHashedRamRange(const std::function<void(const Sdk::RamRange&)>& fn);
+std::uint32_t arTop();
 void osSyncGlobalsFromState();
 
 // Pointers hashed by value: null, an arena offset, or "outside the arena" (module

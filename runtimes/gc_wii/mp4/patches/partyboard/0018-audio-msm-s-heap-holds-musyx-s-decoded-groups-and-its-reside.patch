@@ -1,0 +1,42 @@
+Apply order 0018 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+audio: msm's heap holds MusyX's decoded groups and its resident samples
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+diff --git a/src/game/audio.c b/src/game/audio.c
+index ddc5e00e986bae0ade76df938babb64f680de4e3..c39347c04a361624584cc0b79614d900849ee925 100644
+--- a/src/game/audio.c
++++ b/src/game/audio.c
+@@ -11,7 +11,15 @@
+ #include "game/wipe.h"
+ #include "game/gamework_data.h"
+ 
++#ifdef MPT_PC
++/* MusyX's PC renderer keeps decoded copies of each pushed group's project, pool and 64-bit sample
++ * directory in msm's heap, and every resident sample, which the console kept in the 16 MB ARAM. So:
++ * three times the console's size plus 16 MB, inside HEAP_MUSIC (Party Board's 4x plus 16 MB,
++ * malloc.c), leaving the console's other HEAP_MUSIC room. */
++#define HUMSMHEAP_SIZE (0x13FC00 * 3 + 0x1000000)
++#else
+ #define HUMSMHEAP_SIZE 0x13FC00
++#endif
+ 
+ #define MSM_FILE_PATH "/sound/mpgcsnd.msm"
+ #define PDT_FILE_PATH "/sound/mpgcstr.pdt"
+diff --git a/src/game/malloc.c b/src/game/malloc.c
+index a66cc87dbd62145275e5958e8ea14ad6a3709dab..6879009ad077eccdb16261e57a2da09227b5c1a4 100644
+--- a/src/game/malloc.c
++++ b/src/game/malloc.c
+@@ -13,6 +13,13 @@ void HuMemInitAll(void)
+     for(i=0; i<4; i++) {
+ #ifdef TARGET_PC
+         HeapSizeTbl[i] *= 4;
++#endif
++#ifdef MPT_PC
++        /* MusyX's PC renderer keeps every resident sample in msm's heap (salMalloc), where the
++         * console kept them in the 16 MB ARAM: HEAP_MUSIC gains that room (audio.c's msm heap). */
++        if (i == HEAP_MUSIC) {
++            HeapSizeTbl[i] += 0x1000000;
++        }
+ #endif
+         ptr = OSAlloc(HeapSizeTbl[i]);
+         if(ptr == NULL) {

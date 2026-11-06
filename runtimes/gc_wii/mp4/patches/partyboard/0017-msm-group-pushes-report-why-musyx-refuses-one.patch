@@ -1,0 +1,17 @@
+Apply order 0017 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+msm: group pushes report why MusyX refuses one
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+diff --git a/src/msm/msmsys.c b/src/msm/msmsys.c
+index 01bf5cb32b08b52c10f3482c3d0f99be9d441ac1..6bfb4cb312c143d03350df4351b4f61730a391d1 100644
+--- a/src/msm/msmsys.c
++++ b/src/msm/msmsys.c
+@@ -1,6 +1,8 @@
+ #ifdef MPT_PC
+ #include "mpt_msm_swap.h" /* msm's disc structures are big-endian */
+ #define MPT_MSM_SWAP(call) call
++/* Group pushes report why MusyX refuses one (src/msm_diag.c). */
++#define sndPushGroup mpt_msm_push_group
+ #else
+ #define MPT_MSM_SWAP(call)
+ #endif

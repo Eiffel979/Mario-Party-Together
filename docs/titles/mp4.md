@@ -316,7 +316,7 @@ Shared by every GameCube/Wii title. Built only with Clang (clang-cl on Windows) 
 
 **Scheduler.** SDK threads and the root coroutine (`main()`, the default thread at priority 16) are coroutines on arena stacks (256 KiB each, 32 threads). We use **our own context switch** (about 40 instructions per ABI, Win64 with TIB stack-bound swap, and SysV, all in `context.cpp` with documented frame layouts), accepted by architect with libco as the named fallback. A test on both OSes checks that every callee-saved register survives a round trip into a coroutine that clobbers them all, including xmm6–15 and the TIB stack fields on Win64, MXCSR and the x87 control word. No exception, `longjmp` or SEH unwind may cross a switch. Each stack has a 256-byte canary at its bottom, checked after every switch, so an overflow that runs through it is a deterministic fault (an overflow that skips over it is not caught). The best ready thread runs (lowest priority value, then FIFO). At every SDK call boundary, due interrupts run on the current thread's stack, and a strictly higher-priority thread that they made ready preempts the caller. Interrupts that fall due while every thread is idle run on a dedicated interrupt coroutine. `OSDisableInterrupts` only tracks its return value (ADR 0007 §7). Blocking inside an interrupt handler is a fault. `OSSetIdleFunction` runs the idle function once per frame step on the lowest-priority thread (P1-13b, §15).
 
-**I/O.** DVD, ARAM DMA/ARQ and CARD complete inside the call. Callbacks run at the **next SDK call boundary** by default, so code that sets its "busy" flag after issuing the call still works. `SdkConfig::io_callbacks_before_return` runs them before the call returns instead. The mode is a **per-title constant** recorded here, never a user option, and part of the build fingerprint (architect ruling). **MP4's mode: to be chosen by P1-16**, by checking every completion-wait loop in `game/dvd.c`, `game/data.c`, `game/armem.c`, `game/card.c` and `msm/msmstream.c` (each loop must contain an SDK call for the default to work). The disc is read through `DirectoryFileSource`, which takes entry order and sizes from the extracted `sys/fst.bin` (P1-09's layout, `files/` beside it), rejects unsafe names (`.`, `..`, separators, control bytes) and files missing or with the wrong size, and keeps recently used files open. Reads past the end of a file return zeros.
+**I/O.** DVD, ARAM DMA/ARQ and CARD complete inside the call. Callbacks run at the **next SDK call boundary** by default, so code that sets its "busy" flag after issuing the call still works. `SdkConfig::io_callbacks_before_return` runs them before the call returns instead. The mode is a **per-title constant** recorded here, never a user option, and part of the build fingerprint (architect ruling). **MP4's mode: callbacks before return** (P1-16 audit, §19). The disc is read through `DirectoryFileSource`, which takes entry order and sizes from the extracted `sys/fst.bin` (P1-09's layout, `files/` beside it), rejects unsafe names (`.`, `..`, separators, control bytes) and files missing or with the wrong size, and keeps recently used files open. Reads past the end of a file return zeros.
 
 **PAD mapping** (canonical `Button` → GameCube):
 
@@ -738,6 +738,127 @@ So a minigame is covered on both devices unless it needs something a key cannot 
 - **Linux:** the module has not been built on Linux here, and the ELF section markers and `__start_`/`__stop_` bounds are untested.
 - A soft reset re-creates the SDK. With `arena_base` 0 its arena can move, and states saved before the reset then no longer load; P1-16's fixed arena base removes this. The GX front end's globals are not reset at a soft reset. The game's own `GXInit` at boot re-initializes them; the dump lane should confirm nothing stale is left.
 - The party flags above are derived from the decomp's code paths and have not been observed on a real party yet.
+
+---
+
+## 20. The host runtime (P1-16, `runtimes/gc_wii/mp4/host/`, `adapters/mp4/`)
+
+**Mp4Runtime** is host side, built with the tree's compiler, and drives the module only through `game_abi.h`.
+- `boot()` loads `<build_dir>/module/mp4_game.dll` (`.so`) and creates the game on `<build_dir>/disc`. It uses the fixed arena base and the Phase 1 gameplay flags (none).
+- `status()` (ADR 0011) is the module's step result and fault text, which the module keeps in its save state.
+- **ABI minor versions** (append-only, `game_abi.h`):
+  - v1.1 appends `status`. The loader requires it (`mpt_mp4_api_has_v1_1`), and `mp4_game_abi` checks that a 160-byte v1.0 table is rejected.
+  - v1.2 appends `debug_perturb`, a test-only hook for the hash coverage proof (accepted in PR #48). It acts only on a game created with the unhashed boot flag `MPT_MP4_BOOT_DEBUG_HOOKS`; without it, it returns `MPT_MP4_ERR_ARGUMENT` and changes nothing. `Mp4Runtime::setDebugHooks` sets the flag (the dump lane's `--perturb` does), and `debugPerturb` uses the entry only when the table is at least 176 bytes. A dump-lane run without `--perturb` checks on the real game that the module refuses.
+- `SaveState::format_version` is the module's `state_format()`.
+- If the module was built with the null GX backend, `boot()` falls back to null video.
+
+**Mp4Adapter** (`adapters/mp4`) maps the raw party flags to `PartyPhase` and accepts only an empty ruleset. P1-17 adds the catalog and the ID mapping.
+
+The shell registration (`mpt_register_mp4`) gives `--dump` the asset-import recipe, using this tree's `runtimes/gc_wii`, Clang, Ninja, GX backend and packages.
+
+**Fixed bases** (ADR 0008 §11; `mp4/layout.cmake`, the same on both OSes):
+
+| What | Address | How |
+|---|---|---|
+| Game module image base | `0x500000000000` | **Windows:** `/BASE` with `/DYNAMICBASE:NO /FIXED`, so the image has no relocations and loads there or not at all (checked: `IMAGE_FILE_RELOCS_STRIPPED`, ImageBase `0x500000000000`). **Linux:** lld `--image-base`; glibc asks the kernel for that address. |
+| SDK arena | `0x400000000000` | Reserved by the SDK at `create`, which fails if the address is unavailable. |
+
+The loader refuses a module that landed anywhere else, and `mp4_game_abi` checks the base. **Linux has not been run here.** The fresh-process save/load demonstration (E5) is still to do on both OSes.
+
+**I/O callback mode: before return** (`SdkConfig::io_callbacks_before_return = true`). The audit:
+
+| Code | Wait | SDK call in the loop? |
+|---|---|---|
+| `game/dvd.c` `HuDvdDataReadWait` | `while(!CallBackStatus) HuDvdErrorWatch();` | yes (`DVDGetDriveStatus`) |
+| `game/data.c` `HuDataDVDdirDirectRead` | `while(DVDGetCommandBlockStatus(...))` | yes |
+| `game/data.c`, `game/armem.c` (four sites) | `while (HuARDMACheck());` straight after `ARQPostRequest` | **no**: it only reads `arqCnt` |
+| `game/card.c` | `do CARDProbeEx(...) while (BUSY)` | yes |
+| `msm/msmstream.c` | no waits; completion chains through `msmStreamDvdCallback` | n/a |
+
+The `armem.c` loops would never see their callback under the default mode, so MP4 runs callbacks before return. Ordering was checked:
+- Every caller sets its counters and busy/status fields (`arqCnt++`, `CallBackStatus = 0`, `readBusyF`, `status`) **before** the call.
+- The stream callbacks' nested read (`msmStreamDvdCallback` case 4) touches nothing that `msmStreamDvdCallback2` reads.
+- Stereo streams complete left then right, as on the console.
+
+**Process stacks.**
+- **Size** (Party Board patch 0002). Twice the console's size for 64-bit frames, plus a fixed 16 KiB for the host code under game calls (GX on aurora, the C runtime). That host depth does not scale with the console's stack. The patch hash is in the build ID, so the changed heap layout gets a new one.
+- **High water.** `src/libco.c` paints each stack at creation. It measures the stack when the process ends, and also samples it when the process yields (1 switch in 256), which covers long-lived processes. OSReport prints each new peak with the process's entry address, which is stable because the module sits at a fixed base.
+- **What drove the peak.** Before the headroom, `HuWinProc` (window.c; 0x1000 on the console, 8 KiB here) peaked at 7816 of 7904 bytes (98.8%). Moving interrupts off the stack (below) did not change that, so the depth comes from its own calls into GX and the CRT. With the headroom it peaks at 7720 of 24,288 bytes (31.7%). The largest other peak in the boot window is 15.4% of a 48 KiB stack.
+- **Interrupts.** Due interrupts at an SDK call boundary used to run on whatever stack was current, which could be a game process's coroutine stack. They now run on the SDK's interrupt coroutine and switch straight back (`runDueOffStack`). The same events run in the same order, and a handler still sees the interrupted thread as current. A synthetic SDK test checks both.
+- **Deleted stacks are scrubbed.** `co_delete` repaints a stack before process.c frees it. Host frames leave per-process values on a stack (stack cookies, host heap pointers), and the game may hand the memory out again.
+
+**Dump lane.** `mpt_dump_lane --boot mp4 [--frames N] [--every N] [--seed S] [--perturb]` is the M1 check: it boots headless with no input, prints the state hash every N frames and the game's OSReport text, and fails if the runtime halts or faults. It also prints the mean wall time of a `stateHash()` call. That timing is a harness measurement; nothing in the runtime reads a clock.
+- `--perturb` runs the coverage checks below at every checkpoint, and fails on any miss.
+- `--press button@frame[+frames][,...]` holds buttons on player 1 (connected whenever a script is given; 6 frames by default). `--capture DIR [--capture-every N]` writes checkpoint frames as PNGs. Captures are the user's own game output: they go only to the directory given, never into the repository.
+- The dump comes from `MPT_DUMP_DIR`. It is identified and built through asset-import as `--dump` does, into `MPT_BUILD_CACHE` (default `<MPT_DUMP_DIR>/mpt-build-cache`).
+- `MPT_SOURCE_CACHE` reuses pinned checkouts instead of fetching them.
+- **Dev-environment quirk.** Processes started from the Claude desktop app see a virtualised `%APPDATA%` (under `%LOCALAPPDATA%\Packages\<app>\LocalCache\Roaming`), so caches built there are not the ones the real launcher uses. The first launch outside it rebuilds into the real `%APPDATA%` cache. No code change is needed.
+
+**Memory (ADR 0008 amendment, PRs #44 and #46): 112 MiB of emulated main RAM.**
+- **What the space holds.** Party Board's `TARGET_PC` multiplies the console's game heaps by 4 for 64-bit pointers and the converted HSF structures (`malloc.c`). With HEAP_MUSIC grown by 16 MB (Party Board patch 0018, below), the heaps are 9 + 21 + 42 + 22 MiB. `HuMemInitAll` gives what OSAlloc's arena has left to its last heap. That is about 16 MiB at 112 MiB, and the console's 24 MiB arena left about 4.5 MiB the same way.
+- **What it is not.** `main_ram_bytes` is a build constant in `layout.cmake`, part of the build ID, and identical on every platform. It is never a setting. ARAM (16 MB) and the stack region keep their fixed sizes.
+- **Save states.** They record the arena layout (main RAM, ARAM, total), and `load_state` rejects a mismatch.
+- **Hardware getters.** `OSGetPhysicalMemSize` and `OSGetConsoleSimulatedMemSize` still answer 24 MiB. `init.c` only prints them; its `meminfo.bin` path is not on the disc.
+- **Failures.** An OSAlloc failure is a deterministic fault (`SdkConfig::fault_on_alloc_failure`).
+- **Still to measure.** The sizing rule is the smallest multiple of 8 MiB that covers the heaps plus the SDK's fixed allocations, with at least 10% margin. Peak arena use over the full-party replay with music playing, and save and load times, are **still to be measured** on the dump lane. The size is confirmed or reduced from that measurement.
+
+**MusyX's PC sample store (Party Board patch 0018).** MusyX's PC renderer keeps every resident sample in msm's heap (through `salMalloc`, `aramStoreData`), where the console kept them in the 16 MB ARAM. It also keeps decoded copies of each pushed group's project, pool and 64-bit sample directory there. The first boots failed `sndPushGroup` with "pool out of memory". Patch 0018 grows HEAP_MUSIC by 16 MB and makes msm's heap three times the console's size plus 16 MB.
+
+**MusyX patch 0001** (`runtimes/gc_wii/musyx/patches/`, applied to a build-tree copy of the pin, CC0, ADR 0009 section 5; approved in PR #46):
+- **Purpose.** A group push succeeds when the group names samples that neither its own sample directory nor a resident group has.
+- **Console behaviour it restores.** On Dolphin, `sndPushGroup` → `InsertSamples` → `ScanIDList` ignores `dataAddSampleReference` returning FALSE, so such samples are skipped. The PC push refused the whole group. MP4 relies on the console behaviour: the first clean-memory boot found group 93 naming 51 such samples, which made `GroupSet` fail with -32.
+- **What it does not change.** Only that case is skipped. A sample that is present but fails to upload still fails the push.
+- **Test.** The synthetic test in `musyx/tests` pushes a group naming a missing sample and checks that the group pushes and its present sample plays. It also checks that a failed upload still fails the push. Without the patch the first check fails.
+- **Build.** The patch hashes are in the module's build ID. Configure fails if a patch does not apply, as it does for aurora's and Party Board's.
+- **Upstream.** To be offered to AxioDL/musyx.
+
+**State hash manifest (E4).** `state_hash` covers, in this order:
+- **Manifest fields.** The gameplay flags, the frame and generation bases, resets and status.
+- **SDK state by value.** Scheduler, events, queues, alarms, mutexes, the heap lists and the attached sound engine.
+- **Named game globals.** GWPlayerCfg, GWPlayer, GWSystem, GWGameStat, the RNG seed and the current overlay.
+- **Game memory** (`hashMemory` in `src/abi.cpp`):
+  - The game core's data range and every REL's, which is what the save state carries.
+  - Main RAM through `Sdk::forEachHashedRamRange`: each allocated OSAlloc block, plus RAM outside the OS heaps. A block that holds one of the HuMem heaps is walked instead. Only its allocated HuMem blocks count, with their headers hashed as offsets and the debug `retaddr` left out. Each process's own HuMem heap is walked the same way. A coroutine stack counts only by its record: entry, size, and the saved stack pointer as an offset.
+  - ARAM below the ARAlloc top.
+- **Left out.** Free OSAlloc and HuMem space, and coroutine stack contents. The SDK's own thread stacks are not hashed either.
+- **Digest.** Raw memory goes through `mpt::gc::memoryDigest` (`sdk/include/mpt/gc/digest.h`), a 64-bit word-wise digest modelled on XXH64, with goldens. Each range's size and digest go into the `StateHasher`.
+- **Cost.** About 3.5 to 3.8 ms per `stateHash()` call on the title screen (Windows, Release; the mean of 100 calls).
+- **Coverage proof** (`--perturb`, ABI v1.2 `debug_perturb`, test only). Flipping one byte must change the hash for: the game data range, an allocated HuMem block, ARAM in use, and GWSystem. It must not change the hash for: a free HuMem block, or a byte inside a process stack. Restoring the byte must give the original hash back. All 60 checks (6 targets at 10 checkpoints over 10,000 frames) pass.
+- **What the proof found.**
+  - Two processes with the same seed differed from frame 100 once memory was hashed. One cause was Party Board's `byteswap.cpp`: its file-scope `std::unordered_set` sat in the game data range, so its host heap pointers were saved and hashed, and a `load_state` would have restored them over the live container. It now builds outside the game section.
+  - The other cause was the coroutine stacks' host frames (stack cookies, host pointers), now hashed by record only.
+- **Floats in memory are hashed as raw bits.** ADR 0008's NaN canonicalisation applies to float fields the manifest hashes by name. Memory is bytes, and the hash cannot tell which words are floats. Within one build on one platform the NaN bits are as deterministic as everything else, which the two-process runs confirm. **Flagged for architect:** across platforms, hashing raw memory can split on NaN payloads. It can also split on pointers the game stores into the module, because the Windows DLL and the Linux .so lay out their code and data differently. A raw-memory hash is therefore same-build, same-platform. Cross-platform sessions need either one platform per session or a hash without raw memory.
+
+**msm diagnostics (Party Board patch 0017, `src/msm_diag.c`).** msm only reports `MSM_ERR_GRP_FAILPUSH`. Group pushes now go through `mpt_msm_push_group`, which reports why MusyX refused a group through OSReport: the validation error, msm's heap headroom, and the macros, curves, keymaps, layers or samples that do not resolve.
+
+**M1 (boots headless), Windows, rerun 2026-11-05** on the libm redirects (qa #40), the memory hash manifest and Party Board patch 0019.
+- **Boot.** `mpt_dump_lane --boot mp4` on the user's GMPE01_00 dump runs clean: no halt or fault. msm's one diagnostic line is unchanged since the first boot. With no input the game stays in bootDll, the boot and title sequence.
+- **Build.** The module builds from the dump in about 70 s. Each 10,000-frame run takes about 12 s.
+- **Determinism.** 10,000 frames, checkpoints every 100 frames, in two separate processes:
+  - seed 1: `c8f8da4267f8d431` at frame 10,000 in both, identical at all 100 checkpoints;
+  - seed 2: `a619f53f9b4f56d5`, different at all 100.
+- **Earlier trail.** The first M1 (2026-10-21) used the coarse hash (SDK state and named globals only). Its trail did not move with the libm change, because it did not cover game memory.
+- **Not yet.** Fresh-process save/load (E5) and the Linux runs are still to do.
+
+**M2 (Dawn backend, title screen, menus), Windows, 2026-11-05.**
+- **Backend.** The host build with `MPT_GX_BACKEND=dawn` passes the backend and Dawn prefix to the recipe, and they are part of the cached module's key. The recipe installs the module's runtime DLLs (`webgpu_dawn.dll`) next to it. The GX layer names vcpkg's static zlib (`zs.lib`), since the Clang build has no vcpkg toolchain. Video is 640x480 RGBA through the readback path.
+- **Boot.** The Nintendo and Hudson logos render from frame 60 to about 540.
+- **Title and menus.** A script of `start@900,start@1200,a@1500,a@1800,a@2100,a@2400` reaches, in order:
+  - the title screen (about frame 960);
+  - "Select a File" with the memory card slots;
+  - the three file slots;
+  - the new-file opening on the blank card.
+- **Fixed on the way.**
+  - **Exit crash.** The Dawn lane ended in a fail-fast (0xC0000409), because the module's static teardown ran at process exit after the other threads were gone. The last `Mp4Runtime` now unloads the module (`release_module`) while the process runs.
+  - **Boot audio.** Party Board patch 0019 restores the boot sound group and the title music (TODO PC upstream).
+- **Opening movie: open.** Party Board skips the movie on PC, so with no input bootDll shows a black screen until START or A. Enabling it showed that `THPSimpleOpen` compares the big-endian THP header (`mVersion`, offsets) on a little-endian host, and fails every frame. The movie needs a THPSimple patch that reads the file and frame headers in host byte order; until then it stays off.
+- **Pipeline cache.** aurora reports that its SQLite pipeline cache cannot open its database. Rendering is unaffected; the cache path is still to fix.
+
+**Still open in P1-16:**
+- the GX front-end state and the function-pointer registration table in the hash manifest (E4; memory is done, above);
+- the fresh-process save/load demonstration (E5);
+- the Linux build;
+- the conformance suite on the dump lane.
 
 ---
 

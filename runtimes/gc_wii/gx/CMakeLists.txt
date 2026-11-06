@@ -253,6 +253,9 @@ target_compile_options(mpt_gx_renderer_null PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:$
 if(MPT_GX_BACKEND STREQUAL "dawn")
   find_package(Dawn CONFIG REQUIRED PATHS "${MPT_DAWN_PREFIX}" NO_DEFAULT_PATH)
   find_package(SDL3 CONFIG REQUIRED)
+  # The Clang build has no vcpkg toolchain, whose zlib wrapper names vcpkg's static zlib (zs.lib,
+  # zsd.lib) for FindZLIB, which FindPNG needs. Name it here; a system zlib is still found as z/zlib.
+  find_library(ZLIB_LIBRARY NAMES zs z zlib zlibstatic NAMES_PER_DIR)
   find_package(PNG REQUIRED)
   find_package(unofficial-sqlite3 CONFIG REQUIRED)
   add_library(mpt_gx_renderer_dawn STATIC ${MPT_GX_RENDERER_SOURCES} src/dawn_renderer.cpp)

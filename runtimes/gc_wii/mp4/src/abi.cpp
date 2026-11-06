@@ -17,6 +17,7 @@
 #include "copy_trap.h"
 #include "mpt/core/input.h"
 #include "mpt/core/state.h"
+#include "mpt/gc/digest.h"
 #include "mpt/gc/file_source.h"
 #include "mpt/gc/musyx_engine.h"
 #include "mpt/gc/sdk.h"
@@ -27,6 +28,9 @@
 
 #ifndef MPT_MP4_BUILD_ID
 #error "MPT_MP4_BUILD_ID must be defined by runtimes/gc_wii/mp4/CMakeLists.txt"
+#endif
+#ifndef MPT_MP4_MAIN_RAM_BYTES
+#error "MPT_MP4_MAIN_RAM_BYTES comes from runtimes/gc_wii/mp4/layout.cmake"
 #endif
 
 static_assert(sizeof(MptMp4InputFrame) == sizeof(mpt::InputFrame), "MptMp4InputFrame mirrors mpt::InputFrame");
@@ -53,6 +57,7 @@ struct MptMp4Game {
   bool audio_output = true;
   std::uintptr_t arena_base = 0;
   bool copy_trap = false;
+  bool debug_hooks = false;  // MPT_MP4_BOOT_DEBUG_HOOKS: test-only entries allowed (PR #48)
 
   std::unique_ptr<mpt::gc::DirectoryFileSource> files;
   std::vector<unsigned char> dol;  // the user's main.dol; the game gets copies of its blobs
@@ -81,7 +86,7 @@ namespace {
 MptMp4Game* g_game = nullptr;
 
 constexpr std::uint32_t kStateMagic = 0x4D503453;  // "MP4S": the module's trailer after the SDK state
-constexpr std::uint32_t kStateFormat = 2;          // the blob's layout version (SaveState::format_version)
+constexpr std::uint32_t kStateFormat = 3;          // the blob's layout version (SaveState::format_version)
 
 void setError(MptMp4Error* error, const std::string& message) {
   if (error == nullptr || error->struct_size < MPT_MP4_ERROR_SIZE_V1_0) return;
@@ -144,8 +149,14 @@ bool boot(MptMp4Game& game, std::optional<mpt::SaveMedia> card, std::string& err
   sc.card.game_code = {{'G', 'M', 'P', 'E'}};
   sc.card.maker_code = {{'0', '1'}};
   sc.card.image = std::move(card);
-  // MP4's I/O callback mode is chosen by P1-16's audit of the completion-wait loops (mp4.md §14).
-  sc.io_callbacks_before_return = false;
+  // MP4's I/O callback mode (P1-16 audit, mp4.md section 14): before return. armem.c spins on
+  // `while (HuARDMACheck());` right after ARQPostRequest with no SDK call in the loop, so a callback
+  // left for the next call boundary would never run.
+  sc.io_callbacks_before_return = true;
+  // Party Board's TARGET_PC heaps are four times the console's (malloc.c, 64-bit structures): a build
+  // constant (layout.cmake, part of the build ID), and an OSAlloc failure is a fault (PR #44).
+  sc.main_ram_bytes = MPT_MP4_MAIN_RAM_BYTES;
+  sc.fault_on_alloc_failure = true;
   sc.arena_base = game.arena_base;
   sc.audio_engine = mpt::gc::MusyxEngine::engine();
   sc.audio_output = game.audio_output;
@@ -241,6 +252,7 @@ MptMp4Status create(const MptMp4BootConfig* in, MptMp4Game** out, MptMp4Error* e
     std::memcpy(media.data.data(), config.save_media, config.save_media_size);
     card = std::move(media);
   }
+  game->debug_hooks = (config.flags & MPT_MP4_BOOT_DEBUG_HOOKS) != 0;
   if ((config.flags & MPT_MP4_BOOT_DEBUG_COPY_TRAP) != 0) {
     mpt::mp4::copy_trap_enable();
     game->copy_trap = true;
@@ -345,6 +357,43 @@ void hashBytes(void* user, const void* data, std::size_t size) {
   static_cast<mpt::StateHasher*>(user)->update({static_cast<const std::byte*>(data), size});
 }
 
+// Raw memory goes through the fast digest; its size goes in too, so moving bytes between ranges
+// changes the hash.
+void hashRange(mpt::StateHasher& h, std::span<const std::byte> bytes) {
+  h.update_u64(bytes.size());
+  h.update_u64(mpt::gc::memoryDigest(bytes));
+}
+void digestBytes(void* user, const void* data, std::size_t size) {
+  hashRange(*static_cast<mpt::StateHasher*>(user), {static_cast<const std::byte*>(data), size});
+}
+
+// The memory part of MP4's hash manifest (P1-16): what a save state carries, less free heap space.
+//  - The game core's and every REL's data range (gameStateRegions).
+//  - Main RAM: each allocated OSAlloc block; a block holding a HuMem heap is walked instead and
+//    only its allocated HuMem blocks count; main RAM outside the OS heaps counts in full.
+//  - ARAM below the ARAlloc top.
+// Floats in these ranges are hashed as raw bits: within one build and platform the game's NaN bits
+// are as deterministic as everything else (docs/titles/mp4.md §20 on ADR 0008's NaN rule).
+void hashMemory(const MptMp4Game& game, mpt::StateHasher& h) {
+  h.update_u64(0x4D50'344D'454D'0001ull);  // "MP4MEM", manifest part version 1
+  for (const std::span<std::byte>& region : gameStateRegions()) hashRange(h, region);
+  std::uint64_t broken = 0;
+  game.sdk->forEachHashedRamRange([&](const mpt::gc::Sdk::RamRange& r) {
+    h.update_u64(mpt::gc::hashGamePointer(r.bytes.data()));
+    if (r.data != nullptr) {
+      const int humem = mpt_mp4_hash_humem_heap(r.data, &hashBytes, &digestBytes, &h);
+      if (humem == 1) {
+        hashRange(h, r.bytes.first(r.bytes.size() - r.data_size));  // the OSAlloc header
+        return;
+      }
+      if (humem < 0) ++broken;  // a corrupt HuMem chain: hash the whole block instead
+    }
+    hashRange(h, r.bytes);
+  });
+  h.update_u64(broken);
+  hashRange(h, game.sdk->aramInUse());
+}
+
 // Determinism inputs and game state only: presentation and debug settings never reach the hash.
 std::uint64_t stateHash(const MptMp4Game* game) {
   if (game == nullptr) return 0;
@@ -356,7 +405,45 @@ std::uint64_t stateHash(const MptMp4Game* game) {
   h.update_u64(static_cast<std::uint64_t>(game->status));
   game->sdk->hashState(h);  // includes the attached sound engine
   mpt_mp4_hash_game(&hashBytes, &h);
+  hashMemory(*game, h);
   return h.digest();
+}
+
+// Test only (ABI v1.2): the byte debug_perturb flips for `target`, or nullptr.
+std::byte* perturbByte(MptMp4Game& game, std::uint32_t target) {
+  auto middle = [](std::span<const std::byte> s) -> std::byte* {
+    return s.empty() ? nullptr : const_cast<std::byte*>(s.data() + s.size() / 2);
+  };
+  switch (target) {
+    case MPT_MP4_PERTURB_GAME_DATA:
+      return middle({reinterpret_cast<const std::byte*>(mpt_mp4_game_data_lo()),
+                     static_cast<std::size_t>(mpt_mp4_game_data_hi() - mpt_mp4_game_data_lo())});
+    case MPT_MP4_PERTURB_HEAP_BLOCK:
+    case MPT_MP4_PERTURB_FREE_HEAP: {
+      void* data = mpt_mp4_humem_find_block(target == MPT_MP4_PERTURB_HEAP_BLOCK, 64);
+      return data != nullptr ? static_cast<std::byte*>(data) + 32 : nullptr;
+    }
+    case MPT_MP4_PERTURB_STACK:
+      return static_cast<std::byte*>(mpt_mp4_humem_find_stack());
+    case MPT_MP4_PERTURB_ARAM:
+      return middle(game.sdk->aramInUse());
+    case MPT_MP4_PERTURB_GLOBAL: {
+      std::size_t size = 0;
+      return static_cast<std::byte*>(mpt_mp4_registered_global(&size));
+    }
+    default:
+      return nullptr;
+  }
+}
+
+std::int32_t debugPerturb(MptMp4Game* game, std::uint32_t target) {
+  if (game == nullptr || game != g_game || !game->debug_hooks || game->sdk == nullptr ||
+      target < MPT_MP4_PERTURB_GAME_DATA || target > MPT_MP4_PERTURB_STACK)
+    return MPT_MP4_ERR_ARGUMENT;
+  std::byte* b = perturbByte(*game, target);
+  if (b == nullptr) return MPT_MP4_ERR_STATE;
+  *b ^= std::byte{0xFF};
+  return MPT_MP4_OK;
 }
 
 void putU32(std::vector<std::byte>& v, std::uint32_t x) {
@@ -403,6 +490,10 @@ std::vector<std::byte> buildState(const MptMp4Game& game) {
   std::vector<std::byte> state = game.sdk->saveState();
   const std::size_t start = state.size();
   putString(state, MPT_MP4_BUILD_ID);
+  // The arena layout (PR #44): a state only loads into the same layout.
+  putU64(state, game.sdk->mainRam().size());
+  putU64(state, game.sdk->aram().size());
+  putU64(state, game.sdk->arenaSize());
   putU32(state, game.gameplay_flags);
   putU64(state, game.frame_base);
   putU64(state, game.generation_base);
@@ -444,6 +535,9 @@ MptMp4Status loadState(MptMp4Game* game, const std::uint8_t* data, std::size_t s
   const std::size_t sdk_size = size - 12 - trailer;
   Reader r{data + sdk_size, trailer};
   const std::string build = r.str();
+  const std::uint64_t main_ram = r.u64();
+  const std::uint64_t aram = r.u64();
+  const std::uint64_t arena = r.u64();
   const std::uint32_t flags = r.u32();
   const std::uint64_t frame_base = r.u64();
   const std::uint64_t generation_base = r.u64();
@@ -458,6 +552,11 @@ MptMp4Status loadState(MptMp4Game* game, const std::uint8_t* data, std::size_t s
   }
   if (build != MPT_MP4_BUILD_ID) {
     setError(error, "load_state: the state is from build " + build + ", this module is " MPT_MP4_BUILD_ID);
+    return MPT_MP4_ERR_STATE;
+  }
+  if (main_ram != game->sdk->mainRam().size() || aram != game->sdk->aram().size() ||
+      arena != game->sdk->arenaSize()) {
+    setError(error, "load_state: the state's arena layout (main RAM, ARAM, stacks) differs from this module's");
     return MPT_MP4_ERR_STATE;
   }
   mpt::Result result = game->sdk->loadState({reinterpret_cast<const std::byte*>(data), sdk_size});
@@ -535,10 +634,13 @@ void party(const MptMp4Game* game, MptMp4Party* out) {
   mpt_mp4_read_party(out);
 }
 
+MptMp4StepResult statusOf(const MptMp4Game* game) { return game ? result(*game) : MPT_MP4_STEP_FAULTED; }
+
 const MptMp4Api kApi = {
     sizeof(MptMp4Api), MPT_MP4_ABI_VERSION, MPT_MP4_BUILD_ID,
     &create, &destroy, &step, &frame, &fault, &frameRate, &stateHash, &saveState, &loadState, &stateFormat,
-    &saveMediaGeneration, &saveMedia, &cardFormat, &video, &audio, &rumble, &setReport, &party,
+    &saveMediaGeneration, &saveMedia, &cardFormat, &video, &audio, &rumble, &setReport, &party, &statusOf,
+    &debugPerturb,
 };
 
 }  // namespace

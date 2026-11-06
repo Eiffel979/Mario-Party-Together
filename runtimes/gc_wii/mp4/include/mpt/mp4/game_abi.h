@@ -89,6 +89,9 @@ typedef enum MptMp4VideoBackend {
 /* Debug flags: never part of the state hash. Trap CPU reads of GXCopyTex destinations (ADR 0007
  * section 5); a read faults the step. */
 #define MPT_MP4_BOOT_DEBUG_COPY_TRAP 0x100u
+/* Debug hooks (ADR 0008 amendment, PR #48): the test-only entries (debug_perturb) act only on a game
+ * created with this flag. Never part of the state hash or a save state. */
+#define MPT_MP4_BOOT_DEBUG_HOOKS 0x200u
 
 /* video_backend, internal_scale, audio_output, cache_dir and arena_base are presentation or placement
  * settings and never change the state hash. Strings are copied during create. */
@@ -220,7 +223,29 @@ typedef struct MptMp4Api {
 
   /* Cheap and pure: never changes game state (ADR 0002 rule 9). */
   void (*party)(const MptMp4Game* game, MptMp4Party* out);
+
+  /* v1.1: the module's status (RUNNING, HALTED or FAULTED), the same value the last step returned and
+   * what a load_state restored (ADR 0011). NULL in a v1.0 module. */
+  MptMp4StepResult (*status)(const MptMp4Game* game);
+
+  /* v1.2, test only (E4 hash coverage): flips one byte (XOR 0xFF) of the memory class `target`
+   * (MptMp4PerturbTarget) so a test can check what state_hash covers; the same call again restores
+   * it, as long as no frame ran in between. Between steps only. Acts only on a game created with
+   * MPT_MP4_BOOT_DEBUG_HOOKS (PR #48). Returns an MptMp4Status: MPT_MP4_OK when it flipped a byte,
+   * MPT_MP4_ERR_STATE when the class has none right now (for example no ARAM in use yet), and
+   * MPT_MP4_ERR_ARGUMENT, changing nothing, for a game without the flag, a null game or an unknown
+   * target. Never for gameplay. NULL before v1.2. */
+  int32_t (*debug_perturb)(MptMp4Game* game, uint32_t target);
 } MptMp4Api;
+
+typedef enum MptMp4PerturbTarget {
+  MPT_MP4_PERTURB_GAME_DATA = 1,  /* the game core's data range (middle byte) */
+  MPT_MP4_PERTURB_HEAP_BLOCK = 2, /* data of the first allocated HuMem block of 64+ bytes */
+  MPT_MP4_PERTURB_ARAM = 3,       /* ARAM in use (middle byte) */
+  MPT_MP4_PERTURB_GLOBAL = 4,     /* GWSystem, a global the manifest hashes by name */
+  MPT_MP4_PERTURB_FREE_HEAP = 5,  /* data of the first free HuMem block of 64+ bytes: must NOT count */
+  MPT_MP4_PERTURB_STACK = 6       /* inside a process coroutine stack: must NOT count */
+} MptMp4PerturbTarget;
 
 /* v1.0 sizes (x86-64). A caller's struct_size must be at least these. */
 #define MPT_MP4_ERROR_SIZE_V1_0 260u
@@ -229,6 +254,8 @@ typedef struct MptMp4Api {
 #define MPT_MP4_AUDIO_SIZE_V1_0 32u
 #define MPT_MP4_PARTY_SIZE_V1_0 136u
 #define MPT_MP4_API_SIZE_V1_0 160u
+#define MPT_MP4_API_SIZE_V1_1 168u /* adds status */
+#define MPT_MP4_API_SIZE_V1_2 176u /* adds debug_perturb */
 
 MPT_MP4_STATIC_ASSERT(sizeof(void*) == 8, "the MP4 game module ABI is defined for 64-bit hosts");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Error) == MPT_MP4_ERROR_SIZE_V1_0, "MptMp4Error v1.0");
@@ -236,7 +263,9 @@ MPT_MP4_STATIC_ASSERT(sizeof(MptMp4BootConfig) == MPT_MP4_BOOT_CONFIG_SIZE_V1_0,
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Video) == MPT_MP4_VIDEO_SIZE_V1_0, "MptMp4Video v1.0");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Audio) == MPT_MP4_AUDIO_SIZE_V1_0, "MptMp4Audio v1.0");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Party) == MPT_MP4_PARTY_SIZE_V1_0, "MptMp4Party v1.0");
-MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Api) == MPT_MP4_API_SIZE_V1_0, "MptMp4Api v1.0");
+MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Api) == MPT_MP4_API_SIZE_V1_2, "MptMp4Api v1.2");
+MPT_MP4_STATIC_ASSERT(offsetof(MptMp4Api, status) == MPT_MP4_API_SIZE_V1_0, "status is the v1.1 append");
+MPT_MP4_STATIC_ASSERT(offsetof(MptMp4Api, debug_perturb) == MPT_MP4_API_SIZE_V1_1, "debug_perturb is the v1.2 append");
 /* Frozen for major version 1. */
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Pad) == 32, "MptMp4Pad is frozen");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4InputFrame) == 136, "MptMp4InputFrame is frozen");
@@ -246,6 +275,13 @@ MPT_MP4_STATIC_ASSERT(sizeof(MptMp4PartyPlayer) == 20, "MptMp4PartyPlayer is fro
 /* The module's only export. Returns NULL if it does not implement `abi_version`. */
 MPT_MP4_EXPORT const MptMp4Api* mpt_mp4_get_api(uint32_t abi_version);
 typedef const MptMp4Api* (*MptMp4GetApiFn)(uint32_t abi_version);
+
+/* Whether a table the module returned implements v1.1 (status). A v1.0 table has struct_size 160
+ * and no status field: a host must not read past struct_size. */
+static inline int mpt_mp4_api_has_v1_1(const MptMp4Api* api) {
+  return api != NULL && api->abi_version == MPT_MP4_ABI_VERSION && api->struct_size >= MPT_MP4_API_SIZE_V1_1 &&
+         api->status != NULL;
+}
 
 #ifdef __cplusplus
 }

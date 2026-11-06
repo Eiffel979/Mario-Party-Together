@@ -200,10 +200,38 @@ void threadEntry(void* arg) {
   exitCurrent(result);
 }
 
+// The interrupt coroutine. Resumed by the frame step between threads (back to the host when done),
+// or by a call boundary inside a thread (runDueOffStack: back to that thread's stack when done).
 void irqEntry(void*) {
   for (;;) {
     runDue();
-    switchToHost();
+    auto& I = impl();
+    if (I.irq_return_slot != nullptr) {
+      void** back = I.irq_return_slot;
+      I.irq_return_slot = nullptr;
+      mpt_gc_switch_context(&st().threads[kIrqSlot].ctx_sp, *back);
+    } else {
+      switchToHost();
+    }
+  }
+}
+
+// Due interrupts at a call boundary run on the interrupt coroutine's own arena stack, not on the
+// caller's: a game process's small libco stack must not also hold MusyX rendering or other handler
+// work (ADR 0008 section 1). Nothing else changes: the same events run in the same order at the same
+// point, s.current still names the interrupted thread (as OSGetCurrentThread does in a handler on
+// the console), and the caller resumes right after.
+void runDueOffStack() {
+  auto& I = impl();
+  auto& s = st();
+  if (I.irq_return_slot != nullptr) fatal("interrupts re-entered from a call boundary");
+  void* caller_sp = nullptr;
+  I.irq_return_slot = &caller_sp;
+  mpt_gc_switch_context(&caller_sp, s.threads[kIrqSlot].ctx_sp);
+  if (!stackCanaryIntact(I, kIrqSlot) && !s.faulted) {
+    s.faulted = 1;
+    I.fault = "stack overflow on the interrupt stack (its " + std::to_string(I.config.thread_stack_bytes / 1024) +
+              " KiB arena stack; raise SdkConfig::thread_stack_bytes)";
   }
 }
 
@@ -294,15 +322,18 @@ std::uint64_t hashPointer(const void* p) {
 
 void switchToHost() {
   auto& s = st();
-  const std::int32_t slot = s.current;
-  mpt_gc_switch_context(&s.threads[slot].ctx_sp, impl().host_sp);
+  auto& I = impl();
+  // On the interrupt stack inside runDueOffStack (a fault in a handler), save that coroutine's
+  // context, not the interrupted thread's: the thread is still parked in runDueOffStack.
+  const std::int32_t slot = I.irq_return_slot != nullptr ? static_cast<std::int32_t>(kIrqSlot) : s.current;
+  mpt_gc_switch_context(&s.threads[slot].ctx_sp, I.host_sp);
 }
 
 void boundary() {
   if (!active()) return;
   auto& s = st();
   if (s.current < 0 || s.current == static_cast<std::int32_t>(kIrqSlot) || s.in_interrupt) return;
-  if (s.now >= g_earliest) runDue();
+  if (s.now >= g_earliest) runDueOffStack();
   if (s.faulted || s.halted || s.reset_requested) switchToHost();
   maybePreempt();
 }
@@ -547,6 +578,8 @@ Result Sdk::create(const SdkConfig& config, MainFn main, void* arg, std::unique_
         "Link the host executable with /CETCOMPAT:NO (Windows) or without shadow-stack marking (-fcf-protection=none).");
   if (config.thread_stack_bytes < 64 * 1024 || config.thread_stack_bytes % 4096 != 0)
     return Result::failure("thread_stack_bytes must be a multiple of 4096 and at least 64 KiB");
+  if (config.main_ram_bytes < (24u << 20) || config.main_ram_bytes > (1u << 30) || config.main_ram_bytes % (64 * 1024) != 0)
+    return Result::failure("main_ram_bytes must be a multiple of 64 KiB from 24 MiB to 1 GiB");
   for (const auto& region : config.state_regions)
     if (region.empty() || !region.data()) return Result::failure("empty registered state region");
   if (config.card.size_mbits != 4 && config.card.size_mbits != 8 && config.card.size_mbits != 16)
@@ -560,7 +593,7 @@ Result Sdk::create(const SdkConfig& config, MainFn main, void* arg, std::unique_
   constexpr std::size_t kAlign = 64 * 1024;
   std::size_t off = alignUp(kStateRegionBytes, kAlign);
   I->main_offset = off;
-  off = alignUp(off + kMainRamBytes, kAlign);
+  off = alignUp(off + config.main_ram_bytes, kAlign);
   I->aram_offset = off;
   off = alignUp(off + kAramBytes, kAlign);
   I->card_offset = off;
@@ -611,7 +644,7 @@ Result Sdk::create(const SdkConfig& config, MainFn main, void* arg, std::unique_
   s.progressive = 0;
   s.current_heap = -1;
   s.arena_lo = static_cast<std::uint32_t>(I->main_offset + kLowMemoryBytes);
-  s.arena_hi = static_cast<std::uint32_t>(I->main_offset + kMainRamBytes);
+  s.arena_hi = static_cast<std::uint32_t>(I->main_offset + I->config.main_ram_bytes);
   s.tv_format = config.video == VideoStandard::ntsc ? VI_NTSC : VI_PAL;
   s.dvd_auto_invalidation = 1;
   s.idle_slot = -1;
@@ -686,8 +719,14 @@ std::int64_t Sdk::now() const { return impl_->st->now; }
 std::int64_t Sdk::epoch() const { return impl_->st->epoch; }
 std::byte* Sdk::arenaBase() const { return impl_->arena; }
 std::size_t Sdk::arenaSize() const { return impl_->arena_size; }
-std::span<std::byte> Sdk::mainRam() const { return {impl_->mainRam(), kMainRamBytes}; }
+std::span<std::byte> Sdk::mainRam() const { return {impl_->mainRam(), impl_->config.main_ram_bytes}; }
 std::span<std::byte> Sdk::aram() const { return {impl_->aramBase(), kAramBytes}; }
+void Sdk::forEachHashedRamRange(const std::function<void(const RamRange&)>& fn) const {
+  detail::heapForEachHashedRamRange(fn);
+}
+std::span<const std::byte> Sdk::aramInUse() const {
+  return {impl_->aramBase(), std::min<std::size_t>(detail::arTop(), kAramBytes)};
+}
 std::vector<std::int16_t> Sdk::takeAudio() { return std::exchange(impl_->pcm, {}); }
 std::uint32_t Sdk::audioRate() const { return impl_->st->ai.dsp_rate == AI_SAMPLERATE_48KHZ ? kAiRate48k : kAiRate32k; }
 std::uint64_t Sdk::audioFrames() const { return impl_->st->ai.frames_out; }
