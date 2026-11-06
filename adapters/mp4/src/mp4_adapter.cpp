@@ -1,17 +1,24 @@
 // See mpt/mp4/adapter.h.
 #include "mpt/mp4/adapter.h"
 
+#include <cstring>
+
 namespace mpt::mp4 {
+namespace {
+
+bool is_minigame(const char* name) {
+  // The minigame overlays: m401Dll..m463Dll (mp4.md section 12). m300..m333 are empty placeholders.
+  return name[0] == 'm' && name[1] == '4' && name[2] >= '0' && name[2] <= '9' && name[3] >= '0' && name[3] <= '9';
+}
+
+}  // namespace
 
 PartyPhase phase_of(const MptMp4Party& party) {
   const std::uint32_t f = party.flags;
   if (!(f & MPT_MP4_PARTY_MODE)) return PartyPhase::none;
   if (f & MPT_MP4_PARTY_RESULTS_FINAL) return PartyPhase::finished;
   if (f & MPT_MP4_PARTY_TURNS_OVER) return PartyPhase::results;
-  // ADR 0005: PartyPhase::minigame requires current_minigame, which needs P1-17's catalog mapping.
-  // TODO(P1-17): report PartyPhase::minigame for the minigame overlays (m401Dll..m463Dll, mp4.md
-  // section 12) once readParty sets current_minigame. Until then a minigame is part of the board phase.
-  if (f & MPT_MP4_PARTY_IN_PROGRESS) return PartyPhase::board;
+  if (f & MPT_MP4_PARTY_IN_PROGRESS) return is_minigame(party.overlay_name) ? PartyPhase::minigame : PartyPhase::board;
   if (f & MPT_MP4_PARTY_IN_SETUP) return PartyPhase::setup;
   return PartyPhase::none;
 }
@@ -40,6 +47,11 @@ PartySnapshot Mp4Adapter::readParty() {
     snap.players[i].board_space = p.space;
     // character, board and current_minigame IDs: P1-17's catalog mapping.
   }
+  // ADR 0005: PartyPhase::minigame needs current_minigame. phase_of classifies the raw overlay, but
+  // until P1-17's catalog fills current_minigame, a minigame during a party is reported as part of
+  // the board phase.
+  // TODO(P1-17): drop this once readParty maps the overlay to current_minigame.
+  if (snap.phase == PartyPhase::minigame && !snap.current_minigame) snap.phase = PartyPhase::board;
   return snap;
 }
 
