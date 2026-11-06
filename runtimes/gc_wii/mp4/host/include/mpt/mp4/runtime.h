@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "mpt/core/title_runtime.h"
@@ -44,7 +45,8 @@ class Mp4Runtime final : public ITitleRuntime {
   // Raw party reads for Mp4Adapter (MptMp4Party). False before boot.
   bool readParty(MptMp4Party& out) const;
 
-  // Test only: boot the next game with MPT_MP4_BOOT_DEBUG_HOOKS, which debugPerturb needs (PR #48).
+  // Test only: boot the next game with MPT_MP4_BOOT_DEBUG_HOOKS, which debugPerturb and debugDeepHash
+  // need (PR #48).
   // Not a determinism input and never in a save state. Call before boot().
   void setDebugHooks(bool on) { debug_hooks_ = on; }
 
@@ -53,6 +55,11 @@ class Mp4Runtime final : public ITitleRuntime {
   // module is older than v1.2, the game was booted without debug hooks, or the class has no byte
   // right now.
   bool debugPerturb(std::uint32_t target);
+
+  // Test only (ABI v1.3 debug_deep_hash): the deep hash, P1-16's raw-memory digest (ADR 0008
+  // section 9). Same build and platform only; never a replay or netplay hash. nullopt if the module
+  // is older than v1.3 or the game was booted without debug hooks.
+  std::optional<std::uint64_t> debugDeepHash() const;
 
   // The OSReport text sink (presentation only). Called from inside stepFrame.
   void setReportSink(void (*sink)(void* user, const char* text), void* user);

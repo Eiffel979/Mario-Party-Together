@@ -92,7 +92,7 @@ typedef enum MptMp4VideoBackend {
 /* Debug flags: never part of the state hash. Trap CPU reads of GXCopyTex destinations (ADR 0007
  * section 5); a read faults the step. */
 #define MPT_MP4_BOOT_DEBUG_COPY_TRAP 0x100u
-/* Debug hooks (ADR 0008 amendment, PR #48): the test-only entries (debug_perturb) act only on a game
+/* Debug hooks (ADR 0008 amendment, PR #48): the test-only entries (debug_*) act only on a game
  * created with this flag. Never part of the state hash or a save state. */
 #define MPT_MP4_BOOT_DEBUG_HOOKS 0x200u
 
@@ -239,6 +239,15 @@ typedef struct MptMp4Api {
    * MPT_MP4_ERR_ARGUMENT, changing nothing, for a game without the flag, a null game or an unknown
    * target. Never for gameplay. NULL before v1.2. */
   int32_t (*debug_perturb)(MptMp4Game* game, uint32_t target);
+
+  /* v1.3, debug only (ADR 0008 section 9 and its amendment after P1-16 hash coverage): the deep hash,
+   * a digest of raw game memory (the game core and REL data ranges, allocated OSAlloc and HuMem
+   * blocks, ARAM in use, stacks by record) plus the SDK's and the manifest's fields. It is valid only
+   * for one build on one platform, for bisecting a desync on one machine and as the coverage oracle
+   * of the E4 perturbation checks; it is never compared between peers and never part of state_hash.
+   * Writes *out and returns MPT_MP4_OK on a game created with MPT_MP4_BOOT_DEBUG_HOOKS; otherwise
+   * returns MPT_MP4_ERR_ARGUMENT and computes nothing. Between steps only. NULL before v1.3. */
+  int32_t (*debug_deep_hash)(const MptMp4Game* game, uint64_t* out);
 } MptMp4Api;
 
 typedef enum MptMp4PerturbTarget {
@@ -259,6 +268,7 @@ typedef enum MptMp4PerturbTarget {
 #define MPT_MP4_API_SIZE_V1_0 160u
 #define MPT_MP4_API_SIZE_V1_1 168u /* adds status */
 #define MPT_MP4_API_SIZE_V1_2 176u /* adds debug_perturb */
+#define MPT_MP4_API_SIZE_V1_3 184u /* adds debug_deep_hash */
 
 MPT_MP4_STATIC_ASSERT(sizeof(void*) == 8, "the MP4 game module ABI is defined for 64-bit hosts");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Error) == MPT_MP4_ERROR_SIZE_V1_0, "MptMp4Error v1.0");
@@ -266,9 +276,10 @@ MPT_MP4_STATIC_ASSERT(sizeof(MptMp4BootConfig) == MPT_MP4_BOOT_CONFIG_SIZE_V1_0,
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Video) == MPT_MP4_VIDEO_SIZE_V1_0, "MptMp4Video v1.0");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Audio) == MPT_MP4_AUDIO_SIZE_V1_0, "MptMp4Audio v1.0");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Party) == MPT_MP4_PARTY_SIZE_V1_0, "MptMp4Party v1.0");
-MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Api) == MPT_MP4_API_SIZE_V1_2, "MptMp4Api v1.2");
+MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Api) == MPT_MP4_API_SIZE_V1_3, "MptMp4Api v1.3");
 MPT_MP4_STATIC_ASSERT(offsetof(MptMp4Api, status) == MPT_MP4_API_SIZE_V1_0, "status is the v1.1 append");
 MPT_MP4_STATIC_ASSERT(offsetof(MptMp4Api, debug_perturb) == MPT_MP4_API_SIZE_V1_1, "debug_perturb is the v1.2 append");
+MPT_MP4_STATIC_ASSERT(offsetof(MptMp4Api, debug_deep_hash) == MPT_MP4_API_SIZE_V1_2, "debug_deep_hash is the v1.3 append");
 /* Frozen for major version 1. */
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Pad) == 32, "MptMp4Pad is frozen");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4InputFrame) == 136, "MptMp4InputFrame is frozen");
