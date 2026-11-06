@@ -43,8 +43,12 @@ struct RecipeConfig {
   // Extra -D arguments for the module's configure: the GX backend, the Dawn prefix, CMAKE_PREFIX_PATH
   // for the GX layer's packages. Never a path into the user's dump.
   std::vector<std::string> cmake_args;
-  // Reported by runtime_build_version(); a change rebuilds every cached module.
+  // Reported by runtime_build_version(); a change rebuilds every cached module. The host build sets it
+  // to the module's build ID (runtimes/gc_wii/mp4/build_id.cmake), and the install step checks that a
+  // pinned build produced exactly that id.
   std::string runtime_build_version = "mp4-module-1";
+  // CMAKE_BUILD_TYPE of the module build; part of the build ID (MPT_MP4_RECIPE_BUILD_TYPE).
+  std::string build_type = "Release";
 };
 
 // Fails if the source tree has no runtimes/gc_wii/mp4/decomp.lock.

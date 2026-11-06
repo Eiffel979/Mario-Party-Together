@@ -14,4 +14,9 @@ if(MPT_BUILD_TESTS)
     MPT_RECIPE_TEST_TMP="${CMAKE_CURRENT_BINARY_DIR}/test_tmp")
   mpt_set_warnings(mpt_mp4_recipe_tests)
   add_test(NAME mp4_recipe COMMAND mpt_mp4_recipe_tests)
+  # The build ID changes with each group of its inputs (ADR 0009 amendment after P1-16, point 3).
+  add_test(NAME mp4_build_id_groups
+    COMMAND "${CMAKE_COMMAND}" "-DGC_WII_DIR=${CMAKE_CURRENT_SOURCE_DIR}/../.."
+            "-DCORE_INCLUDE_DIR=${MPT_CORE_INCLUDE_DIR}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/build_id_test"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_id_test.cmake")
 endif()
