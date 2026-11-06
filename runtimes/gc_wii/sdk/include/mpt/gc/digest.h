@@ -47,6 +47,7 @@ inline std::uint64_t merge(std::uint64_t acc, std::uint64_t lane) {
 }
 
 struct IdentityWord {
+  static bool special(std::uint64_t) { return false; }
   std::uint64_t operator()(std::uint64_t word) const { return word; }
 };
 }  // namespace digest_detail
@@ -55,6 +56,10 @@ struct IdentityWord {
 // span) replaced by word_fn(word) first; trailing bytes are digested as they are. memoryDigest is the
 // identity case. A title uses this to canonicalize pointers and NaNs in untyped memory (ADR 0008
 // amendment after P1-16 hash coverage) without copying it.
+//
+// WordFn also has `bool special(word)`, a cheap test that may say true for more words than it changes
+// but never false for one it changes. Most memory has no special word, so the main loop tests four
+// words at once and calls word_fn only for a block with one.
 template <typename WordFn>
 inline std::uint64_t memoryDigestWords(std::span<const std::byte> bytes, const WordFn& word_fn) {
   using namespace digest_detail;
@@ -64,10 +69,18 @@ inline std::uint64_t memoryDigestWords(std::span<const std::byte> bytes, const W
   if (left >= 32) {
     std::uint64_t v1 = kP1 + kP2, v2 = kP2, v3 = 0, v4 = 0 - kP1;
     do {
-      v1 = round(v1, word_fn(load64(p)));
-      v2 = round(v2, word_fn(load64(p + 8)));
-      v3 = round(v3, word_fn(load64(p + 16)));
-      v4 = round(v4, word_fn(load64(p + 24)));
+      std::uint64_t a = load64(p), b = load64(p + 8), c = load64(p + 16), d = load64(p + 24);
+      const int any = int{WordFn::special(a)} | int{WordFn::special(b)} | int{WordFn::special(c)} | int{WordFn::special(d)};
+      if (any) [[unlikely]] {
+        a = word_fn(a);
+        b = word_fn(b);
+        c = word_fn(c);
+        d = word_fn(d);
+      }
+      v1 = round(v1, a);
+      v2 = round(v2, b);
+      v3 = round(v3, c);
+      v4 = round(v4, d);
       p += 32;
       left -= 32;
     } while (left >= 32);
