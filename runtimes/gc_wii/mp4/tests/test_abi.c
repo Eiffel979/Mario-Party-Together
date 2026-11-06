@@ -51,6 +51,8 @@ int main(int argc, char** argv) {
   {
     uint64_t deep = 0x1234;
     CHECK(api->debug_deep_hash(NULL, &deep) == MPT_MP4_ERR_ARGUMENT && deep == 0x1234);
+    CHECK(api->debug_hash_items != NULL && api->debug_hash_items(NULL, NULL, NULL) == MPT_MP4_ERR_ARGUMENT);
+    CHECK(api->debug_perturb(NULL, MPT_MP4_PERTURB_SAMPLE | (5u << 8)) == MPT_MP4_ERR_ARGUMENT);
   }
   {
     /* A v1.0 table ends at struct_size 160: the host's check rejects it whatever lies past the end

@@ -103,6 +103,10 @@ struct RawSection {
 // A name that is never a source-level symbol: section names, assembler temporaries, labels.
 bool skipName(std::string_view n) { return n.empty() || n[0] == '.' || n[0] == '$' || n == "@feat.00"; }
 
+// The layout probe's symbols (src/layout_probe.c), which exist only in a probe build: they still end the
+// symbol before them, but are never hashed.
+bool isProbe(std::string_view plain) { return plain.rfind("mpt_layout_probe", 0) == 0; }
+
 [[maybe_unused]] bool parsePe(const std::vector<unsigned char>& f, std::uintptr_t base, std::vector<RawSection>& sections,
              std::vector<RawSymbol>& syms, std::uintptr_t& end, std::string& error) {
   std::uint32_t pe = 0, sig = 0;
@@ -311,6 +315,7 @@ bool ModuleSymbols::load(const std::vector<GameRange>& game_ranges, std::string&
       ModuleSymbol g = s;
       g.gap = std::min<std::uint64_t>(g.gap, r.hi - g.addr);
       const std::string_view plain = std::string_view(g.name).substr(r.name.size() + 1);
+      if (isProbe(plain)) continue;
       if (isCxxName(plain)) host_in_game_.push_back(g.name);
       if (g.gap != 0) game_.push_back(std::move(g));
     }

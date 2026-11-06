@@ -187,6 +187,8 @@ typedef struct MptMp4Party {
 
 typedef void (*MptMp4ReportFn)(void* user, const char* text);
 
+typedef void (*MptMp4HashItemFn)(void* user, const char* name, uint64_t size, uint64_t digest);
+
 typedef struct MptMp4Api {
   uint32_t struct_size; /* set by the module */
   uint32_t abi_version;
@@ -248,6 +250,13 @@ typedef struct MptMp4Api {
    * Writes *out and returns MPT_MP4_OK on a game created with MPT_MP4_BOOT_DEBUG_HOOKS; otherwise
    * returns MPT_MP4_ERR_ARGUMENT and computes nothing. Between steps only. NULL before v1.3. */
   int32_t (*debug_deep_hash)(const MptMp4Game* game, uint64_t* out);
+  /* v1.3, debug only: calls fn once per part of state_hash, in hash order, with the part's name, its
+   * size in bytes (0 for a part that is not one range) and its digest, and finally ("state_hash", 0,
+   * the hash). Parts: "fields", "sdk", "globals", one "sym <range>:<symbol>" per game data symbol
+   * name, "symbols", one "<kind> <arena offset>" per RAM range, "aram", "memory". Diffing two lists
+   * finds the symbol or range where two platforms differ (E3c). Same flag and refusal as
+   * debug_deep_hash. Names are valid only during the call. */
+  int32_t (*debug_hash_items)(const MptMp4Game* game, MptMp4HashItemFn fn, void* user);
 } MptMp4Api;
 
 typedef enum MptMp4PerturbTarget {
@@ -256,7 +265,11 @@ typedef enum MptMp4PerturbTarget {
   MPT_MP4_PERTURB_ARAM = 3,       /* ARAM in use (middle byte) */
   MPT_MP4_PERTURB_GLOBAL = 4,     /* GWSystem, a global the manifest hashes by name */
   MPT_MP4_PERTURB_FREE_HEAP = 5,  /* data of the first free HuMem block of 64+ bytes: must NOT count */
-  MPT_MP4_PERTURB_STACK = 6       /* inside a process coroutine stack: must NOT count */
+  MPT_MP4_PERTURB_STACK = 6,      /* inside a process coroutine stack: must NOT count */
+  /* v1.3: MPT_MP4_PERTURB_SAMPLE | (k << 8) flips a byte chosen from k alone among everything the deep
+   * hash digests as memory, in class k % 4: game data, main RAM (heap blocks and headers), ARAM in
+   * use, or all of them. The next call with the same target restores that byte. */
+  MPT_MP4_PERTURB_SAMPLE = 7
 } MptMp4PerturbTarget;
 
 /* v1.0 sizes (x86-64). A caller's struct_size must be at least these. */
@@ -268,7 +281,7 @@ typedef enum MptMp4PerturbTarget {
 #define MPT_MP4_API_SIZE_V1_0 160u
 #define MPT_MP4_API_SIZE_V1_1 168u /* adds status */
 #define MPT_MP4_API_SIZE_V1_2 176u /* adds debug_perturb */
-#define MPT_MP4_API_SIZE_V1_3 184u /* adds debug_deep_hash */
+#define MPT_MP4_API_SIZE_V1_3 192u /* adds debug_deep_hash and debug_hash_items */
 
 MPT_MP4_STATIC_ASSERT(sizeof(void*) == 8, "the MP4 game module ABI is defined for 64-bit hosts");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Error) == MPT_MP4_ERROR_SIZE_V1_0, "MptMp4Error v1.0");
@@ -280,6 +293,7 @@ MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Api) == MPT_MP4_API_SIZE_V1_3, "MptMp4Api v1.
 MPT_MP4_STATIC_ASSERT(offsetof(MptMp4Api, status) == MPT_MP4_API_SIZE_V1_0, "status is the v1.1 append");
 MPT_MP4_STATIC_ASSERT(offsetof(MptMp4Api, debug_perturb) == MPT_MP4_API_SIZE_V1_1, "debug_perturb is the v1.2 append");
 MPT_MP4_STATIC_ASSERT(offsetof(MptMp4Api, debug_deep_hash) == MPT_MP4_API_SIZE_V1_2, "debug_deep_hash is the v1.3 append");
+MPT_MP4_STATIC_ASSERT(offsetof(MptMp4Api, debug_hash_items) == MPT_MP4_API_SIZE_V1_2 + 8, "debug_hash_items follows it");
 /* Frozen for major version 1. */
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Pad) == 32, "MptMp4Pad is frozen");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4InputFrame) == 136, "MptMp4InputFrame is frozen");
