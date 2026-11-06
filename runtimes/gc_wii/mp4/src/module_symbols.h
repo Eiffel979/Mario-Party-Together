@@ -62,6 +62,8 @@ class ModuleSymbols {
   // symbol and offset on every platform; can merge two addresses, never split one. `cls`, if given,
   // receives how it was resolved.
   std::uint64_t canonical(std::uintptr_t p, PointerClass* cls = nullptr) const;
+  // The name of the symbol at or below p (diagnostics only), or "" if none.
+  std::string nameAt(std::uintptr_t p) const;
   // canonical(), or 0 for a word outside the module (SdkConfig::pointer_id's contract).
   std::uint64_t idOf(const void* p) const;
 

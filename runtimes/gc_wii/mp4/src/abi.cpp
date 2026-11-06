@@ -491,6 +491,10 @@ std::uint64_t splitmix(std::uint64_t x) {
 struct CanonCounts {
   std::uint64_t arena = 0, module_symbol = 0, module_text = 0, module_cxx = 0, module_unknown = 0;
   std::uint64_t nan32 = 0, nan64 = 0;
+  // Where the walk is (a symbol or a range), and what each C++ or unknown module hit pointed at:
+  // diagnostics for names that differ between platforms.
+  std::string where;
+  std::vector<std::string> notes;
 };
 
 struct Canon {
@@ -524,8 +528,15 @@ struct Canon {
         switch (cls) {
           case mpt::mp4::PointerClass::symbol: ++counts->module_symbol; break;
           case mpt::mp4::PointerClass::text: ++counts->module_text; break;
-          case mpt::mp4::PointerClass::cxx: ++counts->module_cxx; break;
-          case mpt::mp4::PointerClass::unknown: ++counts->module_unknown; break;
+          case mpt::mp4::PointerClass::cxx:
+            ++counts->module_cxx;
+            counts->notes.push_back("cxx " + counts->where + " -> " + symbols->nameAt(static_cast<std::uintptr_t>(w)));
+            break;
+          case mpt::mp4::PointerClass::unknown:
+            ++counts->module_unknown;
+            counts->notes.push_back("unknown " + counts->where + " -> " +
+                                    symbols->nameAt(static_cast<std::uintptr_t>(w)));
+            break;
         }
       }
       return v;
@@ -566,6 +577,12 @@ void hashCanonRange(mpt::StateHasher& h, std::span<const std::byte> bytes, const
   h.update_u64(mpt::gc::memoryDigestWords(bytes, c));
 }
 
+std::string hex32(std::uint64_t v) {
+  char buf[24];
+  std::snprintf(buf, sizeof buf, "0x%08llx", static_cast<unsigned long long>(v));
+  return buf;
+}
+
 struct CanonSink {
   mpt::StateHasher* h;
   const Canon* canon;
@@ -584,6 +601,9 @@ void canonFields(void* user, const void* data, std::size_t size) {
 }
 void canonMemory(void* user, const void* data, std::size_t size) {
   const auto* sink = static_cast<const CanonSink*>(user);
+  if (sink->canon->counts != nullptr && g_game != nullptr)
+    sink->canon->counts->where = "humem block " + hex32(static_cast<std::uint64_t>(
+                                     static_cast<const std::byte*>(data) - g_game->sdk->arenaBase()));
   hashCanonRange(*sink->h, {static_cast<const std::byte*>(data), size}, *sink->canon);
 }
 
@@ -596,12 +616,6 @@ struct Items {
     if (fn != nullptr) fn(user, name.c_str(), size, digest);
   }
 };
-
-std::string hex32(std::uint64_t v) {
-  char buf[24];
-  std::snprintf(buf, sizeof buf, "0x%08llx", static_cast<unsigned long long>(v));
-  return buf;
-}
 
 // Globals by symbol: every game data symbol in name order, so section layout does not matter. A
 // symbol's bytes run to the next symbol; they are canonicalized as words from the symbol's start and
@@ -618,6 +632,7 @@ std::uint64_t hashGameSymbols(const Canon& c, const Items* items) {
     std::size_t j = i;
     for (; j < syms.size() && syms[j].id == syms[i].id; ++j) {
       const mpt::mp4::ModuleSymbol& s = syms[j];
+      if (c.counts != nullptr) c.counts->where = "sym " + s.name;
       scratch.resize(static_cast<std::size_t>(s.gap));
       std::memcpy(scratch.data(), reinterpret_cast<const void*>(s.addr), scratch.size());
       for (std::size_t k = 0; k + 8 <= scratch.size(); k += 8) {
@@ -658,6 +673,8 @@ std::uint64_t hashMemoryXplat(const MptMp4Game& game, const Canon& c, const Item
     part.update_u64(mpt::gc::hashGamePointer(r.bytes.data()));
     const char* kind = "ram";
     bool done = false;
+    if (c.counts != nullptr)
+      c.counts->where = "range " + hex32(static_cast<std::uint64_t>(r.bytes.data() - arena));
     if (r.data != nullptr) {
       kind = "block";
       const int humem = mpt_mp4_hash_humem_heap(r.data, &canonFields, &canonMemory, &sink);
@@ -678,6 +695,7 @@ std::uint64_t hashMemoryXplat(const MptMp4Game& game, const Canon& c, const Item
   });
   h.update_u64(broken);
   mpt::StateHasher aram;
+  if (c.counts != nullptr) c.counts->where = "aram";
   hashCanonRange(aram, game.sdk->aramInUse(), c);
   h.update_u64(aram.digest());
   if (items != nullptr) (*items)("aram", game.sdk->aramInUse().size(), aram.digest());
@@ -719,6 +737,7 @@ std::uint64_t crossPlatformHash(const MptMp4Game& game, const Items* items) {
         {"count module_unknown", counts.module_unknown}, {"count nan32", counts.nan32},
         {"count nan64", counts.nan64}};
     for (const auto& [name, value] : n) (*items)(name, value, 0);
+    for (const std::string& note : counts.notes) (*items)("note " + note, 0, 0);
   }
   return h.digest();
 }

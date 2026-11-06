@@ -2,6 +2,7 @@
 #include "module_symbols.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -376,6 +377,16 @@ std::uint64_t ModuleSymbols::canonical(std::uintptr_t p, PointerClass* cls) cons
   }
   out = PointerClass::symbol;
   return mix(kTagSymbol ^ mix(sym->id + 0x9E3779B97F4A7C15ull * (p - sym->addr)));
+}
+
+std::string ModuleSymbols::nameAt(std::uintptr_t p) const {
+  auto it = std::upper_bound(syms_.begin(), syms_.end(), p,
+                             [](std::uintptr_t a, const ModuleSymbol& s) { return a < s.addr; });
+  if (it == syms_.begin()) return {};
+  --it;
+  char off[24];
+  std::snprintf(off, sizeof off, "+0x%llx", static_cast<unsigned long long>(p - it->addr));
+  return it->name + off;
 }
 
 std::uint64_t ModuleSymbols::idOf(const void* p) const {
