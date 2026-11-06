@@ -10,6 +10,7 @@ add_executable(mpt_unit_tests
   unit/test_determinism_harness.cpp
   unit/test_event_routing.cpp
   unit/test_dump_lane.cpp
+  unit/test_dump_lane_paths.cpp
   unit/test_dump_lane_png.cpp
   unit/test_gc_disc.cpp
   unit/test_fake_adapter.cpp
@@ -55,7 +56,7 @@ set_tests_properties(replay_check_rejects_non_replay PROPERTIES PASS_REGULAR_EXP
 # The dump lane (P1-20d, ADR 0006): manual and local only. Skipped (exit 77) unless
 # MPT_DUMP_DIR is set; see tests/dump_lane/README.md. Run it with: ctest -L dump
 # It plays every real title the shell registers (P1-16), building each from the dump with asset-import.
-add_executable(mpt_dump_lane dump_lane/main.cpp dump_lane/real_titles.h dump_lane/png.h)
+add_executable(mpt_dump_lane dump_lane/main.cpp dump_lane/path_guard.h dump_lane/real_titles.h dump_lane/png.h)
 target_link_libraries(mpt_dump_lane PRIVATE mpt::core mpt::asset_import mpt::shell_core)
 target_compile_definitions(mpt_dump_lane PRIVATE
   MPT_REPLAYS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/replays"

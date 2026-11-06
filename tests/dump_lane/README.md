@@ -44,9 +44,51 @@ For each `tests/replays/<name>.mptr` with its sidecar `<name>.trail.txt`
 
 ## Status
 
-No title is registered yet, so every fixture is skipped. P1-16 registers `Mp4Runtime` in
-`register_titles` (`main.cpp`) and fills in `resolve_dump`, which turns the dump in
-`MPT_DUMP_DIR` into a `VerifiedDump` through asset-import's build (P1-10, P1-15).
+`register_titles` (`main.cpp`) registers every real title the shell does (`real_titles.h`). So
+far that is Mario Party 4 (P1-16). `resolve_dump` finds the title's dump in `MPT_DUMP_DIR` and
+builds it with asset-import, exactly as the shell's `--dump` does. No fixture is committed yet,
+so the replay run still reports skipped.
+
+## Boot mode (M1, M2, E4)
+
+```
+mpt_dump_lane --boot <title> [--frames N] [--every N] [--seed S] [--perturb]
+              [--press button@frame[+frames][,...]] [--capture DIR [--capture-every N]]
+```
+
+- `--boot <title>` boots the title on your dump and steps it `--frames` frames (default 600)
+  with no input. Every `--every` frames (default 60) it prints the state hash and the video
+  size; the game's OSReport text goes to the output too. Exit 0 if the runtime is still running
+  at the end, 1 if it halted or faulted. It also prints the mean time of a `stateHash()` call,
+  which the harness measures; the runtime reads no clock.
+- `--seed S` sets the session seed (default 1). Two runs with the same seed must print the same
+  hashes; that is the M1 determinism check.
+- `--perturb` (MP4) boots with the module's test-only debug hooks and checks the hash coverage
+  at every checkpoint (E4). For each memory class it flips one byte, requires the hash to change
+  (or, for free heap and process stacks, to stay the same), flips the byte back and requires the
+  original hash. Any miss makes the exit 1. Without `--perturb` the lane checks the opposite: the
+  module must refuse to perturb a game booted without the hooks.
+- `--press` holds buttons on player 1, which is then connected. Each press is
+  `button@frame[+frames]` (default 6 frames), for example `start@900,a@1500+10`. Buttons:
+  `a b x y l r z start up down left right`.
+- `--capture DIR` writes the frame at each checkpoint as `DIR/frame_NNNNNN.png`
+  (with `--capture-every N`, only checkpoints whose frame is a multiple of N; make N a multiple of `--every`). Captures are your own game's output: **never
+  commit them**.
+
+## Paths outside the repository
+
+The lane refuses to start if any of these lies inside the repository (`path_guard.h`, tested by
+`tests/unit/test_dump_lane_paths.cpp`):
+
+| Path | Holds | Default |
+|---|---|---|
+| `MPT_DUMP_DIR` | your dumps | required |
+| `--capture DIR` | frame captures | off |
+| `MPT_BUILD_CACHE` | the extracted disc and the built game module | `<MPT_DUMP_DIR>/mpt-build-cache` |
+| `MPT_SOURCE_CACHE` | pinned source checkouts (`<name>/<commit>`), used instead of fetching | off |
+
+`.gitignore` also ignores `captures/` and `mpt-build-cache/` folders, and the compliance
+scanner rejects any committed binary, but neither is a reason to put these folders in the tree.
 
 ## Fixtures
 
