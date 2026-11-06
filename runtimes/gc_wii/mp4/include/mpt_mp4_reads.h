@@ -17,7 +17,9 @@ void mpt_mp4_hash_game(MptMp4HashFn update, void* user);
 /* If `base` is one of the game's HuMem heaps (HuMemHeapPtrGet), hashes that heap's allocated blocks
  * and returns 1: each block's position-independent header fields through `fields`, its data
  * through `memory`. Free HuMem blocks are skipped. Returns 0, hashing nothing, for any other
- * address. A heap whose block chain is broken is a fault: returns -1. */
+ * address. Returns -1 for a heap whose block chain is broken (a block outside the heap, a bad size
+ * or a loop); the caller then hashes the whole OSAlloc block as memory and counts it in the hash, so
+ * corruption still changes the hash and never stops it. */
 int mpt_mp4_hash_humem_heap(const void* base, MptMp4HashFn fields, MptMp4HashFn memory, void* user);
 /* For the perturbation test (mpt_mp4_debug_perturb): the data of the first allocated or the first
  * free HuMem block (heaps in HeapID order) with at least `min_size` data bytes, or NULL. */

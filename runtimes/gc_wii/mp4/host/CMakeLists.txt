@@ -68,6 +68,10 @@ file(GLOB_RECURSE _module_inputs CONFIGURE_DEPENDS LIST_DIRECTORIES false
   "${_gc}/musyx/CMakeLists.txt" "${_gc}/musyx/src/*" "${_gc}/musyx/include/*" "${_gc}/musyx/patches/*"
   "${_gc}/mp4/CMakeLists.txt" "${_gc}/mp4/*.cmake" "${_gc}/mp4/decomp.lock" "${_gc}/mp4/src/*" "${_gc}/mp4/include/*"
   "${_gc}/mp4/patches/*" "${_gc}/mp4/tools/*")
+# The module also compiles against core's headers (mpt/core/state.h, input.h; the recipe passes
+# MPT_CORE_INCLUDE_DIR), so a change there must rebuild the cached module as well (#49 review).
+file(GLOB_RECURSE _core_inputs CONFIGURE_DEPENDS LIST_DIRECTORIES false "${MPT_MP4_RECIPE_CORE_INCLUDE_DIR}/*")
+list(SORT _core_inputs)
 list(SORT _module_inputs)
 # A content change (not only a new or removed file) must re-run this hash.
 # Only the list files this configure itself reads are left out: CMake tracks those already, and
@@ -81,6 +85,12 @@ foreach(_f IN LISTS _module_inputs)
   file(SHA256 "${_f}" _h)
   file(RELATIVE_PATH _rel "${_gc}" "${_f}")
   string(APPEND _tree "${_rel}=${_h};")
+endforeach()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_core_inputs})
+foreach(_f IN LISTS _core_inputs)
+  file(SHA256 "${_f}" _h)
+  file(RELATIVE_PATH _rel "${MPT_MP4_RECIPE_CORE_INCLUDE_DIR}" "${_f}")
+  string(APPEND _tree "core/include/${_rel}=${_h};")
 endforeach()
 # The module build's own options (GX backend, Dawn prefix, prefix path) select a different module
 # from the same tree, so they are part of the key too.
