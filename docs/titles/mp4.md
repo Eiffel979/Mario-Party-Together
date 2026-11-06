@@ -752,7 +752,7 @@ So a minigame is covered on both devices unless it needs something a key cannot 
 - `SaveState::format_version` is the module's `state_format()`.
 - If the module was built with the null GX backend, `create` returns `MPT_MP4_ERR_BACKEND` for a GPU request and `boot()` retries with null video. The host keys on that status code, never on the error text (#49 review).
 
-**Mp4Adapter** (`adapters/mp4`) maps the raw party flags to `PartyPhase` and accepts only an empty ruleset. P1-17 adds the catalog and the ID mapping. Until then a minigame overlay (`m4xxDll`) during a party reports `PartyPhase::board`: ADR 0005's `minigame` phase needs `current_minigame`, which only the catalog mapping can fill (TODO in `mp4_adapter.cpp`, #49 review).
+**Mp4Adapter** (`adapters/mp4`) maps the raw party flags to `PartyPhase` and accepts only an empty ruleset. P1-17 adds the catalog and the ID mapping. `phase_of` classifies the raw flags and overlay (a minigame overlay `m4xxDll` gives `minigame`), but until the catalog lands `readParty()` reports a minigame as `PartyPhase::board`: ADR 0005's `minigame` phase needs `current_minigame`, which only the catalog mapping can fill (TODO in `mp4_adapter.cpp`, #49 review).
 
 The shell registration (`mpt_register_mp4`) gives `--dump` the asset-import recipe, using this tree's `runtimes/gc_wii`, Clang, Ninja, GX backend and packages.
 
@@ -851,7 +851,7 @@ The `armem.c` loops would never see their callback under the default mode, so MP
 - **Boot.** The Nintendo and Hudson logos render from frame 60 to about 540.
 - **Title and menus.** A script of `start@900,start@1200,a@1500,a@1800,a@2100,a@2400` reaches, in order:
   - the title screen (about frame 960);
-  - "Select a File" with the memory card slots;
+  - the file-select screen with the memory card slots;
   - the three file slots;
   - the new-file opening on the blank card.
 - **Fixed on the way.**
