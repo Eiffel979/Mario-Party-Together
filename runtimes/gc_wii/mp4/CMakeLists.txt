@@ -135,7 +135,15 @@ list(TRANSFORM GAME_FILES PREPEND "${MPT_MP4_PB}/")
 list(TRANSFORM MPT_MP4_MSM_FILES PREPEND "${MPT_MP4_PB}/")
 # Our replacements for Party Board's port layer (include/mpt_mp4_port.h) and its coroutines.
 set(MPT_MP4_PORT_FILES src/port.c src/sdk_bridge.c src/libco.c src/layout_check.c src/game_reads.c src/msm_swap.c src/msm_diag.c)
-add_library(mpt_mp4_dol OBJECT ${GAME_FILES} ${MPT_MP4_MSM_FILES} ${MPT_MP4_PORT_FILES})
+# Test only: src/layout_probe.c, first in the link, moves the module's code and the game core's data so
+# a Windows run can check that state_hash does not depend on the module layout (docs/titles/mp4.md 20).
+option(MPT_MP4_LAYOUT_PROBE "Test only: shift the module's code and game data to check state_hash's layout independence" OFF)
+set(_mp4_probe "")
+if(MPT_MP4_LAYOUT_PROBE)
+  set(_mp4_probe src/layout_probe.c)
+  list(APPEND MPT_MP4_PORT_FILES src/layout_probe.c)
+endif()
+add_library(mpt_mp4_dol OBJECT ${_mp4_probe} ${GAME_FILES} ${MPT_MP4_MSM_FILES} ${MPT_MP4_PORT_FILES})
 target_link_libraries(mpt_mp4_dol PRIVATE mpt_mp4_game_flags)
 set_source_files_properties(${GAME_FILES} ${MPT_MP4_MSM_FILES} TARGET_DIRECTORY mpt_mp4_dol
                             PROPERTIES COMPILE_OPTIONS "${MPT_MP4_NOWARN}")
@@ -193,6 +201,7 @@ add_library(mp4_game SHARED
   src/libco_stats.c
   src/game_data.c
   src/abi.cpp
+  src/module_symbols.cpp
   src/copy_trap.cpp)
 target_link_libraries(mp4_game PRIVATE mpt_mp4_game_flags ${MPT_MP4_REL_LIBS} mpt::gx mpt::musyx)
 # The shared libraries the module needs at run time (webgpu_dawn with the Dawn backend), one per line,
@@ -211,7 +220,7 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/layout.cmake")
 # resolver found for each pin) and MPT_MP4_RECIPE_ARGS_HASH; a developer build without them records its
 # sources as unverified. Every input is a configure dependency, so a content change re-runs this.
 set(MPT_MP4_SOURCE_STATES "" CACHE STRING "Set by the asset-import recipe: <pin>=pinned|unpinned:<fingerprint>, ...")
-set(MPT_MP4_RECIPE_ARGS_HASH "" CACHE STRING "Set by the asset-import recipe: a hash of its module-build arguments")
+set(MPT_MP4_RECIPE_ARGS_HASH "none" CACHE STRING "Set by the asset-import recipe: a hash of its module-build arguments")
 include("${CMAKE_CURRENT_SOURCE_DIR}/build_id.cmake")
 if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
   set(_mp4_msvc_frontend TRUE)
@@ -243,8 +252,12 @@ endforeach()
 # loader either maps it there or fails. Linux: lld links the .so at that base; glibc's loader asks the
 # kernel for that address, and the host runtime checks where it landed.
 mpt_mp4_fixed_base_link(mp4_game)  # layout.cmake
+# The state hash names the module's globals and functions by symbol (src/module_symbols.cpp, ADR 0008
+# amendment after P1-16), so the image keeps a symbol table: /DEBUG:SYMTAB writes lld-link's COFF table
+# (next to the PDB, outside every mapped section, so the layout does not change); ELF keeps .symtab
+# unless stripped. No identical-code folding: folded functions would share one name per platform.
 if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-  target_link_options(mp4_game PRIVATE /errorlimit:0)
+  target_link_options(mp4_game PRIVATE /errorlimit:0 /DEBUG:SYMTAB /OPT:NOICF)
 else()
   target_link_options(mp4_game PRIVATE -Wl,--error-limit=0)
 endif()

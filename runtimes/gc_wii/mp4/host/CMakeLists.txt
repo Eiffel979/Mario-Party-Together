@@ -51,6 +51,12 @@ set(_args "-DMPT_GX_BACKEND=${MPT_GX_BACKEND}" "-DMPT_DAWN_PREFIX=${MPT_DAWN_PRE
 if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
   list(APPEND _args "-DCMAKE_PREFIX_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
 endif()
+# Test only: build the module with the layout probe (mp4/src/layout_probe.c). Its trail must equal a
+# normal module's; it has its own build ID through the arguments' hash.
+option(MPT_MP4_RECIPE_LAYOUT_PROBE "Test only: the recipe builds the MP4 module with its layout probe" OFF)
+if(MPT_MP4_RECIPE_LAYOUT_PROBE)
+  list(APPEND _args "-DMPT_MP4_LAYOUT_PROBE=ON")
+endif()
 # The arguments select a different module from the same tree (Dawn prefix, package prefix), so their
 # hash goes into the build ID; the module build gets the same hash as one more argument.
 set(_args_text "")

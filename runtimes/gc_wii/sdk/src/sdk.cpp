@@ -317,7 +317,17 @@ std::uint64_t hashPointer(const void* p) {
   if (!p) return 0;
   const auto& I = impl();
   if (I.inArena(p)) return 0x8000'0000'0000'0000ull | I.offsetOf(p);
+  if (I.config.pointer_id != nullptr)
+    if (const std::uint64_t id = I.config.pointer_id(p); id != 0) return id;
   return 0xFFFF'FFFF'FFFF'FFFFull;
+}
+
+std::uint64_t hashFunction(const void* f) {
+  if (!f) return 0;
+  const auto& I = impl();
+  if (I.config.pointer_id != nullptr)
+    if (const std::uint64_t id = I.config.pointer_id(f); id != 0) return id;
+  return 0xF0F0'F0F0'F0F0'F0F1ull;
 }
 
 void switchToHost() {

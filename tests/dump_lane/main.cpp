@@ -13,7 +13,11 @@
 //
 // `--perturb` (MP4, E4 hash coverage) adds a check at every checkpoint: for each memory class the
 // hash must cover, flip one byte, require a different stateHash(), flip it back and require the
-// original; for free heap space require the hash to stay the same. Any miss makes the exit 1.
+// original; for free heap space and stack contents require every hash to stay the same. The deep
+// hash (ABI v1.3) is the oracle: a flip it sees must change stateHash() too. `--perturb-samples N`
+// (default 32) also flips N sampled bytes per checkpoint across everything the deep hash covers.
+// Any miss makes the exit 1. `--hash-items FILE` writes state_hash's parts with their digests at the
+// last checkpoint (ABI v1.3 debug_hash_items), for diffing a Windows run against a Linux one.
 
 #include <algorithm>
 #include <chrono>
@@ -24,6 +28,7 @@
 #include <memory>
 #include <optional>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <variant>
 #include <vector>
@@ -93,6 +98,8 @@ struct BootOptions {
   std::uint64_t every = 60;
   std::uint64_t seed = 1;
   bool perturb = false;
+  std::uint32_t perturb_samples = 32;  // sampled bytes per checkpoint with --perturb
+  std::filesystem::path hash_items;    // --hash-items FILE: state_hash's parts at the last checkpoint
   // M2: scripted input on player 1 and frame captures.
   struct Press {
     std::uint32_t buttons;
@@ -141,8 +148,44 @@ mpt::PadState scripted_pad(const BootOptions& options, std::uint64_t f) {
 void print_report(void*, const char* text) { std::fputs(text, stdout); }
 
 #if defined(MPT_DUMP_LANE_MP4)
-// E4: what stateHash() covers. Returns the number of failed checks.
-int perturb_checks(mpt::mp4::Mp4Runtime& mp4, std::uint64_t frame) {
+// E4: what stateHash() covers, with the deep hash as the oracle (ADR 0008 amendment after P1-16 hash
+// coverage). For each flip: a byte the deep hash sees must change stateHash() too, or the manifest
+// misses an area; a byte neither may see (free heap, stack contents) must change neither; flipping
+// back must restore both. Returns the number of failed checks.
+struct Hashes {
+  std::uint64_t state, deep;
+  bool operator==(const Hashes&) const = default;
+};
+
+Hashes hashes(mpt::mp4::Mp4Runtime& mp4) {
+  const std::optional<std::uint64_t> deep = mp4.debugDeepHash();
+  return {mp4.stateHash(), deep.value_or(0)};
+}
+
+// One flip of `target`: "ok", or why it failed. `skipped` when the class has no byte right now.
+const char* perturb_once(mpt::mp4::Mp4Runtime& mp4, std::uint32_t target, bool must_change, const Hashes& original,
+                         bool& skipped) {
+  skipped = false;
+  if (!mp4.debugPerturb(target)) {
+    skipped = true;
+    return "no byte to flip";
+  }
+  const Hashes flipped = hashes(mp4);
+  mp4.debugPerturb(target);
+  const Hashes restored = hashes(mp4);
+  if (restored != original) return "FAIL: not restored";
+  const bool state_changed = flipped.state != original.state;
+  const bool deep_changed = flipped.deep != original.deep;
+  if (must_change) {
+    if (!deep_changed) return "FAIL: the deep hash does not cover it";
+    if (!state_changed) return "FAIL: the deep hash changed but stateHash did not (manifest misses an area)";
+    return "ok";
+  }
+  if (state_changed || deep_changed) return "FAIL: a hash changed for a byte no hash may cover";
+  return "ok";
+}
+
+int perturb_checks(mpt::mp4::Mp4Runtime& mp4, std::uint64_t frame, std::uint64_t checkpoint, std::uint32_t samples) {
   struct Target {
     std::uint32_t id;
     const char* name;
@@ -154,23 +197,29 @@ int perturb_checks(mpt::mp4::Mp4Runtime& mp4, std::uint64_t frame) {
       {MPT_MP4_PERTURB_FREE_HEAP, "free heap", false},  {MPT_MP4_PERTURB_STACK, "process stack", false},
   };
   int failed = 0;
-  const std::uint64_t original = mp4.stateHash();
+  const Hashes original = hashes(mp4);
+  const auto f = static_cast<unsigned long long>(frame);
   for (const Target& t : kTargets) {
-    if (!mp4.debugPerturb(t.id)) {
-      std::printf("frame %llu perturb %s: no byte to flip\n", static_cast<unsigned long long>(frame), t.name);
-      continue;
-    }
-    const std::uint64_t flipped = mp4.stateHash();
-    mp4.debugPerturb(t.id);
-    const std::uint64_t restored = mp4.stateHash();
-    const bool changed = flipped != original;
-    const bool ok = changed == t.must_change && restored == original;
-    if (!ok) ++failed;
-    std::printf("frame %llu perturb %s: %s, %s -> %s\n", static_cast<unsigned long long>(frame), t.name,
-                changed ? "hash changed" : "hash unchanged", restored == original ? "restored" : "NOT restored",
-                ok ? "ok" : "FAIL");
+    bool skipped = false;
+    const char* result = perturb_once(mp4, t.id, t.must_change, original, skipped);
+    if (!skipped && result[0] == 'F') ++failed;
+    std::printf("frame %llu perturb %s: %s\n", f, t.name, result);
   }
-  return failed;
+  // Sampled bytes across everything the deep hash covers (ABI v1.3 MPT_MP4_PERTURB_SAMPLE).
+  int sampled = 0, sample_failed = 0;
+  for (std::uint32_t i = 0; i < samples; ++i) {
+    const std::uint32_t k = static_cast<std::uint32_t>(checkpoint * samples + i);
+    bool skipped = false;
+    const char* result = perturb_once(mp4, MPT_MP4_PERTURB_SAMPLE | (k << 8), true, original, skipped);
+    if (skipped) continue;
+    ++sampled;
+    if (result[0] == 'F') {
+      ++sample_failed;
+      std::printf("frame %llu perturb sample %u: %s\n", f, k, result);
+    }
+  }
+  if (samples != 0) std::printf("frame %llu perturb samples: %d of %d ok\n", f, sampled - sample_failed, sampled);
+  return failed + sample_failed;
 }
 #endif
 
@@ -196,7 +245,8 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir) {
 #if defined(MPT_DUMP_LANE_MP4)
   auto* mp4 = dynamic_cast<mpt::mp4::Mp4Runtime*>(runtime.get());
   if (mp4 != nullptr) mp4->setReportSink(&print_report, nullptr);
-  if (mp4 != nullptr) mp4->setDebugHooks(options.perturb);  // debug_perturb needs MPT_MP4_BOOT_DEBUG_HOOKS
+  // debug_perturb, debug_deep_hash and debug_hash_items need MPT_MP4_BOOT_DEBUG_HOOKS.
+  if (mp4 != nullptr) mp4->setDebugHooks(options.perturb || !options.hash_items.empty());
 #endif
   mpt::RuntimeConfig config;
   config.seed = options.seed;
@@ -210,8 +260,8 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir) {
   mpt::InputFrame input;
   std::string stopped;
   int perturb_failures = 0;
-  std::uint64_t hash_calls = 0;
-  std::chrono::steady_clock::duration hash_time{};
+  std::uint64_t hash_calls = 0, deep_calls = 0;
+  std::chrono::steady_clock::duration hash_time{}, deep_time{};
   for (std::uint64_t f = 0; f < options.frames; ++f) {
     input.frame = f;
     input.pads[0] = scripted_pad(options, f);
@@ -238,11 +288,32 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir) {
           std::printf("dump lane: could not write capture %s\n", name);
       }
 #if defined(MPT_DUMP_LANE_MP4)
-      if (options.perturb && mp4 != nullptr) perturb_failures += perturb_checks(*mp4, f + 1);
-      // Without debug hooks the module must refuse to perturb and change nothing (PR #48).
-      if (!options.perturb && mp4 != nullptr && hash_calls == 1) {
-        const bool refused = !mp4->debugPerturb(MPT_MP4_PERTURB_GAME_DATA) && mp4->stateHash() == hash;
-        std::printf("dump lane: debug hooks off, perturb %s\n", refused ? "refused" : "NOT refused");
+      if (options.perturb && mp4 != nullptr)
+        perturb_failures += perturb_checks(*mp4, f + 1, hash_calls - 1, options.perturb_samples);
+      // With debug hooks, time the deep hash too: the raw-memory digest stateHash() is compared with.
+      if (mp4 != nullptr && (options.perturb || !options.hash_items.empty())) {
+        const auto d0 = std::chrono::steady_clock::now();
+        if (const std::optional<std::uint64_t> deep = mp4->debugDeepHash()) {
+          deep_time += std::chrono::steady_clock::now() - d0;
+          ++deep_calls;
+          std::printf("frame %llu deep %016llx\n", static_cast<unsigned long long>(f + 1),
+                      static_cast<unsigned long long>(*deep));
+        }
+      }
+      // state_hash's parts, for diffing two platforms (E3c): rewritten at every checkpoint, so the file
+      // holds the last one. It names the game's symbols: it stays in the directory given.
+      if (!options.hash_items.empty() && mp4 != nullptr) {
+        const std::string items = mp4->debugHashItems();
+        std::ofstream out(options.hash_items, std::ios::binary | std::ios::trunc);
+        out.write(items.data(), static_cast<std::streamsize>(items.size()));
+        if (items.empty() || !out) std::printf("dump lane: could not write the hash items\n");
+      }
+      // Without debug hooks the module must refuse to perturb or give a deep hash, and change nothing
+      // (PR #48).
+      if (!options.perturb && options.hash_items.empty() && mp4 != nullptr && hash_calls == 1) {
+        const bool refused =
+            !mp4->debugPerturb(MPT_MP4_PERTURB_GAME_DATA) && !mp4->debugDeepHash() && mp4->stateHash() == hash;
+        std::printf("dump lane: debug hooks off, perturb and deep hash %s\n", refused ? "refused" : "NOT refused");
         if (!refused) ++perturb_failures;
       }
 #endif
@@ -251,6 +322,10 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir) {
   if (hash_calls != 0) {
     const double us = std::chrono::duration<double, std::micro>(hash_time).count() / static_cast<double>(hash_calls);
     std::printf("dump lane: stateHash %.0f us per call (mean of %llu)\n", us, static_cast<unsigned long long>(hash_calls));
+  }
+  if (deep_calls != 0) {
+    const double us = std::chrono::duration<double, std::micro>(deep_time).count() / static_cast<double>(deep_calls);
+    std::printf("dump lane: deep hash %.0f us per call (mean of %llu)\n", us, static_cast<unsigned long long>(deep_calls));
   }
   if (!options.perturb && perturb_failures != 0) {
     std::puts("dump lane: the module perturbed a game booted without debug hooks");
@@ -291,6 +366,10 @@ int main(int argc, char** argv) {
       boot_options.seed = std::strtoull(argv[++i], nullptr, 10);
     } else if (arg == "--perturb") {
       boot_options.perturb = true;
+    } else if (arg == "--hash-items" && has_value) {
+      boot_options.hash_items = argv[++i];
+    } else if (arg == "--perturb-samples" && has_value) {
+      boot_options.perturb_samples = static_cast<std::uint32_t>(std::strtoul(argv[++i], nullptr, 10));
     } else if (arg == "--press" && has_value) {
       // One press or a comma-separated list: start@900,a@1500+10
       const std::string list = argv[++i];
@@ -310,7 +389,8 @@ int main(int argc, char** argv) {
     } else if (arg == "--capture-every" && has_value) {
       boot_options.capture_every = std::strtoull(argv[++i], nullptr, 10);
     } else {
-      std::printf("usage: mpt_dump_lane [--boot <title> [--frames N] [--every N] [--seed S] [--perturb]\n"
+      std::printf("usage: mpt_dump_lane [--boot <title> [--frames N] [--every N] [--seed S] [--perturb [--perturb-samples N]]\n"
+                  "                     [--hash-items FILE]\n"
                   "                     [--press button@frame[+frames][,...]]... [--capture DIR [--capture-every N]]]\n");
       return 2;
     }
