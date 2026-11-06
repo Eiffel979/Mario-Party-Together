@@ -32,6 +32,9 @@ set(MPT_CORE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../core/include" CACHE 
 # Host tools (the verified source fetcher for aurora.lock/dawn.lock) need asset-import, which only
 # the root project has. They are not game code, so they build with the root's compiler.
 if(TARGET mpt::asset_import)
+  if(MPT_BUILD_TESTS)
+    enable_testing()  # the root enables testing after its subdirectories: register the recipe's tests
+  endif()
   add_subdirectory(gx/tools)
   add_subdirectory(mp4/recipe)  # asset-import's MP4 build recipe
   add_subdirectory(mp4/host)    # Mp4Runtime, Mp4Adapter and their shell registration (P1-16)
