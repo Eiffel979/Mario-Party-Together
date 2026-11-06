@@ -201,9 +201,9 @@ add_library(mp4_game SHARED
   src/libco_stats.c
   src/game_data.c
   src/abi.cpp
-  src/module_symbols.cpp
   src/copy_trap.cpp)
-target_link_libraries(mp4_game PRIVATE mpt_mp4_game_flags ${MPT_MP4_REL_LIBS} mpt::gx mpt::musyx)
+include("${CMAKE_CURRENT_SOURCE_DIR}/tools/MptMp4ModuleSymbols.cmake")
+target_link_libraries(mp4_game PRIVATE mpt_mp4_game_flags ${MPT_MP4_REL_LIBS} mpt::gx mpt::musyx mpt_mp4_module_symbols)
 # The shared libraries the module needs at run time (webgpu_dawn with the Dawn backend), one per line,
 # for the asset-import recipe to install next to it. Empty on platforms without DLLs.
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/mp4_game_runtime_deps.txt"
@@ -252,12 +252,13 @@ endforeach()
 # loader either maps it there or fails. Linux: lld links the .so at that base; glibc's loader asks the
 # kernel for that address, and the host runtime checks where it landed.
 mpt_mp4_fixed_base_link(mp4_game)  # layout.cmake
+mpt_mp4_link_symtab(mp4_game)      # tools/MptMp4ModuleSymbols.cmake
 # The state hash names the module's globals and functions by symbol (src/module_symbols.cpp, ADR 0008
 # amendment after P1-16), so the image keeps a symbol table: /DEBUG:SYMTAB writes lld-link's COFF table
 # (next to the PDB, outside every mapped section, so the layout does not change); ELF keeps .symtab
 # unless stripped. No identical-code folding: folded functions would share one name per platform.
 if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-  target_link_options(mp4_game PRIVATE /errorlimit:0 /DEBUG:SYMTAB /OPT:NOICF)
+  target_link_options(mp4_game PRIVATE /errorlimit:0 /OPT:NOICF)
 else()
   target_link_options(mp4_game PRIVATE -Wl,--error-limit=0)
 endif()

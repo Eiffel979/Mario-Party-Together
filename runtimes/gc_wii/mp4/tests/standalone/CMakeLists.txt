@@ -1,5 +1,6 @@
 # Unit checks of the game module's own machinery that need no Party Board checkout, so public CI runs
-# them: REL isolation and the pristine-data restore, and the copy-destination trap. Added by
+# them: REL isolation and the pristine-data restore, the module's symbol-table reader, and the
+# copy-destination trap. Added by
 # mp4/tests (module builds) or directly by runtimes/gc_wii (every Clang build with tests).
 set(_mp4 "${CMAKE_CURRENT_LIST_DIR}/../..")
 include("${_mp4}/tools/MptMp4Rel.cmake")
@@ -21,6 +22,14 @@ target_include_directories(mpt_mp4_rel_tests PRIVATE "${_mp4}/include")
 target_link_libraries(mpt_mp4_rel_tests PRIVATE ${MPT_MP4_TEST_REL_LIBS})
 target_compile_options(mpt_mp4_rel_tests PRIVATE ${_warn})
 add_test(NAME mp4_rel_isolation COMMAND mpt_mp4_rel_tests)
+
+# The module's symbol-table reader on this test's own image (PE/COFF on Windows, ELF elsewhere).
+include("${_mp4}/tools/MptMp4ModuleSymbols.cmake")
+add_executable(mpt_mp4_module_symbols_tests "${_mp4}/tests/test_module_symbols.cpp")
+target_link_libraries(mpt_mp4_module_symbols_tests PRIVATE mpt_mp4_module_symbols)
+target_compile_options(mpt_mp4_module_symbols_tests PRIVATE ${_warn})
+mpt_mp4_link_symtab(mpt_mp4_module_symbols_tests)
+add_test(NAME mp4_module_symbols COMMAND mpt_mp4_module_symbols_tests)
 
 # The copy-destination debug trap on the real GXCopyTex (null renderer), when the GX layer is built.
 if(TARGET mpt::gx)
