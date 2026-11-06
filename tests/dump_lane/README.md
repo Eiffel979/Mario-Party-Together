@@ -27,6 +27,21 @@ Exit codes of `mpt_dump_lane` (the CTest test `dump_lane_replays`, label `dump`)
 every runnable fixture passed, 1 on any failure, 77 (reported as skipped) when
 `MPT_DUMP_DIR` is unset, there is no fixture, or no fixture's title has a runtime yet.
 
+## MP4 state-hash checks
+
+Run both before changing MP4's hash manifest, `runtimes/gc_wii/mp4/src/abi.cpp`'s hashing or
+`module_symbols.cpp`, and record the results in the PR (ADR 0008, `docs/titles/mp4.md` section 20):
+
+1. **Coverage, with the deep hash as the oracle.** `mpt_dump_lane --boot mp4 --frames 10000 --every 1000
+   --perturb --perturb-samples 64`. Every check must print `ok`.
+2. **Layout independence (the layout probe).** Run `mpt_dump_lane --boot mp4 --frames 3000 --every 100
+   --hash-items <file>` on a normal host build. Reconfigure the host build with
+   `-DMPT_MP4_RECIPE_LAYOUT_PROBE=ON`, rebuild, and run the same command again. That build's module
+   moves every function and every game global. The two `frame N hash` trails must be identical, and the
+   `frame N deep` trails must differ. Reconfigure with `=OFF` afterwards.
+
+`--hash-items` files and captures name or show game content: keep them outside the repository.
+
 ## What it checks
 
 For each `tests/replays/<name>.mptr` with its sidecar `<name>.trail.txt`
