@@ -23,6 +23,14 @@ namespace mpt::mp4 {
 
 enum class SectionKind : std::uint8_t { code, rodata, data };
 
+// How canonical() resolved an address (for debug_hash_items' counts).
+enum class PointerClass : std::uint8_t {
+  symbol,   // a C symbol, by name and offset
+  text,     // a string literal, by its text
+  cxx,      // a C++ symbol: one value for all of them (MSVC and Itanium mangle differently)
+  unknown,  // no symbol at or below it in its section, or no section
+};
+
 struct ModuleSymbol {
   std::uintptr_t addr = 0;
   std::uint64_t size = 0;  // ELF st_size; 0 when the format has none (COFF)
@@ -48,10 +56,12 @@ class ModuleSymbols {
   std::uintptr_t end() const { return end_; }
   bool contains(std::uint64_t word) const { return word - base_ < end_ - base_; }
 
-  // A stable value for an address inside the module (contains(p)): the symbol at or below it and the
-  // offset; a string literal in read-only data by its text; anything else as one sentinel. Equal for
-  // the same symbol and offset on every platform; can merge two addresses, never split one.
-  std::uint64_t canonical(std::uintptr_t p) const;
+  // A stable value for an address inside the module (contains(p)): the C symbol at or below it and the
+  // offset; a string literal in read-only data by its text; a C++ symbol as one value (its mangled name
+  // differs between the MSVC and Itanium ABIs); anything else as one sentinel. Equal for the same
+  // symbol and offset on every platform; can merge two addresses, never split one. `cls`, if given,
+  // receives how it was resolved.
+  std::uint64_t canonical(std::uintptr_t p, PointerClass* cls = nullptr) const;
   // canonical(), or 0 for a word outside the module (SdkConfig::pointer_id's contract).
   std::uint64_t idOf(const void* p) const;
 

@@ -252,8 +252,10 @@ typedef struct MptMp4Api {
   int32_t (*debug_deep_hash)(const MptMp4Game* game, uint64_t* out);
   /* v1.3, debug only: calls fn once per part of state_hash, in hash order, with the part's name, its
    * size in bytes (0 for a part that is not one range) and its digest, and finally ("state_hash", 0,
-   * the hash). Parts: "fields", "sdk", "globals", one "sym <range>:<symbol>" per game data symbol
-   * name, "symbols", one "<kind> <arena offset>" per RAM range, "aram", "memory". Diffing two lists
+   * the hash). Parts: "fields", "sdk", one "sym <range>:<symbol>" per game data symbol name,
+   * "symbols", one "<kind> <arena offset>" per RAM range, "aram", "memory". Then, outside the hash,
+   * "count <rule>" with the number of words each canonicalization rule changed in its size field
+   * (arena, module_symbol, module_text, module_cxx, module_unknown, nan32, nan64). Diffing two lists
    * finds the symbol or range where two platforms differ (E3c). Same flag and refusal as
    * debug_deep_hash. Names are valid only during the call. */
   int32_t (*debug_hash_items)(const MptMp4Game* game, MptMp4HashItemFn fn, void* user);

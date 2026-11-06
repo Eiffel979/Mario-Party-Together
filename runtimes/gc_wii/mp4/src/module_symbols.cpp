@@ -36,6 +36,7 @@ namespace {
 constexpr std::uint64_t kTagSymbol = 0x5359'4D42'0000'0001ull;   // "SYMB"
 constexpr std::uint64_t kTagText = 0x5445'5854'0000'0001ull;     // "TEXT": a string literal
 constexpr std::uint64_t kTagUnknown = 0x554E'4B4E'0000'0001ull;  // "UNKN": no symbol at or below
+constexpr std::uint64_t kTagCxx = 0x4358'5850'0000'0001ull;      // "CXXP": any C++ symbol
 
 std::uint64_t mix(std::uint64_t x) {  // splitmix64's finalizer
   x ^= x >> 30;
@@ -334,7 +335,10 @@ bool ModuleSymbols::load(const std::vector<GameRange>& game_ranges, std::string&
   return true;
 }
 
-std::uint64_t ModuleSymbols::canonical(std::uintptr_t p) const {
+std::uint64_t ModuleSymbols::canonical(std::uintptr_t p, PointerClass* cls) const {
+  PointerClass ignored;
+  PointerClass& out = cls != nullptr ? *cls : ignored;
+  out = PointerClass::unknown;
   const Section* sec = sectionOf(p);
   if (sec == nullptr) return mix(kTagUnknown);
   // The greatest symbol at or below p (the first of its aliases by name).
@@ -361,10 +365,16 @@ std::uint64_t ModuleSymbols::canonical(std::uintptr_t p) const {
         h *= 0x100000001B3ull;
         if (c[i] == 0) break;
       }
+      out = PointerClass::text;
       return mix(kTagText ^ h);
     }
   }
   if (sym == nullptr) return mix(kTagUnknown ^ static_cast<std::uint64_t>(sec->kind));
+  if (isCxxName(sym->name)) {
+    out = PointerClass::cxx;
+    return mix(kTagCxx ^ static_cast<std::uint64_t>(sec->kind));
+  }
+  out = PointerClass::symbol;
   return mix(kTagSymbol ^ mix(sym->id + 0x9E3779B97F4A7C15ull * (p - sym->addr)));
 }
 

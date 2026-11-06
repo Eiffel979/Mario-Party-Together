@@ -487,10 +487,17 @@ std::uint64_t splitmix(std::uint64_t x) {
   return x;
 }
 
+// How many words each rule changed, for debug_hash_items (a false module-pointer match shows up here).
+struct CanonCounts {
+  std::uint64_t arena = 0, module_symbol = 0, module_text = 0, module_cxx = 0, module_unknown = 0;
+  std::uint64_t nan32 = 0, nan64 = 0;
+};
+
 struct Canon {
   std::uint64_t arena_lo = 0, arena_size = 0;
   std::uint64_t module_lo = 0, module_size = 0;
   const mpt::mp4::ModuleSymbols* symbols = nullptr;
+  CanonCounts* counts = nullptr;  // debug_hash_items only
 
   static constexpr std::uint64_t kArenaTag = 0xA7E4'0000'0000'0000ull;  // arena offsets are below 2^40
   static constexpr std::uint32_t kNan32 = 0x7FC0'0000u;
@@ -506,10 +513,29 @@ struct Canon {
   }
   std::uint64_t operator()(std::uint64_t w) const { return special(w) ? slow(w) : w; }
   std::uint64_t slow(std::uint64_t w) const {
-    if (w - arena_lo < arena_size) return kArenaTag | (w - arena_lo);
-    if (w - module_lo < module_size) return symbols->canonical(static_cast<std::uintptr_t>(w));
-    if (w == 0xFFF8'0000'0000'0000ull) return kNan64;
+    if (w - arena_lo < arena_size) {
+      if (counts != nullptr) ++counts->arena;
+      return kArenaTag | (w - arena_lo);
+    }
+    if (w - module_lo < module_size) {
+      mpt::mp4::PointerClass cls;
+      const std::uint64_t v = symbols->canonical(static_cast<std::uintptr_t>(w), &cls);
+      if (counts != nullptr) {
+        switch (cls) {
+          case mpt::mp4::PointerClass::symbol: ++counts->module_symbol; break;
+          case mpt::mp4::PointerClass::text: ++counts->module_text; break;
+          case mpt::mp4::PointerClass::cxx: ++counts->module_cxx; break;
+          case mpt::mp4::PointerClass::unknown: ++counts->module_unknown; break;
+        }
+      }
+      return v;
+    }
+    if (w == 0xFFF8'0000'0000'0000ull) {
+      if (counts != nullptr) ++counts->nan64;
+      return kNan64;
+    }
     std::uint32_t lo = static_cast<std::uint32_t>(w), hi = static_cast<std::uint32_t>(w >> 32);
+    if (counts != nullptr) counts->nan32 += (lo == 0xFFC0'0000u ? 1u : 0u) + (hi == 0xFFC0'0000u ? 1u : 0u);
     if (lo == 0xFFC0'0000u) lo = kNan32;
     if (hi == 0xFFC0'0000u) hi = kNan32;
     return (std::uint64_t{hi} << 32) | lo;
@@ -660,7 +686,9 @@ std::uint64_t hashMemoryXplat(const MptMp4Game& game, const Canon& c, const Item
 
 // state_hash: the digests of its parts, in this order.
 std::uint64_t crossPlatformHash(const MptMp4Game& game, const Items* items) {
-  const Canon c = canonFor(game);
+  CanonCounts counts;
+  Canon c = canonFor(game);
+  if (items != nullptr) c.counts = &counts;
   mpt::StateHasher h;
   h.update_u64(0x4D50'3448'4153'4801ull);  // "MP4HASH", manifest version 1
   auto part = [&](const char* name, std::uint64_t d) {
@@ -677,13 +705,21 @@ std::uint64_t crossPlatformHash(const MptMp4Game& game, const Items* items) {
     game.sdk->hashState(p);  // the SDK and the sound engine by value; module pointers by symbol
     part("sdk", p.digest());
   }
-  {
-    mpt::StateHasher p;
-    mpt_mp4_hash_game(&hashBytes, &p);
-    part("globals", p.digest());
-  }
+  // GWPlayerCfg, GWPlayer, GWSystem and GWGameStat are not hashed here as raw structs: they hold
+  // bitfields, whose layout and padding the MSVC and Itanium ABIs may lay out differently. The symbol
+  // pass covers them as globals; the deep hash still hashes them raw (#55 review).
   part("symbols", hashGameSymbols(c, items));
   part("memory", hashMemoryXplat(game, c, items));
+  if (items != nullptr) {
+    // Not part of the hash: how often each canonical rule fired. A module_symbol count from words that
+    // are really integers (an upper half of 0x00005000) or module_unknown hits point at false matches.
+    const std::pair<const char*, std::uint64_t> n[] = {
+        {"count arena", counts.arena},           {"count module_symbol", counts.module_symbol},
+        {"count module_text", counts.module_text}, {"count module_cxx", counts.module_cxx},
+        {"count module_unknown", counts.module_unknown}, {"count nan32", counts.nan32},
+        {"count nan64", counts.nan64}};
+    for (const auto& [name, value] : n) (*items)(name, value, 0);
+  }
   return h.digest();
 }
 

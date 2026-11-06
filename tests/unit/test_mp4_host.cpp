@@ -117,8 +117,9 @@ TEST_CASE("mpt_mp4_api_has_v1_1 accepts only a v1.1 table with status") {
   CHECK_FALSE(mpt_mp4_api_has_v1_1(&api));
   CHECK_FALSE(mpt_mp4_api_has_v1_1(nullptr));
 
-  // The appends sit where the size constants say (ABI v1.1 and v1.2).
+  // The appends sit where the size constants say (ABI v1.1, v1.2 and v1.3).
   CHECK(offsetof(MptMp4Api, status) == MPT_MP4_API_SIZE_V1_0);
   CHECK(offsetof(MptMp4Api, debug_perturb) == MPT_MP4_API_SIZE_V1_1);
-  CHECK(sizeof(MptMp4Api) == MPT_MP4_API_SIZE_V1_2);
+  CHECK(offsetof(MptMp4Api, debug_deep_hash) == MPT_MP4_API_SIZE_V1_2);
+  CHECK(sizeof(MptMp4Api) == MPT_MP4_API_SIZE_V1_3);
 }
