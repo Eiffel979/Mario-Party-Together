@@ -6,6 +6,8 @@
 // Each check builds whole runtimes one after another, never two alive at once (ADR 0002
 // rule 10), and returns the problems it found as text: an empty list means the target
 // conforms. conformance_tests.h turns the checks into doctest cases for one target.
+// check_hash_coverage is the E4 deep-hash oracle check for runtimes with test-only perturbation
+// hooks; its self-tests use a synthetic memory model (test_conformance_selftest.cpp).
 // FakeRuntime and FakeAdapter run in CI (test_conformance_fake.cpp). Mp4Runtime runs the
 // same checks on the dump lane once it exists (P1-16, P1-20d).
 //
@@ -455,6 +457,65 @@ inline Problems check_status(const Target& t) {
                               describe(health_at_save) + " (ADR 0011 rule 1)");
   }
   return problems;
+}
+
+// ---- E4 hash coverage against the deep hash (ADR 0008, amendment after P1-16 hash coverage) ----
+//
+// The raw-memory deep hash is the coverage oracle for stateHash() (point 2): a perturbation the
+// deep hash sees but stateHash() does not means the hash manifest misses an area. A probe drives a
+// runtime's test-only hooks (MP4: ABI v1.2 debug_perturb and the deep-hash entry). Each target
+// names one memory class. A target with nothing to flip right now (perturb() returns false) is
+// skipped, so callers should also require that enough targets were checked.
+struct HashCoverageProbe {
+  std::function<std::uint64_t()> state_hash;
+  std::function<std::uint64_t()> deep_hash;
+  // Flips one byte of the target's memory class; the same call again flips it back. False: nothing
+  // to flip right now (the hashes must then be unchanged).
+  std::function<bool(std::uint32_t target)> perturb;
+  struct Target {
+    std::uint32_t id = 0;
+    std::string name;
+  };
+  std::vector<Target> targets;
+};
+
+struct HashCoverageResult {
+  Problems problems;
+  std::size_t checked = 0;  // targets that had a byte to flip
+};
+
+// Run between frames. A perturbation that neither hash sees is fine (free heap, process stacks);
+// one that only stateHash() sees is fine too (the manifest may cover more than raw memory).
+inline HashCoverageResult check_hash_coverage(const HashCoverageProbe& probe) {
+  HashCoverageResult result;
+  const std::uint64_t state0 = probe.state_hash();
+  const std::uint64_t deep0 = probe.deep_hash();
+  if (probe.state_hash() != state0 || probe.deep_hash() != deep0) {
+    detail::add(result.problems, "the hashes change between two calls with nothing in between");
+    return result;
+  }
+  // Each target is judged against the hashes just before it, so one failure does not cascade.
+  for (const HashCoverageProbe::Target& t : probe.targets) {
+    const std::uint64_t state_before = probe.state_hash();
+    const std::uint64_t deep_before = probe.deep_hash();
+    if (!probe.perturb(t.id)) {
+      if (probe.state_hash() != state_before || probe.deep_hash() != deep_before)
+        detail::add(result.problems, t.name + ": perturb() found nothing to flip but changed a hash");
+      continue;
+    }
+    ++result.checked;
+    const std::uint64_t state1 = probe.state_hash();
+    const std::uint64_t deep1 = probe.deep_hash();
+    const bool flipped_back = probe.perturb(t.id);
+    const std::uint64_t state2 = probe.state_hash();
+    const std::uint64_t deep2 = probe.deep_hash();
+    if (deep1 != deep_before && state1 == state_before)
+      detail::add(result.problems,
+                  t.name + ": the deep hash sees the perturbation but stateHash() does not (the manifest misses it)");
+    if (!flipped_back || state2 != state_before || deep2 != deep_before)
+      detail::add(result.problems, t.name + ": flipping the byte back does not restore the hashes");
+  }
+  return result;
 }
 
 }  // namespace mpt::conformance
