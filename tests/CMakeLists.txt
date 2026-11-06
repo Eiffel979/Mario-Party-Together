@@ -48,6 +48,35 @@ target_link_libraries(mpt_conformance_tests PRIVATE mpt::core doctest::doctest)
 mpt_set_warnings(mpt_conformance_tests)
 add_test(NAME conformance COMMAND mpt_conformance_tests)
 
+# The MP4 host's module loader on stub modules (mp4_loader/): each stub is linked at the fixed image base
+# exactly like the game module (mpt_mp4_fixed_base_link, runtimes/gc_wii/mp4/layout.cmake), so this
+# checks the fixed base on Windows and Linux without game code or a dump. Its own executable, because
+# the loader keeps one module per process.
+if(TARGET mpt_mp4_runtime)
+  include("${PROJECT_SOURCE_DIR}/runtimes/gc_wii/mp4/layout.cmake")
+  foreach(_stub v11 v10 no_export)
+    add_library(mpt_mp4_stub_${_stub} MODULE mp4_loader/stub_module.cpp)
+    target_include_directories(mpt_mp4_stub_${_stub} PRIVATE "${PROJECT_SOURCE_DIR}/runtimes/gc_wii/mp4/include")
+    set_target_properties(mpt_mp4_stub_${_stub} PROPERTIES PREFIX "" CXX_VISIBILITY_PRESET hidden)
+    mpt_mp4_fixed_base_link(mpt_mp4_stub_${_stub})
+    mpt_set_warnings(mpt_mp4_stub_${_stub})
+  endforeach()
+  target_compile_definitions(mpt_mp4_stub_v11 PRIVATE MPT_STUB_API_SIZE=MPT_MP4_API_SIZE_V1_1)
+  target_compile_definitions(mpt_mp4_stub_v10 PRIVATE MPT_STUB_API_SIZE=MPT_MP4_API_SIZE_V1_0)
+  target_compile_definitions(mpt_mp4_stub_no_export PRIVATE MPT_STUB_NO_EXPORT)
+
+  add_executable(mpt_mp4_loader_tests unit/main.cpp mp4_loader/test_module_loader.cpp)
+  target_link_libraries(mpt_mp4_loader_tests PRIVATE mpt::mp4_runtime doctest::doctest ${CMAKE_DL_LIBS})
+  target_compile_definitions(mpt_mp4_loader_tests PRIVATE
+    MPT_MP4_MODULE_BASE=${MPT_MP4_MODULE_BASE}ull
+    "MPT_STUB_V11=\"$<TARGET_FILE:mpt_mp4_stub_v11>\""
+    "MPT_STUB_V10=\"$<TARGET_FILE:mpt_mp4_stub_v10>\""
+    "MPT_STUB_NO_EXPORT=\"$<TARGET_FILE:mpt_mp4_stub_no_export>\"")
+  add_dependencies(mpt_mp4_loader_tests mpt_mp4_stub_v11 mpt_mp4_stub_v10 mpt_mp4_stub_no_export)
+  mpt_set_warnings(mpt_mp4_loader_tests)
+  add_test(NAME mp4_module_loader COMMAND mpt_mp4_loader_tests)
+endif()
+
 # The .mptr validator (ADR 0006) must reject a file that is not a replay.
 add_test(NAME replay_check_rejects_non_replay
   COMMAND mpt_replay_check --fixture "${CMAKE_CURRENT_SOURCE_DIR}/golden/replay_v0_synthetic.mptr.hex")
