@@ -24,6 +24,9 @@ cmake-build-*/
 *.keys
 extracted/
 dumps/
+# Dump-lane frame captures and build caches: the user's game output (tests/dump_lane/README.md)
+captures/
+mpt-build-cache/
 
 # Memory-card and save images: user data with game-made icons and banners (ADR 0004)
 *.gci

@@ -14,8 +14,13 @@
 // `--perturb` (MP4, E4 hash coverage) adds a check at every checkpoint: for each memory class the
 // hash must cover, flip one byte, require a different stateHash(), flip it back and require the
 // original; for free heap space require the hash to stay the same. Any miss makes the exit 1.
+//
+// `--press button@frame[+frames][,...]` holds buttons on player 1, and `--capture DIR
+// [--capture-every N]` writes checkpoint frames as PNG files to DIR. DIR, MPT_BUILD_CACHE and
+// MPT_SOURCE_CACHE must lie outside the repository, like MPT_DUMP_DIR (path_guard.h).
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
@@ -29,6 +34,7 @@
 #include <vector>
 
 #include "dump_lane.h"
+#include "path_guard.h"
 #include "png.h"
 #include "mpt/core/title_id.h"
 #include "real_titles.h"
@@ -78,13 +84,6 @@ std::string environment(const char* name) {
   const char* value = std::getenv(name);
   return value ? std::string(value) : std::string();
 #endif
-}
-
-bool inside(const std::filesystem::path& path, const std::filesystem::path& root) {
-  std::error_code ec;
-  const std::filesystem::path rel =
-      std::filesystem::weakly_canonical(path, ec).lexically_relative(std::filesystem::weakly_canonical(root, ec));
-  return !rel.empty() && *rel.begin() != "..";
 }
 
 struct BootOptions {
@@ -325,8 +324,19 @@ int main(int argc, char** argv) {
     std::printf("dump lane: MPT_DUMP_DIR is not a directory: %s\n", dump_dir.string().c_str());
     return 1;
   }
-  if (inside(dump_dir, MPT_REPO_ROOT)) {
+  if (mpt::dump_lane::is_inside(dump_dir, MPT_REPO_ROOT)) {
     std::puts("dump lane: MPT_DUMP_DIR is inside the repository; dumps must live outside it (ADR 0006)");
+    return 1;
+  }
+  // Captures (the user's game output) and the caches (an extracted disc, built modules, decomp
+  // checkouts) must stay outside the repository too.
+  const std::array<mpt::dump_lane::GuardedPath, 3> written = {{
+      {"--capture", boot_options.capture_dir},
+      {"MPT_BUILD_CACHE", std::filesystem::path(environment("MPT_BUILD_CACHE"))},
+      {"MPT_SOURCE_CACHE", std::filesystem::path(environment("MPT_SOURCE_CACHE"))},
+  }};
+  if (const std::string refused = mpt::dump_lane::refuse_inside(written, MPT_REPO_ROOT); !refused.empty()) {
+    std::printf("dump lane: %s\n", refused.c_str());
     return 1;
   }
   if (!boot_options.title.empty()) return boot(boot_options, dump_dir);
