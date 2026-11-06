@@ -56,7 +56,10 @@ typedef enum MptMp4Status {
   MPT_MP4_ERR_SDK = 4,         /* the SDK, renderer or sound engine failed to start */
   MPT_MP4_ERR_STATE = 5,       /* a save state from another build, layout or arena/module base */
   MPT_MP4_ERR_BUFFER = 6,      /* the caller's buffer is too small; the needed size is reported */
-  MPT_MP4_ERR_BUSY = 7         /* a game already exists in this process */
+  MPT_MP4_ERR_BUSY = 7,        /* a game already exists in this process */
+  MPT_MP4_ERR_BACKEND = 8      /* create: video_backend is not the GX backend this module was built
+                                * with (MPT_MP4_VIDEO_NULL for a null-backend module); retry with the
+                                * other value. Added in the #49 review; nothing else returns it. */
 } MptMp4Status;
 
 typedef enum MptMp4StepResult {

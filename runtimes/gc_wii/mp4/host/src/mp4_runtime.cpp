@@ -87,11 +87,12 @@ Result Mp4Runtime::boot(const VerifiedDump& dump, const RuntimeConfig& config) {
   boot.arena_base = static_cast<std::uintptr_t>(MPT_MP4_ARENA_BASE);
   boot.cache_dir = cache.c_str();
 
-  // The module's GX backend is fixed when it is built: try the renderer, then the null backend.
+  // The module's GX backend is fixed when it is built: try the renderer, then the null backend, which a
+  // null-backend module asks for with MPT_MP4_ERR_BACKEND.
   MptMp4Error e = newError();
   boot.video_backend = MPT_MP4_VIDEO_GPU;
   MptMp4Status status = api_->create(&boot, &game_, &e);
-  if (status == MPT_MP4_ERR_ARGUMENT && std::string(e.message).find("null GX backend") != std::string::npos) {
+  if (status == MPT_MP4_ERR_BACKEND) {
     e = newError();
     boot.video_backend = MPT_MP4_VIDEO_NULL;
     status = api_->create(&boot, &game_, &e);
