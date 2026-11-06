@@ -298,3 +298,57 @@ TEST_CASE("memoryDigest depends on contents and length, never on the address") {
   CHECK(memoryDigest({}) == 0xEF46DB3751D8E999ull);
   CHECK(d == 0x128DA10CFBDC59D9ull);
 }
+
+TEST_CASE("memoryDigestWords transforms whole words only, and is memoryDigest for the identity") {
+  std::vector<std::byte> a(203);
+  for (std::size_t i = 0; i < a.size(); ++i) a[i] = static_cast<std::byte>((i * 53 + 7) & 0xFF);
+  struct Identity {
+    static bool special(std::uint64_t) { return false; }
+    std::uint64_t operator()(std::uint64_t w) const { return w; }
+  };
+  CHECK(memoryDigestWords(a, Identity{}) == memoryDigest(a));
+  // Zeroing every word: the same digest as all-zero words, and the 3 trailing bytes stay as they are.
+  struct Zero {
+    static bool special(std::uint64_t) { return true; }
+    std::uint64_t operator()(std::uint64_t) const { return 0; }
+  };
+  std::vector<std::byte> z(a.size());
+  std::memcpy(z.data() + 200, a.data() + 200, 3);
+  CHECK(memoryDigestWords(a, Zero{}) == memoryDigest(z));
+  // special() false for a block means word_fn is not applied to it (a superset test, never a subset).
+  struct Never {
+    static bool special(std::uint64_t) { return false; }
+    std::uint64_t operator()(std::uint64_t) const { return 0; }
+  };
+  CHECK(memoryDigestWords(std::span<const std::byte>(a).first(64), Never{}) == memoryDigest(std::span<const std::byte>(a).first(64)));
+}
+
+namespace {
+OSAlarm g_id_alarm;
+void idAlarmHandler(OSAlarm*, OSContext*) {}
+std::uint64_t idA(const void* p) { return p == reinterpret_cast<const void*>(&idAlarmHandler) ? 0x1234 : 0; }
+std::uint64_t idB(const void* p) { return p == reinterpret_cast<const void*>(&idAlarmHandler) ? 0x5678 : 0; }
+std::uint64_t idNone(const void*) { return 0; }
+
+std::uint64_t alarmHashWith(std::uint64_t (*pointer_id)(const void*)) {
+  Game g{[] {
+    OSCreateAlarm(&g_id_alarm);
+    OSSetAlarm(&g_id_alarm, OSMillisecondsToTicks(1000), &idAlarmHandler);
+  }};
+  SdkConfig cfg;
+  cfg.pointer_id = pointer_id;
+  auto sdk = boot(g, cfg);
+  CHECK(step(*sdk) == StepStatus::halted);
+  return sdk->stateHash();
+}
+}  // namespace
+
+// ADR 0008, P1-13 amendment point 5: function pointers hash as the title's stable IDs, not a sentinel.
+TEST_CASE("SdkConfig::pointer_id names functions in the SDK's manifest") {
+  const std::uint64_t sentinel = alarmHashWith(nullptr);
+  CHECK(alarmHashWith(&idNone) == sentinel);  // 0 means unknown: the sentinel stays
+  const std::uint64_t a = alarmHashWith(&idA);
+  CHECK(a != sentinel);
+  CHECK(alarmHashWith(&idB) != a);
+  CHECK(alarmHashWith(&idA) == a);
+}
