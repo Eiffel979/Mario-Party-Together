@@ -47,6 +47,11 @@ int main(int argc, char** argv) {
   CHECK(mpt_mp4_api_has_v1_1(api));
   CHECK(api->struct_size >= MPT_MP4_API_SIZE_V1_2 && api->debug_perturb != NULL);
   CHECK(api->debug_perturb(NULL, MPT_MP4_PERTURB_GAME_DATA) == MPT_MP4_ERR_ARGUMENT);
+  CHECK(api->struct_size >= MPT_MP4_API_SIZE_V1_3 && api->debug_deep_hash != NULL);
+  {
+    uint64_t deep = 0x1234;
+    CHECK(api->debug_deep_hash(NULL, &deep) == MPT_MP4_ERR_ARGUMENT && deep == 0x1234);
+  }
   {
     /* A v1.0 table ends at struct_size 160: the host's check rejects it whatever lies past the end
      * (here a copy with a non-NULL status beyond struct_size). */

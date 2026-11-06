@@ -238,10 +238,12 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir) {
       }
 #if defined(MPT_DUMP_LANE_MP4)
       if (options.perturb && mp4 != nullptr) perturb_failures += perturb_checks(*mp4, f + 1);
-      // Without debug hooks the module must refuse to perturb and change nothing (PR #48).
+      // Without debug hooks the module must refuse to perturb or give a deep hash, and change nothing
+      // (PR #48).
       if (!options.perturb && mp4 != nullptr && hash_calls == 1) {
-        const bool refused = !mp4->debugPerturb(MPT_MP4_PERTURB_GAME_DATA) && mp4->stateHash() == hash;
-        std::printf("dump lane: debug hooks off, perturb %s\n", refused ? "refused" : "NOT refused");
+        const bool refused =
+            !mp4->debugPerturb(MPT_MP4_PERTURB_GAME_DATA) && !mp4->debugDeepHash() && mp4->stateHash() == hash;
+        std::printf("dump lane: debug hooks off, perturb and deep hash %s\n", refused ? "refused" : "NOT refused");
         if (!refused) ++perturb_failures;
       }
 #endif

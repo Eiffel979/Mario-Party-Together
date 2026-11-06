@@ -760,6 +760,7 @@ So a minigame is covered on both devices unless it needs something a key cannot 
 - **ABI minor versions** (append-only, `game_abi.h`):
   - v1.1 appends `status`. The loader requires it (`mpt_mp4_api_has_v1_1`), and `mp4_game_abi` checks that a 160-byte v1.0 table is rejected.
   - v1.2 appends `debug_perturb`, a test-only hook for the hash coverage proof (accepted in PR #48). It acts only on a game created with the unhashed boot flag `MPT_MP4_BOOT_DEBUG_HOOKS`; without it, it returns `MPT_MP4_ERR_ARGUMENT` and changes nothing. `Mp4Runtime::setDebugHooks` sets the flag (the dump lane's `--perturb` does), and `debugPerturb` uses the entry only when the table is at least 176 bytes. A dump-lane run without `--perturb` checks on the real game that the module refuses.
+  - v1.3 appends `debug_deep_hash`, the deep hash of ADR 0008 §9: P1-16's raw-memory hash, kept for bisecting desyncs on one machine and build and as the E4 coverage oracle (amendment after P1-16 hash coverage). Same flag and refusal as `debug_perturb`: without `MPT_MP4_BOOT_DEBUG_HOOKS` it returns `MPT_MP4_ERR_ARGUMENT` and computes nothing. `Mp4Runtime::debugDeepHash` uses it only when the table is at least 184 bytes. The hooks-off dump-lane check covers both entries.
 - `SaveState::format_version` is the module's `state_format()`.
 - If the module was built with the null GX backend, `create` returns `MPT_MP4_ERR_BACKEND` for a GPU request and `boot()` retries with null video. The host keys on that status code, never on the error text (#49 review).
 

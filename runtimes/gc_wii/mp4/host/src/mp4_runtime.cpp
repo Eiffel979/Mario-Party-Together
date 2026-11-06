@@ -215,6 +215,14 @@ bool Mp4Runtime::debugPerturb(std::uint32_t target) {
   return api_->debug_perturb(game_, target) == MPT_MP4_OK;
 }
 
+std::optional<std::uint64_t> Mp4Runtime::debugDeepHash() const {
+  if (game_ == nullptr || api_->struct_size < MPT_MP4_API_SIZE_V1_3 || api_->debug_deep_hash == nullptr)
+    return std::nullopt;
+  std::uint64_t deep = 0;
+  if (api_->debug_deep_hash(game_, &deep) != MPT_MP4_OK) return std::nullopt;
+  return deep;
+}
+
 bool Mp4Runtime::readParty(MptMp4Party& out) const {
   if (game_ == nullptr) return false;
   out = MptMp4Party{};

@@ -394,19 +394,38 @@ void hashMemory(const MptMp4Game& game, mpt::StateHasher& h) {
   hashRange(h, game.sdk->aramInUse());
 }
 
-// Determinism inputs and game state only: presentation and debug settings never reach the hash.
+// The module's own fields: determinism inputs and status. Presentation and debug settings never
+// reach a hash.
+void hashManifestFields(const MptMp4Game& game, mpt::StateHasher& h) {
+  h.update_u64(game.gameplay_flags);
+  h.update_u64(game.frame_base);
+  h.update_u64(game.generation_base);
+  h.update_u64(game.resets);
+  h.update_u64(static_cast<std::uint64_t>(game.status));
+}
+
+// The deep hash (ADR 0008 section 9, amendment after P1-16 hash coverage): P1-16's raw-memory hash.
+// Same build, same platform only: debug_deep_hash and the E4 coverage oracle.
+std::uint64_t deepHash(const MptMp4Game& game) {
+  mpt::StateHasher h;
+  hashManifestFields(game, h);
+  game.sdk->hashState(h);  // includes the attached sound engine
+  mpt_mp4_hash_game(&hashBytes, &h);
+  hashMemory(game, h);
+  return h.digest();
+}
+
 std::uint64_t stateHash(const MptMp4Game* game) {
   if (game == nullptr) return 0;
-  mpt::StateHasher h;
-  h.update_u64(game->gameplay_flags);
-  h.update_u64(game->frame_base);
-  h.update_u64(game->generation_base);
-  h.update_u64(game->resets);
-  h.update_u64(static_cast<std::uint64_t>(game->status));
-  game->sdk->hashState(h);  // includes the attached sound engine
-  mpt_mp4_hash_game(&hashBytes, &h);
-  hashMemory(*game, h);
-  return h.digest();
+  return deepHash(*game);
+}
+
+// Test only (ABI v1.3): the deep hash, on a game created with MPT_MP4_BOOT_DEBUG_HOOKS.
+std::int32_t debugDeepHash(const MptMp4Game* game, std::uint64_t* out) {
+  if (game == nullptr || game != g_game || !game->debug_hooks || game->sdk == nullptr || out == nullptr)
+    return MPT_MP4_ERR_ARGUMENT;
+  *out = deepHash(*game);
+  return MPT_MP4_OK;
 }
 
 // Test only (ABI v1.2): the byte debug_perturb flips for `target`, or nullptr.
@@ -640,7 +659,7 @@ const MptMp4Api kApi = {
     sizeof(MptMp4Api), MPT_MP4_ABI_VERSION, MPT_MP4_BUILD_ID,
     &create, &destroy, &step, &frame, &fault, &frameRate, &stateHash, &saveState, &loadState, &stateFormat,
     &saveMediaGeneration, &saveMedia, &cardFormat, &video, &audio, &rumble, &setReport, &party, &statusOf,
-    &debugPerturb,
+    &debugPerturb, &debugDeepHash,
 };
 
 }  // namespace
