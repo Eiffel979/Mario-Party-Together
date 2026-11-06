@@ -190,6 +190,7 @@ add_library(mp4_game SHARED
   ${MPT_MP4_REL_INFOS}
   "${CMAKE_CURRENT_BINARY_DIR}/generated/mpt_mp4_rel_table.c"
   src/rel_loader.c
+  src/libco_stats.c
   src/game_data.c
   src/abi.cpp
   src/copy_trap.cpp)
@@ -238,10 +239,11 @@ endforeach()
 # state regions stay valid in a fresh process. Windows: no dynamic base and no relocations, so the
 # loader either maps it there or fails. Linux: lld links the .so at that base; glibc's loader asks the
 # kernel for that address, and the host runtime checks where it landed.
+mpt_mp4_fixed_base_link(mp4_game)  # layout.cmake
 if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-  target_link_options(mp4_game PRIVATE /errorlimit:0 "/BASE:${MPT_MP4_MODULE_BASE}" /DYNAMICBASE:NO /FIXED)
+  target_link_options(mp4_game PRIVATE /errorlimit:0)
 else()
-  target_link_options(mp4_game PRIVATE -Wl,--error-limit=0 -fuse-ld=lld "-Wl,--image-base=${MPT_MP4_MODULE_BASE}")
+  target_link_options(mp4_game PRIVATE -Wl,--error-limit=0)
 endif()
 
 # Unit checks (synthetic data only).
@@ -249,7 +251,7 @@ if(MPT_BUILD_TESTS)
   add_subdirectory(tests)
   # Link checks on the game code (the DOL objects and every isolated REL): no host libm
   # transcendental or fma (ADR 0008 section 5), and no host threads, clocks, RNG or heap (ADR 0008
-  # sections 1, 2 and 7). Host-side files (abi.cpp, rel_loader.c, copy_trap.cpp) are not game code.
+  # sections 1, 2 and 7). Host-side files (abi.cpp, rel_loader.c, libco_stats.c, copy_trap.cpp) are not game code.
   # Hundreds of objects: the list goes through a file, not the command line.
   string(REPLACE ";" "\n" _rel_lines "${MPT_MP4_REL_LIBS}")
   file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/mp4_game_code.txt"

@@ -34,8 +34,12 @@ static MptCoThread* s_current = &s_caller;
  * close interrupt work on these stacks (MusyX rendering, ADR 0008 section 1) comes to the canary. */
 #define MPT_CO_PAINT 0xA5u
 #define MPT_CO_SAMPLE_EVERY 256u /* power of two */
-static uint32_t s_peak_permille;
-static uint32_t s_switches;
+/* The peak and the switch counter live in src/libco_stats.c, outside the game data range: the peak
+ * follows from how much host stack the code under game calls uses, which differs by compiler and
+ * platform, so it must be neither saved nor hashed. Neither one changes game state: the measurement
+ * only reads stacks, and OSReport is not an SDK call boundary. */
+extern uint32_t mpt_co_peak_permille;
+extern uint32_t mpt_co_switches;
 
 static void measure(const MptCoThread* t) {
   const unsigned char* lo = (const unsigned char*)t + MPT_CO_OVERHEAD;
@@ -43,8 +47,8 @@ static void measure(const MptCoThread* t) {
   while (untouched < t->usable && lo[untouched] == MPT_CO_PAINT) ++untouched;
   const size_t used = (size_t)t->usable - untouched;
   const uint32_t permille = t->usable ? (uint32_t)(used * 1000u / t->usable) : 0;
-  if (permille > s_peak_permille) {
-    s_peak_permille = permille;
+  if (permille > mpt_co_peak_permille) {
+    mpt_co_peak_permille = permille;
     {
       /* The entry is an address in the module, which sits at a fixed base: it names the process. */
       OSReport("libco: process stack high water %u of %u bytes (%u.%u%%), entry %p\n", (unsigned)used,
@@ -114,10 +118,9 @@ void co_switch(cothread_t thread) {
   check(from, "co_switch (the running coroutine)");
   /* Long-lived processes (the main loop, the title screen) are never deleted, so also sample the
    * stack a process leaves behind: one switch in MPT_CO_SAMPLE_EVERY, which keeps the paint scan off
-   * the per-frame path. The scan only reads the stack. The counter and the peak sit in the game data
-   * range like every static here, so they are saved and hashed; both follow from the switch order
-   * alone, which is deterministic. */
-  if (from != &s_caller && (++s_switches & (MPT_CO_SAMPLE_EVERY - 1u)) == 0) {
+   * the per-frame path. The scan only reads the stack, and the counter and the peak are host-side
+   * diagnostics (libco_stats.c), never game state. */
+  if (from != &s_caller && (++mpt_co_switches & (MPT_CO_SAMPLE_EVERY - 1u)) == 0) {
     measure(from);
   }
   s_current = to;

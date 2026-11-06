@@ -750,9 +750,9 @@ So a minigame is covered on both devices unless it needs something a key cannot 
   - v1.1 appends `status`. The loader requires it (`mpt_mp4_api_has_v1_1`), and `mp4_game_abi` checks that a 160-byte v1.0 table is rejected.
   - v1.2 appends `debug_perturb`, a test-only hook for the hash coverage proof (accepted in PR #48). It acts only on a game created with the unhashed boot flag `MPT_MP4_BOOT_DEBUG_HOOKS`; without it, it returns `MPT_MP4_ERR_ARGUMENT` and changes nothing. `Mp4Runtime::setDebugHooks` sets the flag (the dump lane's `--perturb` does), and `debugPerturb` uses the entry only when the table is at least 176 bytes. A dump-lane run without `--perturb` checks on the real game that the module refuses.
 - `SaveState::format_version` is the module's `state_format()`.
-- If the module was built with the null GX backend, `boot()` falls back to null video.
+- If the module was built with the null GX backend, `create` returns `MPT_MP4_ERR_BACKEND` for a GPU request and `boot()` retries with null video. The host keys on that status code, never on the error text (#49 review).
 
-**Mp4Adapter** (`adapters/mp4`) maps the raw party flags to `PartyPhase` and accepts only an empty ruleset. P1-17 adds the catalog and the ID mapping.
+**Mp4Adapter** (`adapters/mp4`) maps the raw party flags to `PartyPhase` and accepts only an empty ruleset. P1-17 adds the catalog and the ID mapping. `phase_of` classifies the raw flags and overlay (a minigame overlay `m4xxDll` gives `minigame`), but until the catalog lands `readParty()` reports a minigame as `PartyPhase::board`: ADR 0005's `minigame` phase needs `current_minigame`, which only the catalog mapping can fill (TODO in `mp4_adapter.cpp`, #49 review).
 
 The shell registration (`mpt_register_mp4`) gives `--dump` the asset-import recipe, using this tree's `runtimes/gc_wii`, Clang, Ninja, GX backend and packages.
 
@@ -763,7 +763,9 @@ The shell registration (`mpt_register_mp4`) gives `--dump` the asset-import reci
 | Game module image base | `0x500000000000` | **Windows:** `/BASE` with `/DYNAMICBASE:NO /FIXED`, so the image has no relocations and loads there or not at all (checked: `IMAGE_FILE_RELOCS_STRIPPED`, ImageBase `0x500000000000`). **Linux:** lld `--image-base`; glibc asks the kernel for that address. |
 | SDK arena | `0x400000000000` | Reserved by the SDK at `create`, which fails if the address is unavailable. |
 
-The loader refuses a module that landed anywhere else, and `mp4_game_abi` checks the base. **Linux has not been run here.** The fresh-process save/load demonstration (E5) is still to do on both OSes.
+The loader refuses a module that landed anywhere else, and unloads it again on that path, as on a missing export or a pre-v1.1 table. `mp4_game_abi` checks the base. `mpt_mp4_fixed_base_link(<target> [BASE <address>])` in `layout.cmake` applies these link flags to any shared library, so a stub module can test the loader without game sources.
+
+**Mandatory ASLR.** A `/DYNAMICBASE:NO /FIXED` image has no relocations, so it cannot load when Windows Exploit protection forces randomization for images ("Mandatory ASLR"), system-wide or for the executable. The loader then reports that the fixed base is in use "or Mandatory ASLR is forced"; the setting must be off for the shell and the dump lane. **Linux has not been run here.** The fresh-process save/load demonstration (E5) is still to do on both OSes.
 
 **I/O callback mode: before return** (`SdkConfig::io_callbacks_before_return = true`). The audit:
 
@@ -782,7 +784,7 @@ The `armem.c` loops would never see their callback under the default mode, so MP
 
 **Process stacks.**
 - **Size** (Party Board patch 0002). Twice the console's size for 64-bit frames, plus a fixed 16 KiB for the host code under game calls (GX on aurora, the C runtime). That host depth does not scale with the console's stack. The patch hash is in the build ID, so the changed heap layout gets a new one.
-- **High water.** `src/libco.c` paints each stack at creation. It measures the stack when the process ends, and also samples it when the process yields (1 switch in 256), which covers long-lived processes. OSReport prints each new peak with the process's entry address, which is stable because the module sits at a fixed base.
+- **High water.** `src/libco.c` paints each stack at creation. It measures the stack when the process ends, and also samples it when the process yields (1 switch in 256), which covers long-lived processes. OSReport prints each new peak with the process's entry address, which is stable because the module sits at a fixed base. The peak and the switch counter are host-side (`src/libco_stats.c`, outside the game data range), so they are neither saved nor hashed: the peak depends on how much host stack the code under game calls uses, which differs by compiler and platform (#49 review).
 - **What drove the peak.** Before the headroom, `HuWinProc` (window.c; 0x1000 on the console, 8 KiB here) peaked at 7816 of 7904 bytes (98.8%). Moving interrupts off the stack (below) did not change that, so the depth comes from its own calls into GX and the CRT. With the headroom it peaks at 7720 of 24,288 bytes (31.7%). The largest other peak in the boot window is 15.4% of a 48 KiB stack.
 - **Interrupts.** Due interrupts at an SDK call boundary used to run on whatever stack was current, which could be a game process's coroutine stack. They now run on the SDK's interrupt coroutine and switch straight back (`runDueOffStack`). The same events run in the same order, and a handler still sees the interrupted thread as current. A synthetic SDK test checks both.
 - **Deleted stacks are scrubbed.** `co_delete` repaints a stack before process.c frees it. Host frames leave per-process values on a stack (stack cookies, host heap pointers), and the game may hand the memory out again.
@@ -837,6 +839,10 @@ The `armem.c` loops would never see their callback under the default mode, so MP
 - **Determinism.** 10,000 frames, checkpoints every 100 frames, in two separate processes:
   - seed 1: `c8f8da4267f8d431` at frame 10,000 in both, identical at all 100 checkpoints;
   - seed 2: `a619f53f9b4f56d5`, different at all 100.
+- **Rerun after the #49 review (2026-11-05).** The libco high-water statics left the game data range (`libco_stats.c`), which changes the hashed and saved bytes, so the trail moved. Same check, 10,000 frames, checkpoints every 100, separate processes:
+  - seed 1: `8f557606d1449fcd` at frame 10,000 in both, identical at all 100 checkpoints;
+  - seed 2: `b8c08c09683489b8`, different at all 100.
+  - `stateHash()` cost 3.9 to 5.4 ms per call (means of 100).
 - **Earlier trail.** The first M1 (2026-10-21) used the coarse hash (SDK state and named globals only). Its trail did not move with the libm change, because it did not cover game memory.
 - **Not yet.** Fresh-process save/load (E5) and the Linux runs are still to do.
 
@@ -845,7 +851,7 @@ The `armem.c` loops would never see their callback under the default mode, so MP
 - **Boot.** The Nintendo and Hudson logos render from frame 60 to about 540.
 - **Title and menus.** A script of `start@900,start@1200,a@1500,a@1800,a@2100,a@2400` reaches, in order:
   - the title screen (about frame 960);
-  - "Select a File" with the memory card slots;
+  - the file-select screen with the memory card slots;
   - the three file slots;
   - the new-file opening on the blank card.
 - **Fixed on the way.**

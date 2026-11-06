@@ -228,7 +228,7 @@ MptMp4Status create(const MptMp4BootConfig* in, MptMp4Game** out, MptMp4Error* e
   const bool gpu = config.video_backend == MPT_MP4_VIDEO_GPU;
   if (gpu != mpt::gx::renderer_draws()) {
     setError(error, gpu ? "this module was built with the null GX backend" : "this module was built with a GPU GX backend");
-    return MPT_MP4_ERR_ARGUMENT;
+    return MPT_MP4_ERR_BACKEND;
   }
   mpt::gx::RendererConfig rc;
   rc.internal_scale = std::max<std::uint32_t>(1, config.internal_scale);

@@ -3,7 +3,6 @@
 
 #include <cstdint>
 #include <cstdio>
-#include <mutex>
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -25,6 +24,21 @@ struct Loaded {
 
 Loaded g_loaded;  // one module per process at a time
 
+// A path for a message: UTF-8 on every platform (path::string() is the ANSI code page on Windows).
+std::string utf8(const std::filesystem::path& p) {
+  const std::u8string s = p.u8string();
+  return std::string(s.begin(), s.end());
+}
+
+// Unloads a module that failed the checks below, so a failed boot leaves nothing mapped.
+void unload(void* handle) {
+#if defined(_WIN32)
+  FreeLibrary(static_cast<HMODULE>(handle));
+#else
+  dlclose(handle);
+#endif
+}
+
 std::string hex(std::uintptr_t v) {
   char buf[32];
   std::snprintf(buf, sizeof buf, "0x%llx", static_cast<unsigned long long>(v));
@@ -41,11 +55,11 @@ const MptMp4Api* load_module(const std::filesystem::path& path, std::uintptr_t e
       ++g_loaded.holds;
       return g_loaded.api;
     }
-    error = "another MP4 game module is already loaded in this process (" + g_loaded.path.string() + ")";
+    error = "another MP4 game module is already loaded in this process (" + utf8(g_loaded.path) + ")";
     return nullptr;
   }
   if (!std::filesystem::is_regular_file(canonical, ec)) {
-    error = "no game module at " + path.string() + "; build the title first";
+    error = "no game module at " + utf8(path) + "; build the title first";
     return nullptr;
   }
   void* handle = nullptr;
@@ -55,9 +69,14 @@ const MptMp4Api* load_module(const std::filesystem::path& path, std::uintptr_t e
   HMODULE module = LoadLibraryExW(canonical.wstring().c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
   if (module == nullptr) {
     const DWORD code = GetLastError();
-    error = "cannot load " + canonical.string() + " (error " + std::to_string(code) + ")";
+    error = "cannot load " + utf8(canonical) + " (error " + std::to_string(code) + ")";
+    // The module has no relocations (/DYNAMICBASE:NO /FIXED, ADR 0008 section 11), so it loads only at
+    // its own base: when that range is taken, or when Windows forces ASLR on images without it
+    // (Exploit protection, "Force randomization for images (Mandatory ASLR)", system-wide or for this
+    // executable), the load fails. Mandatory ASLR must be off for the shell and the dump lane.
     if (code == ERROR_INVALID_ADDRESS || code == ERROR_ILLEGAL_DLL_RELOCATION || code == 487)
-      error += ": its fixed base " + hex(expected_base) + " is in use in this process";
+      error += ": its fixed base " + hex(expected_base) +
+               " is in use in this process, or Mandatory ASLR (Exploit protection) is forced for it";
     return nullptr;
   }
   handle = module;
@@ -67,7 +86,7 @@ const MptMp4Api* load_module(const std::filesystem::path& path, std::uintptr_t e
   handle = dlopen(canonical.c_str(), RTLD_NOW | RTLD_LOCAL);
   if (handle == nullptr) {
     const char* why = dlerror();
-    error = "cannot load " + canonical.string() + ": " + (why ? why : "unknown error");
+    error = "cannot load " + utf8(canonical) + ": " + (why ? why : "unknown error");
     return nullptr;
   }
   get_api = dlsym(handle, "mpt_mp4_get_api");
@@ -75,12 +94,14 @@ const MptMp4Api* load_module(const std::filesystem::path& path, std::uintptr_t e
   if (get_api != nullptr && dladdr(get_api, &info) != 0) base = reinterpret_cast<std::uintptr_t>(info.dli_fbase);
 #endif
   if (get_api == nullptr) {
-    error = canonical.string() + " does not export mpt_mp4_get_api";
+    error = utf8(canonical) + " does not export mpt_mp4_get_api";
+    unload(handle);
     return nullptr;
   }
   if (base != expected_base) {
     // A module elsewhere would make every function pointer in a save state wrong (ADR 0008 section 11).
     error = "the game module loaded at " + hex(base) + ", not at its fixed base " + hex(expected_base);
+    unload(handle);
     return nullptr;
   }
   const auto fn = reinterpret_cast<MptMp4GetApiFn>(get_api);
@@ -88,6 +109,7 @@ const MptMp4Api* load_module(const std::filesystem::path& path, std::uintptr_t e
   // The host calls status() (v1.1), so it needs a v1.1 table.
   if (!mpt_mp4_api_has_v1_1(api)) {
     error = "the game module does not implement ABI version " + std::to_string(MPT_MP4_ABI_VERSION) + ".1";
+    unload(handle);
     return nullptr;
   }
   g_loaded = {canonical, handle, api, 1};
@@ -96,11 +118,7 @@ const MptMp4Api* load_module(const std::filesystem::path& path, std::uintptr_t e
 
 void release_module() {
   if (g_loaded.api == nullptr || --g_loaded.holds > 0) return;
-#if defined(_WIN32)
-  FreeLibrary(static_cast<HMODULE>(g_loaded.handle));
-#else
-  dlclose(g_loaded.handle);
-#endif
+  unload(g_loaded.handle);
   g_loaded = {};
 }
 

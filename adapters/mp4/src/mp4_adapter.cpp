@@ -47,6 +47,11 @@ PartySnapshot Mp4Adapter::readParty() {
     snap.players[i].board_space = p.space;
     // character, board and current_minigame IDs: P1-17's catalog mapping.
   }
+  // ADR 0005: PartyPhase::minigame needs current_minigame. phase_of classifies the raw overlay, but
+  // until P1-17's catalog fills current_minigame, a minigame during a party is reported as part of
+  // the board phase.
+  // TODO(P1-17): drop this once readParty maps the overlay to current_minigame.
+  if (snap.phase == PartyPhase::minigame && !snap.current_minigame) snap.phase = PartyPhase::board;
   return snap;
 }
 
