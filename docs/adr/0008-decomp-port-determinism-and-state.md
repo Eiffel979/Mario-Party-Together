@@ -291,7 +291,7 @@ That conflicts with the user's decision D5 and exit criterion E3c: identical Win
    - **Heap blocks by allocation.** `OSAlloc` and `HuMem` blocks are visited in allocation order. Each block is hashed by its type, from the allocation site's registered type, where the manifest knows it. Otherwise it is hashed as words with three canonicalizations:
      - a 64-bit aligned word inside the arena becomes its arena offset;
      - a word inside the module becomes its symbol ID and offset;
-     - an aligned word with an f32 or f64 NaN bit pattern becomes the canonical NaN.
+     - an aligned word holding the x86 default NaN with either sign becomes the canonical NaN *(narrowed after #55: see "Untyped words: only the default NaN's sign is merged")*.
 
      Canonicalization can only merge values, never split them. The cost is that an integer that happens to look like a NaN or a module pointer hides a difference.
    - **Choosing the image base.** The module base (`0x500000000000`) puts pointers in a range that a pair of game `s32` fields almost never forms. That keeps false-positive pointer matches rare, and E3c is the test that shows it.
@@ -321,3 +321,27 @@ Appending a test-only entry to the function table is the right way to add a debu
 - `debug_perturb` works only on a game created with a new boot flag, `MPT_MP4_BOOT_DEBUG_HOOKS`. Without it, it returns `MPT_MP4_ERR_ARGUMENT` and changes nothing, so a normal session (live, replay or netplay) can never be perturbed by accident.
 - The flag is a debug flag: like `DEBUG_COPY_TRAP`, it is not hashed.
 - The deep-hash entry from point 2 goes in the same minor version or the next, under the same flag.
+
+### Untyped words: only the default NaN's sign is merged (architect, 2026-11-06)
+runtime-gc-wii implemented the cross-platform `state_hash` (#55). It deviated from the rule above, which canonicalized every NaN bit pattern in untyped words, and the deviation is correct. **Accepted, with one extension.**
+- **Why the original rule was wrong.** An untyped 32-bit word with a NaN bit pattern is far more often an integer than a float:
+  - every `s32` from -1 to -8,388,607 (`0xFF800001`–`0xFFFFFFFF`) has one;
+  - so does every value from 2,139,095,041 up (`0x7F800001`–`0x7FFFFFFF`).
+
+  Merging them all would hide real divergence in common game values such as -1 sentinels and small negative offsets. "Merge, never split" is only safe when the merged set is small.
+- **The rule now:**
+  - **Typed float fields** (`update_f32`/`update_f64`, amendment after P1-14) still merge every NaN.
+  - **In untyped words**, only the sign of the **x86 default NaN** is merged. The f32 values `0x7FC00000` and `0xFFC00000` hash as one value, and an aligned 64-bit word holding the f64 default NaN, `0x7FF8000000000000` or `0xFFF8000000000000`, hashes as one value. The f64 case is my extension: #55 should add it if it doesn't already. Every other bit pattern is hashed exactly.
+- **Why that is enough in practice:**
+  - Both of our platforms run the same Clang on the same ISA (x86-64, SSE).
+  - An invalid operation produces the default NaN, which on x86 has the sign bit set.
+  - The cross-codegen difference we expect is in which operand's NaN propagates, and the sign of that NaN after negation, `fabs` or `copysign` along different paths. Both cases are the default NaN with either sign.
+  - Payload NaNs, meaning anything other than the default NaN, only appear if game data or a bit cast creates one, and MP4 has no known source.
+  - ARM64's default NaN is `0x7FC00000`, so the same rule covers a later ARM64 target.
+  - Merging one specific pair of 32-bit values, -4,194,304 and 2,143,289,344, costs almost nothing in hidden divergence.
+- **If the Linux comparison run finds another NaN difference**, the fix is a typed manifest entry for the field that holds it (by symbol or allocation site), hashed through `update_f32`/`update_f64`. The untyped rule is never widened.
+- **Cost and evidence:**
+  - `state_hash` at 5.8–6.0 ms per checkpoint, every 60 frames, is about 0.6% of run time. That is accepted for Phase 1. The Phase 2 netplay ADR sets its own cadence and may ask for it to be faster.
+  - The deep hash takes 3.95 ms.
+  - Perturbation passes 60 of 60 fixed cases and 640 of 640 sampled.
+  - The layout-probe build, which shifts every function and global, keeps `state_hash` identical while the deep hash changes. That is direct evidence for the cross-platform claim, so **it becomes a standing regression check** on the dump lane, run with the E4 perturbation tests.
