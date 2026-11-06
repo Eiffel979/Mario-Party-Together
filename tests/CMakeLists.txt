@@ -10,6 +10,7 @@ add_executable(mpt_unit_tests
   unit/test_determinism_harness.cpp
   unit/test_event_routing.cpp
   unit/test_dump_lane.cpp
+  unit/test_dump_lane_png.cpp
   unit/test_gc_disc.cpp
   unit/test_fake_adapter.cpp
   unit/test_fake_runtime_v1.cpp
@@ -25,6 +26,12 @@ target_compile_definitions(mpt_unit_tests PRIVATE
   MPT_KNOWN_DUMPS_JSON="${MPT_KNOWN_DUMPS_JSON}"
   MPT_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
 mpt_set_warnings(mpt_unit_tests)
+
+# MP4's host side (Mp4Runtime unbooted, Mp4Adapter, the ABI header) needs no game module or dump.
+if(TARGET mpt::mp4_adapter)
+  target_sources(mpt_unit_tests PRIVATE unit/test_mp4_host.cpp)
+  target_link_libraries(mpt_unit_tests PRIVATE mpt::mp4_adapter)
+endif()
 
 add_test(NAME unit COMMAND mpt_unit_tests)
 

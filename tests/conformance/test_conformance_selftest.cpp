@@ -268,3 +268,78 @@ TEST_CASE("conformance self-test: a status that a save state does not restore is
 TEST_CASE("conformance self-test: FakeRuntime never leaves running") {
   CHECK(conformance::check_status(target_with<DelegatingRuntime>()).empty());
 }
+
+// ---- E4 hash coverage (check_hash_coverage) on a synthetic memory model ----------------------
+
+namespace {
+
+// Three memory classes, like a title's: 0 is game state both hashes cover, 1 is game state only
+// the raw deep hash covers unless the manifest includes it, 2 is space neither hash may cover
+// (free heap). `manifest` says which classes stateHash() covers.
+struct SyntheticMemory {
+  std::array<std::uint8_t, 3> bytes{0x11, 0x22, 0x33};
+  std::array<bool, 3> manifest{true, true, false};
+  bool sticky = false;  // perturb() changes the byte but the second call does not undo it
+
+  std::uint64_t hashOf(bool deep) const {
+    std::uint64_t h = 0xCBF29CE484222325ull;
+    for (std::size_t i = 0; i < bytes.size(); ++i) {
+      const bool covered = deep ? i != 2 : manifest[i];
+      h = (h ^ (covered ? bytes[i] : 0u) ^ (i << 8)) * 0x100000001B3ull;
+    }
+    return h;
+  }
+  mpt::conformance::HashCoverageProbe probe() {
+    mpt::conformance::HashCoverageProbe p;
+    p.state_hash = [this] { return hashOf(false); };
+    p.deep_hash = [this] { return hashOf(true); };
+    p.perturb = [this](std::uint32_t target) {
+      if (target >= bytes.size()) return false;
+      // Normally an XOR, which the same call undoes; a sticky probe adds instead, which never does.
+      bytes[target] = static_cast<std::uint8_t>(sticky ? bytes[target] + 1 : bytes[target] ^ 0xFF);
+      return true;
+    };
+    p.targets = {{0, "game data"}, {1, "heap block"}, {2, "free heap"}, {7, "nothing to flip"}};
+    return p;
+  }
+};
+
+}  // namespace
+
+TEST_CASE("conformance self-test: E4 coverage passes when the manifest covers what the deep hash sees") {
+  SyntheticMemory memory;
+  const mpt::conformance::HashCoverageResult r = mpt::conformance::check_hash_coverage(memory.probe());
+  CHECK(r.problems.empty());
+  CHECK(r.checked == 3);  // the target with nothing to flip is skipped
+  CHECK(memory.bytes == std::array<std::uint8_t, 3>{0x11, 0x22, 0x33});
+}
+
+TEST_CASE("conformance self-test: E4 coverage fails when only the deep hash sees a perturbation") {
+  SyntheticMemory memory;
+  memory.manifest[1] = false;  // the manifest misses the heap block
+  const mpt::conformance::HashCoverageResult r = mpt::conformance::check_hash_coverage(memory.probe());
+  REQUIRE(r.problems.size() == 1);
+  CHECK(r.problems[0].find("heap block") == 0);
+  CHECK(r.problems[0].find("manifest misses it") != std::string::npos);
+}
+
+TEST_CASE("conformance self-test: E4 coverage fails when a perturbation is not undone") {
+  SyntheticMemory memory;
+  memory.sticky = true;
+  const mpt::conformance::HashCoverageResult r = mpt::conformance::check_hash_coverage(memory.probe());
+  // The covered classes are caught; a stuck free-heap byte is invisible to both hashes by design.
+  REQUIRE(r.problems.size() == 2);
+  CHECK(r.problems[0].find("game data: flipping the byte back does not restore") == 0);
+  CHECK(r.problems[1].find("heap block: flipping the byte back does not restore") == 0);
+}
+
+TEST_CASE("conformance self-test: E4 coverage fails when the hashes are not stable") {
+  SyntheticMemory memory;
+  mpt::conformance::HashCoverageProbe probe = memory.probe();
+  std::uint64_t calls = 0;
+  probe.state_hash = [&calls] { return ++calls; };
+  const mpt::conformance::HashCoverageResult r = mpt::conformance::check_hash_coverage(probe);
+  REQUIRE(r.problems.size() == 1);
+  CHECK(r.problems[0].find("change between two calls") != std::string::npos);
+  CHECK(r.checked == 0);
+}
