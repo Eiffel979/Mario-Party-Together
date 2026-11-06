@@ -172,3 +172,41 @@ runtime-gc-wii added a musyx patch set in `runtimes/gc_wii/musyx/patches/`. Its 
   - an entry in `docs/titles/mp4.md`;
   - an offer upstream, as for aurora.
 - **Effect on game-visible state:** sounds from group 93 are now resident and playable, so MusyX state differs from pre-patch builds. That is intended: it matches the console. It only matters through `build_id`.
+
+## Amendment after P1-16: what `build_id` covers (architect, 2026-11-06)
+### Context
+The MP4 module's `build_id` (`runtimes/gc_wii/mp4/CMakeLists.txt`) hashes:
+- the compiler;
+- the GX backend;
+- the main-RAM size;
+- the lock files;
+- every patch.
+
+It does not hash our own module code (`mp4/src`, `sdk`, `gx/src`, `musyx/src`), `core/include` or the fixed bases in `layout.cmake`. #49 changed the I/O callback mode and the hash manifest without changing `build_id`. Only a manual `kStateFormat` bump protected save states, and golden trails or replays keyed by `build_id` would have accepted a different module silently. §3's list ("every pin, recipe version, toolchain version") allowed this. It is not enough for ADR 0008 §10, which needs a fingerprint of everything that makes two builds comparable.
+
+### Decision: `build_id` covers every input that can change the module's code, data or behaviour
+1. **One fingerprint, used everywhere.** `build_id` is the SHA-256, shown truncated, of a canonical list. It is computed by one shared CMake function (`runtimes/gc_wii/mp4/build_id.cmake`), and the same value is used as:
+   - the module's `MPT_MP4_BUILD_ID`;
+   - the recipe's `runtime_build_version` (P1-10's cache key);
+   - the save-state header field;
+   - the replay and golden-trail identity.
+
+   The module, the cache and the save states can then never disagree about which build they are.
+2. **What the list contains:**
+   - **Our module sources, by content.** Every file the module build reads from this tree: `runtimes/gc_wii/` (`sdk`, `gx`, `musyx` and `mp4`, with their `src`, `include`, `patches`, `tools`, locks and CMake files, including `layout.cmake`) and `core/include/`. This is the file set `host/CMakeLists.txt` already hashes for the recipe, plus `core/include`. Tests and documentation are excluded. It is a content hash, not the git commit, so uncommitted edits count.
+   - **The pinned external sources:** each lock entry's commit and tree. For an `unpinned` override, the fingerprint of what was found (§1), and the `unpinned` flag itself.
+   - **The patch sets:** Party Board, aurora and musyx, in apply order. They are inside the tree above, but they are listed explicitly so `mp4.md` can show them.
+   - **The toolchain:** compiler ID, full version and target triple (amendment after P1-10). Also the build type, and the compile and link flags that ADR 0008 §4 fixes.
+   - **Build constants:** GX backend, main-RAM size (ADR 0008, per-title main RAM), the fixed module and arena bases and their spacing (§11), and the Phase 1 gameplay boot flags (ADR 0008, ABI review item 3).
+   - **The layout versions:** `kStateFormat` and the ABI version. A manual bump still changes the id, but it is no longer the only protection.
+3. **Always current.**
+   - Every listed file is added to `CMAKE_CONFIGURE_DEPENDS`, so a content change re-runs the computation, not only adding or removing a file.
+   - A test copies the input set to a temporary folder, changes one byte in one file of each group, and checks that the id changes each time.
+4. **Recorded, not only hashed.** The build manifest (P1-10) lists every component of the id with its own hash, so two ids that differ can be explained. `docs/titles/mp4.md` says what the id covers. Its current claim that the I/O mode is part of the fingerprint becomes true through the source hash: the mode is a constant in `mp4/src`.
+5. **Golden trails and E5:**
+   - Golden trails, committed replay fixtures and E5 evidence are recorded only from a build whose id comes from pinned sources (`unpinned` false) and our tree at a commit. The manifest records that commit next to the id, and a dirty tree is reported as such.
+   - The id stays content-based, so two developers building the same commit get the same id.
+   - The first MP4 golden trail and E5 wait for this change.
+6. **Consequences:**
+   - Any change to module code invalidates save states, cached builds and recorded trails for that build. That is the intent.
+   - A comment-only edit invalidates them too. That is the accepted cost of a conservative rule.
