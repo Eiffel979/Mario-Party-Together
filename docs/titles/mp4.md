@@ -844,10 +844,14 @@ The `armem.c` loops would never see their callback under the default mode, so MP
 **Canonical words** (`Canon` in `src/abi.cpp`, applied through `memoryDigestWords` in `sdk/include/mpt/gc/digest.h`). Every 64-bit word of untyped memory is replaced before digesting, as follows:
 - **Arena pointers.** A word inside the SDK arena becomes a tagged arena offset.
 - **Module pointers.** A word inside the module becomes the symbol at or below it, by name, plus the offset. If the word points to a string literal in read-only data, it becomes the literal's text, up to the NUL and at most 64 bytes. ELF has no symbols for literals, and the MSVC ABI's `??_C@` symbols are therefore treated as anonymous on Windows too.
-- **NaNs (deviation, flagged for architect).** Only the x86 default NaN's sign is merged: an f32 half `0xFFC00000` becomes `0x7FC00000`, and the f64 word `0xFFF8000000000000` becomes `0x7FF8000000000000`.
+- **NaNs (ADR 0008's rule for untyped memory, accepted by architect in PR #56).** Only the default NaNs are merged:
+  - an f32 half `0xFFC00000` becomes `0x7FC00000`;
+  - an aligned 64-bit word holding the f64 default NaN, `0x7FF8000000000000` or `0xFFF8000000000000`, hashes as one value (`0x7FF8000000000000`).
+
+  Every other bit pattern stays exact.
   - **Why not every NaN.** The amendment says "an aligned word with an f32 or f64 NaN bit pattern becomes the canonical NaN". In untyped memory that would also merge every s32 from -1 to -8,388,607 (`0xFF800001`–`0xFFFFFFFF` are f32 NaN patterns), and every word whose high half is -1. Small negative integers are common in game state, so that would hide real divergence.
   - **What the narrower rule covers.** It covers the case P1-14 found: the sign of a default NaN chosen by operand order. Typed fields (`update_f32`/`update_f64`) still merge every NaN.
-  - **What is left open.** A payload difference in memory, beyond the default NaN's sign, is not merged. If Linux shows one, it gets a typed entry.
+  - **What is left open.** A payload difference in memory, beyond the default NaN's sign, is not merged. Any NaN difference the Linux comparison finds goes to architect as a typed-entry candidate (the `debug_hash_items` diff names its symbol or range). The untyped rule is never widened.
 - **The merge-only rule holds.** Each rule can merge two values but never split one.
 - **Cost of the check.** A cheap three-compare test covers four words at a time. The arena and module bases (`0x4000'0000'0000`, `0x5000'0000'0000`) share a window that one compare covers. Only a block containing a special word pays for the exact rules.
 
@@ -869,7 +873,7 @@ The `armem.c` loops would never see their callback under the default mode, so MP
 - **Sampled bytes.** N sampled bytes (default 32) go through the same oracle. They are spread over game data, main RAM, ARAM and all of them.
 - **Result.** 10,000 frames with checkpoints every 1,000 and 64 samples: all 60 fixed checks and 640 of 640 sampled bytes pass.
 
-**Layout independence on Windows (the stand-in for Linux).** `MPT_MP4_RECIPE_LAYOUT_PROBE=ON`, test only, builds the module with `src/layout_probe.c` first in the link.
+**Layout independence on Windows (the stand-in for Linux).** `MPT_MP4_RECIPE_LAYOUT_PROBE=ON`, test only, builds the module with `src/layout_probe.c` first in the link. Architect kept it as a **standing regression check on the dump lane**, run alongside `--perturb` (PR #56; steps in `tests/dump_lane/README.md`).
 - **What the probe does.** It inserts 8 KiB of code, which moves every function. It also inserts 4 KiB + 24 bytes at the start of the game core's data range, which moves every global, including off its 8-byte phase. The probe's own symbols delimit their neighbours but are never hashed.
 - **Result** (3,000 frames, checkpoints every 100, seed 1):
   - The probe module's `state_hash` trail is identical to the normal module's at all 30 checkpoints.

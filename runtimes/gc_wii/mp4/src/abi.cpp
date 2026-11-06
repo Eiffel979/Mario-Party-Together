@@ -472,10 +472,12 @@ std::uint64_t deepHash(const MptMp4Game& game) {
 //  - a word inside the SDK arena becomes a tagged arena offset;
 //  - a word inside the module becomes its symbol by name and offset, or a string literal by its text
 //    (ModuleSymbols::canonical), because the DLL and the .so lay the module out differently;
-//  - the x86 default NaNs become the canonical quiet NaN: an f32 half 0xFFC00000 becomes 0x7FC00000, and
-//    the f64 word 0xFFF8000000000000 becomes 0x7FF8000000000000. Only the default NaN's sign is merged:
-//    merging every NaN bit pattern, as typed fields do (update_f32/update_f64), would merge every s32
-//    from -1 to -8388607 in untyped words. docs/titles/mp4.md section 20 has the argument.
+//  - the default NaNs hash as one value each (ADR 0008, NaN rule for untyped memory, PR #56): an f32
+//    half 0xFFC00000 becomes 0x7FC00000, and an aligned f64 word 0xFFF8000000000000 becomes
+//    0x7FF8000000000000, so both f64 default NaNs give the same value. Every other bit pattern stays
+//    exact. Merging every NaN bit pattern, as typed fields do (update_f32/update_f64), would merge every
+//    s32 from -1 to -8388607 in untyped words, so the untyped rule is never widened: a NaN difference
+//    found between platforms becomes a typed-entry candidate for architect (docs/titles/mp4.md 20).
 std::uint64_t splitmix(std::uint64_t x) {
   x ^= x >> 30;
   x *= 0xBF58476D1CE4E5B9ull;
