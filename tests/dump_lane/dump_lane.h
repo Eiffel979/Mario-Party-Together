@@ -182,7 +182,9 @@ inline int board_wheel_moves(std::int32_t board) {
 // step before. The autopilot:
 //   - presses nothing before boot_wait;
 //   - pulses START on the boot/title overlay and on the minigame instruction screen (instDll);
-//   - mashes A (2 frames on, 2 off) while a minigame runs;
+//   - in a minigame, repeats a 120-frame cycle: 40 frames of the stick held down, then A mashed (2
+//     frames on, 2 off) with the stick released. Mashing alone soft-locks a human seat in Reversal of
+//     Fortune (m444), whose plunger only fires once the stick has pulled it back;
 //   - otherwise pulses A (4 frames every 30) on menus, setup, the board and the results;
 //   - on mentDll's board wheel window, holds the direction toward script.board instead.
 inline PadState party_autopilot(const PartyScript& script, std::uint64_t frame, const PartyKey& key,
@@ -196,7 +198,11 @@ inline PadState party_autopilot(const PartyScript& script, std::uint64_t frame, 
     return pad;
   }
   if (key.phase == PartyPhase::minigame) {
-    if (frame % 4 < 2) pad.buttons |= kButtonA;
+    if (frame % 120 < 40) {
+      pad.stick_y = -32767;
+    } else if (frame % 4 < 2) {
+      pad.buttons |= kButtonA;
+    }
     return pad;
   }
   if (overlay == "mentDll" && key.phase == PartyPhase::none && script.board != 0 &&

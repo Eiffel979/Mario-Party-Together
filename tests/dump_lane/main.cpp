@@ -472,6 +472,17 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
   std::optional<std::uint64_t> finished_at;
   std::uint64_t hash_calls = 0;
   std::chrono::steady_clock::duration hash_time{};
+  // Peak arena use (ABI v1.4 memory_use), sampled at every checkpoint: OSAlloc's allocated blocks, each
+  // HuMem heap's allocated bytes and ARAM in use, each with the frame of its peak.
+  struct Peak {
+    std::uint64_t bytes = 0, frame = 0;
+    void take(std::uint64_t b, std::uint64_t f) {
+      if (b > bytes) bytes = b, frame = f;
+    }
+  };
+  Peak peak_osalloc, peak_aram;
+  std::array<Peak, MPT_MP4_MEMORY_HEAPS> peak_heap{};
+  std::optional<MptMp4MemoryUse> last_use;
   for (std::uint64_t f = 0; f < options.frames; ++f) {
     mpt::InputFrame in;
     in.frame = f;
@@ -501,6 +512,14 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
       const std::uint64_t hash = session->runtime().stateHash();
       hash_time += std::chrono::steady_clock::now() - t0;
       ++hash_calls;
+      if (mp4 != nullptr) {
+        if (const std::optional<MptMp4MemoryUse> use = mp4->memoryUse()) {
+          peak_osalloc.take(use->osalloc_used, f + 1);
+          peak_aram.take(use->aram_used, f + 1);
+          for (std::uint32_t h = 0; h < use->heap_count; ++h) peak_heap[h].take(use->heap_used[h], f + 1);
+          last_use = use;
+        }
+      }
       if ((f + 1) % (interval * 100) == 0)
         std::printf("frame %llu hash %016llx\n", static_cast<unsigned long long>(f + 1),
                     static_cast<unsigned long long>(hash));
@@ -525,6 +544,25 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
     std::printf("dump lane: stateHash %.0f us per call (mean of %llu)\n",
                 std::chrono::duration<double, std::micro>(hash_time).count() / static_cast<double>(hash_calls),
                 static_cast<unsigned long long>(hash_calls));
+
+  if (last_use) {
+    const auto mib = [](std::uint64_t b) { return static_cast<double>(b) / (1024.0 * 1024.0); };
+    std::printf("dump lane: peak arena use: OSAlloc %.2f of %.2f MiB main RAM (frame %llu), ARAM %.2f MiB (frame %llu)\n",
+                mib(peak_osalloc.bytes), mib(last_use->main_ram), static_cast<unsigned long long>(peak_osalloc.frame),
+                mib(peak_aram.bytes), static_cast<unsigned long long>(peak_aram.frame));
+    std::uint64_t heaps = 0;
+    for (std::uint32_t h = 0; h < last_use->heap_count; ++h) {
+      heaps += last_use->heap_size[h];
+      std::printf("dump lane: peak arena use: heap %u %.2f of %.2f MiB (%.1f%%, frame %llu)\n", h,
+                  mib(peak_heap[h].bytes), mib(last_use->heap_size[h]),
+                  last_use->heap_size[h] ? 100.0 * static_cast<double>(peak_heap[h].bytes) / static_cast<double>(last_use->heap_size[h]) : 0.0,
+                  static_cast<unsigned long long>(peak_heap[h].frame));
+    }
+    std::printf("dump lane: peak arena use: SDK and other OSAlloc blocks %.2f MiB at the OSAlloc peak\n",
+                mib(peak_osalloc.bytes > heaps ? peak_osalloc.bytes - heaps : 0));
+  } else {
+    std::puts("dump lane: peak arena use: the module has no memory_use (ABI older than v1.4)");
+  }
 
   // Save and load times at the end (a harness measurement; nothing in the runtime reads a clock).
   if (failure.empty() || session->runtime().status().status == mpt::RuntimeStatus::running) {
