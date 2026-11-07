@@ -10,6 +10,15 @@
 
 #include "sdk_internal.h"
 
+// The engine's AI DMA callback has a C name. Game code keeps it: msm stores the previous AI DMA
+// callback, which is this one, in its state. A title's state hash names a pointer by its symbol, and
+// a C name is the same on every platform, where a C++ one is mangled differently by MSVC and Itanium
+// (MP4: docs/titles/mp4.md section 20). External linkage, because the MSVC ABI mangles even an
+// extern "C" function with internal linkage; only this file uses it, and the module exports nothing.
+extern "C" {
+void mpt_gc_ai_engine_callback(void);
+}
+
 namespace mpt::gc::detail {
 namespace {
 
@@ -40,7 +49,7 @@ void scheduleTick(AiState& a, std::int64_t from) {
 
 // The engine's AI callback: render the next block and make it the DMA source.
 // This is the role MusyX's own AI callback plays on the console.
-void aiEngineCallback() {
+void aiEngineRender() {
   auto& I = impl();
   AiState& a = st().ai;
   std::int16_t* block = a.engine_buf[a.engine_block];
@@ -59,7 +68,7 @@ void aiBoot(Sdk::Impl& I) {
   // As after the engine's init on the console: its callback is registered and
   // DMA runs from its (silent) first block.
   a.engine_attached = 1;
-  a.callback = &aiEngineCallback;
+  a.callback = &mpt_gc_ai_engine_callback;
   a.dma_addr = a.engine_buf[0];
   a.dma_len = kAiEngineBlockSamples * sizeof(std::int16_t);
   a.engine_block = 1;
@@ -263,3 +272,7 @@ u32 AIGetStreamSampleCount(void) {
 void AIResetStreamSampleCount(void) { boundary(); }
 
 }  // extern "C"
+
+extern "C" {
+void mpt_gc_ai_engine_callback(void) { mpt::gc::detail::aiEngineRender(); }
+}

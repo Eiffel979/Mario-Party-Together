@@ -26,16 +26,16 @@ target_compile_features(mpt_gc_sdk PUBLIC cxx_std_20)
 # CET shadow stack rejects. Every image that hosts the SDK is linked /CETCOMPAT:NO on
 # Windows (INTERFACE link option), and Sdk::create refuses to run if the process has
 # user shadow stacks enabled anyway.
+include("${CMAKE_CURRENT_SOURCE_DIR}/fp_flags.cmake")
 if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-  set(MPT_GC_FP_FLAGS /clang:-ffp-contract=off /clang:-fno-fast-math /clang:-fno-unsafe-math-optimizations)
+  mpt_gc_fp_flags(MPT_GC_FP_FLAGS TRUE)
   set(MPT_GC_WARN_FLAGS /W4 /permissive- /utf-8 -Wno-gnu-zero-variadic-macro-arguments)
   if(MPT_WARNINGS_AS_ERRORS)
     list(APPEND MPT_GC_WARN_FLAGS /WX)
   endif()
   target_link_options(mpt_gc_sdk INTERFACE /CETCOMPAT:NO)
 else()
-  set(MPT_GC_FP_FLAGS -ffp-contract=off -fno-fast-math -fno-unsafe-math-optimizations -msse2 -mfpmath=sse
-                      -fcf-protection=none)
+  mpt_gc_fp_flags(MPT_GC_FP_FLAGS FALSE)
   set(MPT_GC_WARN_FLAGS -Wall -Wextra -Wpedantic -Wshadow)
   if(MPT_WARNINGS_AS_ERRORS)
     list(APPEND MPT_GC_WARN_FLAGS -Werror)

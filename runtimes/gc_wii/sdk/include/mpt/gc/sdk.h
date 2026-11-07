@@ -77,6 +77,12 @@ struct SdkConfig {
   // with the arena, never hashed raw; their owner hashes them by value. The
   // same regions must be passed for loadState (ADR 0008 §10).
   std::vector<std::span<std::byte>> state_regions;
+  // Stable IDs for pointers outside the arena (ADR 0008 section 8 and its P1-13 amendment, point 5):
+  // the title's registration table, e.g. MP4's module symbol table. Returns a non-zero ID for a
+  // pointer it knows (a function or a module data symbol, by name and offset) and 0 otherwise. The
+  // SDK's manifest and every engine hashing through hashGamePointer/hashGameFunction use it; unset or
+  // 0, they keep the presence sentinels. A plain function, so no host pointer is kept for it.
+  std::uint64_t (*pointer_id)(const void* p) = nullptr;
 };
 
 enum class StepStatus : std::uint8_t {

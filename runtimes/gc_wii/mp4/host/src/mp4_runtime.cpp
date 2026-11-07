@@ -1,6 +1,7 @@
 // See mpt/mp4/runtime.h.
 #include "mpt/mp4/runtime.h"
 
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <string>
@@ -213,6 +214,27 @@ SaveMedia Mp4Runtime::saveMedia() const {
 bool Mp4Runtime::debugPerturb(std::uint32_t target) {
   if (game_ == nullptr || api_->struct_size < MPT_MP4_API_SIZE_V1_2 || api_->debug_perturb == nullptr) return false;
   return api_->debug_perturb(game_, target) == MPT_MP4_OK;
+}
+
+std::optional<std::uint64_t> Mp4Runtime::debugDeepHash() const {
+  if (game_ == nullptr || api_->struct_size < MPT_MP4_API_SIZE_V1_3 || api_->debug_deep_hash == nullptr)
+    return std::nullopt;
+  std::uint64_t deep = 0;
+  if (api_->debug_deep_hash(game_, &deep) != MPT_MP4_OK) return std::nullopt;
+  return deep;
+}
+
+std::string Mp4Runtime::debugHashItems() const {
+  std::string out;
+  if (game_ == nullptr || api_->struct_size < MPT_MP4_API_SIZE_V1_3 || api_->debug_hash_items == nullptr) return out;
+  auto add = [](void* user, const char* name, std::uint64_t size, std::uint64_t digest) {
+    char tail[48];
+    std::snprintf(tail, sizeof tail, " %llu %016llx\n", static_cast<unsigned long long>(size),
+                  static_cast<unsigned long long>(digest));
+    *static_cast<std::string*>(user) += std::string(name) + tail;
+  };
+  if (api_->debug_hash_items(game_, add, &out) != MPT_MP4_OK) out.clear();
+  return out;
 }
 
 bool Mp4Runtime::readParty(MptMp4Party& out) const {

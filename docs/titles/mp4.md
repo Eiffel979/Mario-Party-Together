@@ -316,7 +316,7 @@ Shared by every GameCube/Wii title. Built only with Clang (clang-cl on Windows) 
 
 **Scheduler.** SDK threads and the root coroutine (`main()`, the default thread at priority 16) are coroutines on arena stacks (256 KiB each, 32 threads). We use **our own context switch** (about 40 instructions per ABI, Win64 with TIB stack-bound swap, and SysV, all in `context.cpp` with documented frame layouts), accepted by architect with libco as the named fallback. A test on both OSes checks that every callee-saved register survives a round trip into a coroutine that clobbers them all, including xmm6–15 and the TIB stack fields on Win64, MXCSR and the x87 control word. No exception, `longjmp` or SEH unwind may cross a switch. Each stack has a 256-byte canary at its bottom, checked after every switch, so an overflow that runs through it is a deterministic fault (an overflow that skips over it is not caught). The best ready thread runs (lowest priority value, then FIFO). At every SDK call boundary, due interrupts run on the current thread's stack, and a strictly higher-priority thread that they made ready preempts the caller. Interrupts that fall due while every thread is idle run on a dedicated interrupt coroutine. `OSDisableInterrupts` only tracks its return value (ADR 0007 §7). Blocking inside an interrupt handler is a fault. `OSSetIdleFunction` runs the idle function once per frame step on the lowest-priority thread (P1-13b, §15).
 
-**I/O.** DVD, ARAM DMA/ARQ and CARD complete inside the call. Callbacks run at the **next SDK call boundary** by default, so code that sets its "busy" flag after issuing the call still works. `SdkConfig::io_callbacks_before_return` runs them before the call returns instead. The mode is a **per-title constant** recorded here, never a user option, and part of the build fingerprint (architect ruling). **MP4's mode: callbacks before return** (P1-16 audit, §19). The disc is read through `DirectoryFileSource`, which takes entry order and sizes from the extracted `sys/fst.bin` (P1-09's layout, `files/` beside it), rejects unsafe names (`.`, `..`, separators, control bytes) and files missing or with the wrong size, and keeps recently used files open. Reads past the end of a file return zeros.
+**I/O.** DVD, ARAM DMA/ARQ and CARD complete inside the call. Callbacks run at the **next SDK call boundary** by default, so code that sets its "busy" flag after issuing the call still works. `SdkConfig::io_callbacks_before_return` runs them before the call returns instead. The mode is a **per-title constant** recorded here, never a user option. It reaches the build fingerprint through the source hash: for MP4 it is a constant in `mp4/src/abi.cpp`, which `build_id.cmake` hashes by content (ADR 0009 amendment after P1-16). **MP4's mode: callbacks before return** (P1-16 audit, §19). The disc is read through `DirectoryFileSource`, which takes entry order and sizes from the extracted `sys/fst.bin` (P1-09's layout, `files/` beside it), rejects unsafe names (`.`, `..`, separators, control bytes) and files missing or with the wrong size, and keeps recently used files open. Reads past the end of a file return zeros.
 
 **PAD mapping** (canonical `Button` → GameCube):
 
@@ -335,7 +335,7 @@ The `InputFrame` is latched at the post-retrace point: the pre-retrace callback 
 
 **CARD.** Slot A is served from `RuntimeConfig::save_media` (`SaveMedia::format_version` 1, our own little-endian format documented in `card.cpp`), and slot B is always empty. Card size is 4, 8 or 16 Mbit (16 for blank cards, which have 251 user blocks). The generation increments on format, create, write, set-status, rename and delete. Image and generation live in the arena, so `loadState` restores both (ADR 0004 rule 9). Timestamps are virtual seconds since 2000 (synthetic dates, rule 8).
 
-**Save states and hash.** `saveState()` is the whole arena (SDK state, 24 MB main RAM, 16 MB ARAM, the card, stacks and register contexts) plus a header. `loadState` rejects a different build, configuration, arena base or code base. `hashState()` is the SDK's manifest area, by value: pointers as arena offsets, function pointers as a presence sentinel until P1-16's registration table, register contexts excluded. Game memory is the title manifest's job (P1-18).
+**Save states and hash.** `saveState()` is the whole arena (SDK state, 24 MB main RAM, 16 MB ARAM, the card, stacks and register contexts) plus a header. `loadState` rejects a different build, configuration, arena base or code base. `hashState()` is the SDK's manifest area, by value: pointers as arena offsets, function pointers and pointers outside the arena as the title's stable IDs (`SdkConfig::pointer_id`; for MP4 the module's symbol table, §20) or else a presence sentinel, register contexts excluded. Game memory is the title manifest's job (P1-18).
 
 **Math.** `mpt_fmaf` is a correctly rounded software fmaf (round-to-odd over an exact two-sum in binary64). It matches hardware FMA3 on 2M random and adversarial inputs (where the CPU and OS support FMA3). `gc_math_redirect.h`, forced-included into the game module, includes `<math.h>`/`<cmath>` itself and then maps `fmaf` and `std::fmaf` onto it. A link-time check (`check_no_host_math.cmake`, `llvm-nm`) fails if any object leaves `fma`/`fmaf` or a host transcendental undefined (§17); it runs on the SDK, on a probe that uses the redirect, and (expected to fail) on a probe that does not. P1-15 runs it on the game module. This meets ADR 0008 §5 condition 1. `mpt_sinf/cosf/tanf/acosf/atan2f` are evaluated in double with no host transcendental and are within 2 ulp. **MTX/VEC/QUAT are not in the SDK:** aurora's MTX at the pin (with patch 2) is the only `PS*`/`C_*` implementation (architect ruling, ADR 0007 §6), and its goldens are P1-14's. Fast casts truncate, saturate, and map NaN to 0. Golden hashes pin trig/fmaf and a synthetic-game trail.
 
@@ -374,7 +374,7 @@ The `InputFrame` is latched at the post-retrace point: the pre-retrace callback 
 - The save-state header records the region count and total size, and `loadState` rejects a mismatch.
 
 **Hash manifest additions** (all by value):
-- the AI registers: DMA address (as an arena offset), callback (a sentinel until P1-16's registration table), pending tick deadline, period and remainder, tick and frame counters, and the stream registers;
+- the AI registers: DMA address (as an arena offset), callback (a stable ID through `SdkConfig::pointer_id`, §20), pending tick deadline, period and remainder, tick and frame counters, and the stream registers;
 - the attached engine's own hash;
 - the THP init flag;
 - the idle function (sentinel), its parameter (arena offset), its thread slot and its run count.
@@ -683,7 +683,20 @@ So a minigame is covered on both devices unless it needs something a key cannot 
 
    `resultDll` is the minigame results screen (`instDll` switches to it), not the party's. `party()` only reads.
 
-   `mp4_game_abi` loads the module and checks versioning and argument handling. The build ID hashes the pins, every patch, the GX backend and the compiler.
+   `mp4_game_abi` loads the module and checks versioning and argument handling.
+
+   **Build ID** (`mp4/build_id.cmake`, ADR 0009 amendment after P1-16). One fingerprint, `mp4-` plus 16 hex digits of a SHA-256. It is used as `MPT_MP4_BUILD_ID` (the save-state trailer, and the replay and trail identity) and as the recipe's `runtime_build_version` (the cache key). It covers, in groups:
+   - `tree`: the module build's files in `runtimes/gc_wii`, by content. For `sdk`, `gx`, `musyx` and `mp4` that is the `CMakeLists.txt`, every top-level `*.cmake`, the locks, `src`, `include` and `mp4/tools`. The top-level `*.cmake` include musyx's link-check script, which only tests run; that can only make the id change more often. Test directories, docs and the host side are left out.
+   - `core`: `core/include`, by content.
+   - `patches`: the Party Board, aurora and musyx sets, in apply order.
+   - `sources`: every lock entry (name, commit, tree) with its state. A pin is `pinned` or `unpinned:<fingerprint>` (from asset-import's resolver, passed by the recipe as `MPT_MP4_SOURCE_STATES`). Dawn's entries are `locked`. A developer build outside the recipe records `unverified`.
+   - `toolchain`: compiler ID, version and target (from `clang --version`), build type, CMake version, and the ADR 0008 §4 flags (`sdk/fp_flags.cmake`, shared with the SDK).
+   - `constants`: the GX backend, the recipe's module-build arguments, the main-RAM size, the fixed bases and their spacing, and the Phase 1 gameplay flags.
+     - The arguments go in by a path-independent identity: whether a Dawn prefix is given (Dawn's pin is `gx/dawn.lock`), and for vcpkg's tree the triplet plus `vcpkg.json` and `vcpkg-configuration.json`, which hold the packages and the registry baseline.
+     - The absolute paths are recorded only in the host's `mp4_recipe_build_id.txt`, so two developers building the same commit get the same id (#55 review).
+   - `layout`: `kStateFormat` and the ABI version.
+
+   Every input is a configure dependency, so a content change re-runs the computation. The host build computes the same id from the same inputs, with every pin taken as pinned. The recipe's install step fails a pinned build whose module reports another id, so the module, the cache and save states always agree. An unpinned build keeps its own id: its fingerprints are in the module's id and the cache key, not the host's. The module build writes `mp4_game_build_id.txt`, which lists every component with its hash, the repository commit and whether the tree was dirty (those two are not in the id). The recipe installs it next to the module. `mp4_build_id_groups` (host tests) copies the input set, checks that the copy gives the tree's id, and checks that an edit in each group changes it.
 
 **Warnings and link checks (qa #40):**
 - Party Board's sources build with warnings off. Our own module code (`src/`, the generated REL records and table, `tests/`) builds with the GX layer's warning set as errors, and only Party Board's and aurora's headers are SYSTEM includes.
@@ -749,6 +762,7 @@ So a minigame is covered on both devices unless it needs something a key cannot 
 - **ABI minor versions** (append-only, `game_abi.h`):
   - v1.1 appends `status`. The loader requires it (`mpt_mp4_api_has_v1_1`), and `mp4_game_abi` checks that a 160-byte v1.0 table is rejected.
   - v1.2 appends `debug_perturb`, a test-only hook for the hash coverage proof (accepted in PR #48). It acts only on a game created with the unhashed boot flag `MPT_MP4_BOOT_DEBUG_HOOKS`; without it, it returns `MPT_MP4_ERR_ARGUMENT` and changes nothing. `Mp4Runtime::setDebugHooks` sets the flag (the dump lane's `--perturb` does), and `debugPerturb` uses the entry only when the table is at least 176 bytes. A dump-lane run without `--perturb` checks on the real game that the module refuses.
+  - v1.3 appends `debug_deep_hash`, the deep hash of ADR 0008 §9: P1-16's raw-memory hash, kept for bisecting desyncs on one machine and build and as the E4 coverage oracle (amendment after P1-16 hash coverage). Same flag and refusal as `debug_perturb`: without `MPT_MP4_BOOT_DEBUG_HOOKS` it returns `MPT_MP4_ERR_ARGUMENT` and computes nothing. `Mp4Runtime::debugDeepHash` uses it only when the table is at least 192 bytes. v1.3 also appends `debug_hash_items`, which lists every part of `state_hash` with its digest (below), and the perturbation target `MPT_MP4_PERTURB_SAMPLE`. The hooks-off dump-lane check covers both entries.
 - `SaveState::format_version` is the module's `state_format()`.
 - If the module was built with the null GX backend, `create` returns `MPT_MP4_ERR_BACKEND` for a GPU request and `boot()` retries with null video. The host keys on that status code, never on the error text (#49 review).
 
@@ -814,22 +828,67 @@ The `armem.c` loops would never see their callback under the default mode, so MP
 - **Build.** The patch hashes are in the module's build ID. Configure fails if a patch does not apply, as it does for aurora's and Party Board's.
 - **Upstream.** To be offered to AxioDL/musyx.
 
-**State hash manifest (E4).** `state_hash` covers, in this order:
-- **Manifest fields.** The gameplay flags, the frame and generation bases, resets and status.
-- **SDK state by value.** Scheduler, events, queues, alarms, mutexes, the heap lists and the attached sound engine.
-- **Named game globals.** GWPlayerCfg, GWPlayer, GWSystem, GWGameStat, the RNG seed and the current overlay.
-- **Game memory** (`hashMemory` in `src/abi.cpp`):
-  - The game core's data range and every REL's, which is what the save state carries.
-  - Main RAM through `Sdk::forEachHashedRamRange`: each allocated OSAlloc block, plus RAM outside the OS heaps. A block that holds one of the HuMem heaps is walked instead. Only its allocated HuMem blocks count, with their headers hashed as offsets and the debug `retaddr` left out. Each process's own HuMem heap is walked the same way. A coroutine stack counts only by its record: entry, size, and the saved stack pointer as an offset.
-  - ARAM below the ARAlloc top.
-- **Left out.** Free OSAlloc and HuMem space, and coroutine stack contents. The SDK's own thread stacks are not hashed either.
-- **Digest.** Raw memory goes through `mpt::gc::memoryDigest` (`sdk/include/mpt/gc/digest.h`), a 64-bit word-wise digest modelled on XXH64, with goldens. Each range's size and digest go into the `StateHasher`.
-- **Cost.** About 3.5 to 3.8 ms per `stateHash()` call on the title screen (Windows, Release; the mean of 100 calls).
-- **Coverage proof** (`--perturb`, ABI v1.2 `debug_perturb`, test only). Flipping one byte must change the hash for: the game data range, an allocated HuMem block, ARAM in use, and GWSystem. It must not change the hash for: a free HuMem block, or a byte inside a process stack. Restoring the byte must give the original hash back. All 60 checks (6 targets at 10 checkpoints over 10,000 frames) pass.
-- **What the proof found.**
-  - Two processes with the same seed differed from frame 100 once memory was hashed. One cause was Party Board's `byteswap.cpp`: its file-scope `std::unordered_set` sat in the game data range, so its host heap pointers were saved and hashed, and a `load_state` would have restored them over the live container. It now builds outside the game section.
-  - The other cause was the coroutine stacks' host frames (stack cookies, host pointers), now hashed by record only.
-- **Floats in memory are hashed as raw bits.** ADR 0008's NaN canonicalisation applies to float fields the manifest hashes by name. Memory is bytes, and the hash cannot tell which words are floats. Within one build on one platform the NaN bits are as deterministic as everything else, which the two-process runs confirm. **Flagged for architect:** across platforms, hashing raw memory can split on NaN payloads. It can also split on pointers the game stores into the module, because the Windows DLL and the Linux .so lay out their code and data differently. A raw-memory hash is therefore same-build, same-platform. Cross-platform sessions need either one platform per session or a hash without raw memory.
+**State hash (ADR 0008 §8 and its amendment after P1-16 hash coverage).** `state_hash` is the cross-platform hash: trails, replays, the conformance suite, E3 and netplay use it. P1-16's raw-memory hash is kept as the **deep hash** (ABI v1.3 `debug_deep_hash`, debug hooks only), valid for one build on one platform. `state_hash` is a `StateHasher` over the digests of four parts, in this order:
+- **`fields`.** The gameplay flags, the frame and generation bases, resets and status.
+- **`sdk`.** The SDK state by value: scheduler, events, queues, alarms, mutexes, the heap lists and the attached sound engine. Pointers into the arena are offsets. Pointers into the module and function pointers are **stable IDs** from the module's symbol table, through `SdkConfig::pointer_id`. This replaces the presence sentinel, as ADR 0008's P1-13 amendment point 5 asked. A pointer the table does not know keeps the sentinel.
+- **No raw `globals` part.** GWPlayerCfg, GWPlayer, GWSystem and GWGameStat are bitfield-heavy, and the MSVC and Itanium ABIs may lay out and pad bitfields differently. The symbol pass covers them as globals, and the deep hash still hashes them raw (#55 review). If Linux shows a layout difference there, they get typed entries.
+- **`symbols`: globals by symbol.**
+  - **Where the symbols come from.** The module reads its own symbol table from its image file at the first `create` (`src/module_symbols.cpp`, the small library `mpt_mp4_module_symbols`, which `mp4_module_symbols` tests on its own test image in every Clang build, public CI included): on Windows the COFF table that lld-link writes with `/DEBUG:SYMTAB`, on Linux `.symtab`. Both list static symbols as well as external ones, under their source names. The module also links with `/OPT:NOICF`, so no two functions share an address.
+  - **Which symbols.** Every symbol inside the game core's data range or a REL's, under the name `<range>:<name>`, where the range is `core` or the REL's name.
+  - **Order.** The symbols are visited in name order, so the section layout doesn't matter.
+  - **Extent.** A symbol's bytes run to the next symbol. They are canonicalized as words from the symbol's start (see below), and trailing zero bytes are dropped. Alignment padding is therefore never counted: it is always zero, because these ranges are restored from their load-time image. Bytes of a range before its first symbol count as `<range>:<lead>`.
+  - **Duplicates.** Static symbols with the same name in the same range are combined without regard to order, because the two linkers need not order archive members the same way.
+  - **Host objects.** `create` fails if a C++-mangled symbol sits in a game data range (the `unordered_set` lesson). None does today.
+- **`memory`: heap blocks and RAM.** This part walks the same ranges as the deep hash: each allocated OSAlloc block, a HuMem heap's allocated blocks (headers as offsets, `retaddr` left out, stacks by record), RAM outside the OS heaps, and ARAM in use. Every range is canonicalized.
+  - **Order.** Blocks are visited in address order. For two builds that make the same allocations with the same sizes, that is the same permutation of allocation order. A build whose sizes differ already splits on every pointer's arena offset, so allocation order would add nothing.
+  - **Typed entries.** No allocation site has needed a registered type yet. Typed entries are added only where Windows and Linux are shown to differ (padding, bitfields), never as byte exceptions.
+
+**Canonical words** (`Canon` in `src/abi.cpp`, applied through `memoryDigestWords` in `sdk/include/mpt/gc/digest.h`). Every 64-bit word of untyped memory is replaced before digesting, as follows:
+- **Arena pointers.** A word inside the SDK arena becomes a tagged arena offset.
+- **Module pointers.** A word inside the module becomes the symbol at or below it, by name, plus the offset. A **C++ symbol** becomes one shared value per section kind instead, because MSVC and Itanium mangle names differently. `count module_cxx` in `debug_hash_items` shows whether any game state does, and a `note cxx <where> -> <symbol>` line says where and to what. The one case on the title screen was legitimate: msm's `sys` global keeps the previous AI DMA callback, which is the SDK's engine callback. That callback now has a C name, `mpt_gc_ai_engine_callback` (`sdk/src/ai.cpp`), so it hashes by symbol on both platforms, and `module_cxx` is 0. Any later hit gets the same treatment. If the word points to a string literal in read-only data, it becomes the literal's text, up to the NUL and at most 64 bytes. ELF has no symbols for literals, and the MSVC ABI's `??_C@` symbols are therefore treated as anonymous on Windows too.
+- **NaNs (ADR 0008's rule for untyped memory, accepted by architect in PR #56).** Only the default NaNs are merged:
+  - an f32 half `0xFFC00000` becomes `0x7FC00000`;
+  - an aligned 64-bit word holding the f64 default NaN, `0x7FF8000000000000` or `0xFFF8000000000000`, hashes as one value (`0x7FF8000000000000`).
+
+  Every other bit pattern stays exact.
+  - **Why not every NaN.** The amendment says "an aligned word with an f32 or f64 NaN bit pattern becomes the canonical NaN". In untyped memory that would also merge every s32 from -1 to -8,388,607 (`0xFF800001`–`0xFFFFFFFF` are f32 NaN patterns), and every word whose high half is -1. Small negative integers are common in game state, so that would hide real divergence.
+  - **What the narrower rule covers.** It covers the case P1-14 found: the sign of a default NaN chosen by operand order. Typed fields (`update_f32`/`update_f64`) still merge every NaN.
+  - **What is left open.** A payload difference in memory, beyond the default NaN's sign, is not merged. Any NaN difference the Linux comparison finds goes to architect as a typed-entry candidate (the `debug_hash_items` diff names its symbol or range). The untyped rule is never widened.
+- **The merge-only rule holds.** Each rule can merge two values but never split one.
+- **Cost of the check.** A cheap three-compare test covers four words at a time. The arena and module bases (`0x4000'0000'0000`, `0x5000'0000'0000`) share a window that one compare covers. Only a block containing a special word pays for the exact rules.
+
+**Cost** (Windows, Release, title screen and boot window, mean of 100 calls per run):
+- `state_hash`: 5.8–6.0 ms per call.
+- Deep hash: 3.95 ms per call. P1-16's hash measured 3.5–3.8 ms on the same screens.
+- **Where the time goes.** About 1 ms is the symbol pass (5,832 symbol groups, about 320 KB of nonzero data). The canonical memory walk is most of the rest: roughly 115 MiB of HuMem heaps, of which only the allocated blocks are read. The first version cost 9.6 ms, with the special-word test applied word by word.
+- **Budget.** At checkpoints every 60 frames this is about 0.6% of run time. A checkpoint frame spends about a third of its 16.7 ms budget on hashing.
+
+**Debug entries (ABI v1.3, `MPT_MP4_BOOT_DEBUG_HOOKS` only).**
+- `debug_deep_hash`: the raw-memory hash.
+- `debug_hash_items`: every part above with its size and digest, in hash order, then (outside the hash) how many words each canonical rule changed: `count arena`, `module_symbol`, `module_text`, `module_cxx`, `module_unknown`, `nan32`, `nan64`. Each C++ or unknown module hit also gets a `note` line naming where it was found and the symbol it points into. Integers that look like module pointers (an upper half of `0x00005000`) show up as `module_symbol` or `module_unknown` hits. That means one `sym <range>:<name>` per symbol group, one `<kind> <arena offset>` per RAM range, then `aram` and the part totals. `mpt_dump_lane --hash-items FILE` writes them at the last checkpoint. **Diffing a Windows file against a Linux one names the symbol or range that differs**, which is the first step after a Linux run (amendment point 3). The file names the game's symbols, so it stays in the directory given and is never committed.
+- `MPT_MP4_PERTURB_SAMPLE | (k << 8)`: flips a byte chosen from `k` among everything the deep hash digests as memory. The next call with the same target restores it.
+
+**Coverage proof (E4), with the deep hash as the oracle** (`mpt_dump_lane --perturb [--perturb-samples N]`). At every checkpoint:
+- **Fixed targets.** Each of the six flips must be restored, and both hashes must come back.
+  - Game data, a HuMem block, ARAM in use and GWSystem must change the deep hash and `state_hash`. A flip that changes the deep hash but not `state_hash` fails as "manifest misses an area".
+  - A free HuMem block and a process stack must change neither.
+- **Sampled bytes.** N sampled bytes (default 32) go through the same oracle. They are spread over game data, main RAM, ARAM and all of them.
+- **Result.** 10,000 frames with checkpoints every 1,000 and 64 samples: all 60 fixed checks and 640 of 640 sampled bytes pass.
+
+**Layout independence on Windows (the stand-in for Linux).** `MPT_MP4_RECIPE_LAYOUT_PROBE=ON`, test only, builds the module with `src/layout_probe.c` first in the link. Architect kept it as a **standing regression check on the dump lane**, run alongside `--perturb` (PR #56; steps in `tests/dump_lane/README.md`).
+- **What the probe does.** It inserts 8 KiB of code, which moves every function. It also inserts 4 KiB + 24 bytes at the start of the game core's data range, which moves every global, including off its 8-byte phase. The probe's own symbols delimit their neighbours but are never hashed.
+- **Result** (3,000 frames, checkpoints every 100, seed 1):
+  - The probe module's `state_hash` trail is identical to the normal module's at all 30 checkpoints.
+  - The deep hash differs at all 30.
+  - The normal module's trail also equals the earlier M1 trail, although its code changed in between.
+
+  So `state_hash` no longer depends on where the linker puts code or data. The DLL and the .so differ in this way, and in other ways that only a Linux run tests.
+
+**History.** P1-16's raw-memory proof found two real bugs:
+- Party Board's `byteswap.cpp` had a file-scope `std::unordered_set` in the game data range. It now builds outside the game section.
+- Coroutine stacks carried host frames. They are now hashed by record only.
+
+The #49 review moved libco's stack high-water statics out of the range as well.
 
 **msm diagnostics (Party Board patch 0017, `src/msm_diag.c`).** msm only reports `MSM_ERR_GRP_FAILPUSH`. Group pushes now go through `mpt_msm_push_group`, which reports why MusyX refused a group through OSReport: the validation error, msm's heap headroom, and the macros, curves, keymaps, layers or samples that do not resolve.
 
@@ -843,6 +902,11 @@ The `armem.c` loops would never see their callback under the default mode, so MP
   - seed 1: `8f557606d1449fcd` at frame 10,000 in both, identical at all 100 checkpoints;
   - seed 2: `b8c08c09683489b8`, different at all 100.
   - `stateHash()` cost 3.9 to 5.4 ms per call (means of 100).
+- **Rerun with the final cross-platform `state_hash` (2026-11-06).** This is after the #55 review: no raw GW part, C++ pointers as one value, and the AI callback's C name. Same check, 10,000 frames, checkpoints every 100, separate processes:
+  - seed 1: `e98de7b50ea4c3cc` at frame 10,000 in both, identical at all 100 checkpoints;
+  - seed 2: `55a1fe7e09ecbe5e`, different at all 100;
+  - `stateHash()` 6.4 to 6.6 ms per call. No halt or fault.
+  - The first cross-platform run (`8eefae0667aae794` / `a93d7072ebb73373`) is superseded.
 - **Earlier trail.** The first M1 (2026-10-21) used the coarse hash (SDK state and named globals only). Its trail did not move with the libm change, because it did not cover game memory.
 - **Not yet.** Fresh-process save/load (E5) and the Linux runs are still to do.
 
@@ -861,10 +925,16 @@ The `armem.c` loops would never see their callback under the default mode, so MP
 - **Pipeline cache.** aurora reports that its SQLite pipeline cache cannot open its database. Rendering is unaffected; the cache path is still to fix.
 
 **Still open in P1-16:**
-- the GX front-end state and the function-pointer registration table in the hash manifest (E4; memory is done, above);
-- the fresh-process save/load demonstration (E5);
-- the Linux build;
-- the conformance suite on the dump lane.
+- **Linux: built, run and diffed (E3c).** The module has never been built on Linux, and this machine has neither Linux nor WSL. No MP4 golden trail is committed until Windows and Linux match on the full-party replay (ADR 0008 amendment, point 3). Two ways to get there, both of them without the dump ever going on CI infrastructure (D4):
+  - **A CI job, without a dump.** A Linux job that configures `MPT_BUILD_MP4_GAME_MODULE=ON` from the pinned sources (compile-only, as on Windows) proves that the module builds and links on Linux. It also shows that the ELF section markers (`__start_`/`__stop_`), lld `--image-base` and `.symtab` are in place, and it runs `mp4_game_abi`, `mp4_rel_isolation` and the host tests. It cannot run the game.
+  - **A Linux machine with the user's own dump.** For example a native Linux install, or WSL2 if the user enables it. Clang, lld, CMake and Ninja are needed, and `mpt_dump_lane` must be built from this branch. The runs to make:
+    - `mpt_dump_lane --boot mp4 --frames 10000 --every 100 --seed 1 --hash-items <dir>/items_linux.txt`, plus `--perturb`;
+    - the same run on Windows, then a diff of the two trails and the two item files.
+
+    The first differing item names the area that needs a typed entry. The full-party replay follows once P1-18's replay exists.
+- The GX front-end state (`g_gxState`) in the hash manifest (E4).
+- The fresh-process save/load demonstration (E5).
+- The conformance suite on the dump lane.
 
 ---
 

@@ -67,6 +67,21 @@ Result runTool(BuildContext& context, ProcessRequest request, const char* what) 
 
 fs::path moduleBuildDir(const BuildContext& context) { return context.output_dir / "module-build"; }
 
+// What the resolver found for each pin, for the module's build ID (build_id.cmake): "pinned", or
+// "unpinned:" and its fingerprint. A CMake list.
+std::string source_states(const BuildContext& context) {
+  std::string out;
+  for (const char* name : kSourceNames) {
+    const auto it = context.sources.find(name);
+    if (it == context.sources.end()) continue;
+    if (!out.empty()) out += ';';
+    out += std::string(name) + "=" + (it->second.pinned ? std::string("pinned") : "unpinned:" + it->second.actual);
+  }
+  return out;
+}
+
+constexpr const char* kBuildIdFile = "mp4_game_build_id.txt";  // the module build's id manifest
+
 class ConfigureStep final : public BuildStep {
  public:
   explicit ConfigureStep(RecipeConfig config) : config_(std::move(config)) {}
@@ -79,7 +94,7 @@ class ConfigureStep final : public BuildStep {
     std::vector<std::string> argv = {
         tools.cmake, "-S", config_.gc_wii_source_dir.string(), "-B", moduleBuildDir(context).string(), "-G", "Ninja",
         "-DCMAKE_MAKE_PROGRAM=" + tools.ninja, "-DCMAKE_C_COMPILER=" + tools.c, "-DCMAKE_CXX_COMPILER=" + tools.cxx,
-        "-DCMAKE_BUILD_TYPE=Release", "-DMPT_CORE_INCLUDE_DIR=" + config_.core_include_dir.string(),
+        "-DCMAKE_BUILD_TYPE=" + config_.build_type, "-DMPT_CORE_INCLUDE_DIR=" + config_.core_include_dir.string(),
         "-DMPT_BUILD_TESTS=OFF", "-DMPT_REQUIRE_GC_WII=ON", "-DMPT_BUILD_MP4_GAME_MODULE=ON"};
     const std::pair<const char*, const char*> dirs[] = {
         {"partyboard", "-DMPT_MP4_PARTYBOARD_DIR="}, {"musyx", "-DMPT_MUSYX_DIR="}, {"aurora", "-DMPT_AURORA_DIR="}};
@@ -89,6 +104,7 @@ class ConfigureStep final : public BuildStep {
       argv.push_back(arg + it->second.dir.string());
     }
     for (const std::string& a : config_.cmake_args) argv.push_back(a);
+    argv.push_back("-DMPT_MP4_SOURCE_STATES=" + source_states(context));
     context.report(0.0, "cmake");
     return runTool(context, {argv, {}, {}}, "Configuring the game module");
   }
@@ -115,8 +131,23 @@ class CompileStep final : public BuildStep {
 
 class InstallStep final : public BuildStep {
  public:
+  explicit InstallStep(RecipeConfig config) : config_(std::move(config)) {}
   std::string name() const override { return "Installing the game module"; }
   Result run(BuildContext& context) override {
+    // The module's build ID must be the recipe's runtime version (ADR 0009 amendment after P1-16):
+    // both come from build_id.cmake over the same inputs. Only an unpinned build may differ, because
+    // its sources' fingerprints are in the module's id and in the cache key, but not in the host's.
+    std::string module_id;
+    {
+      std::ifstream manifest{moduleBuildDir(context) / "mp4" / kBuildIdFile};
+      std::string first;
+      if (!manifest || !std::getline(manifest, first) || first.rfind("build_id ", 0) != 0)
+        return Result::failure("the module build wrote no build ID manifest");
+      module_id = first.substr(9);
+    }
+    if (!context.unpinned && module_id != config_.runtime_build_version)
+      return Result::failure("the game module's build ID " + module_id + " is not the recipe's " +
+                             config_.runtime_build_version + ": reconfigure the host build and try again");
     const fs::path built = moduleBuildDir(context) / "mp4" / kModuleFileName;
     const fs::path dest_dir = context.output_dir / "module";
     std::error_code ec;
@@ -124,6 +155,10 @@ class InstallStep final : public BuildStep {
     if (ec) return Result::failure("cannot create " + dest_dir.string() + ": " + ec.message());
     fs::copy_file(built, dest_dir / kModuleFileName, fs::copy_options::overwrite_existing, ec);
     if (ec) return Result::failure("the build produced no " + std::string(kModuleFileName) + ": " + ec.message());
+    // Every component of the id with its hash, and the tree's commit and dirty flag.
+    fs::copy_file(moduleBuildDir(context) / "mp4" / kBuildIdFile, dest_dir / kBuildIdFile,
+                  fs::copy_options::overwrite_existing, ec);
+    if (ec) return Result::failure("cannot install " + std::string(kBuildIdFile) + ": " + ec.message());
     // Shared libraries the module links (webgpu_dawn with the Dawn backend) go next to it: the loader
     // resolves them from the module's directory. The module build lists them (Windows only; empty
     // with the null backend).
@@ -139,6 +174,9 @@ class InstallStep final : public BuildStep {
     fs::remove_all(moduleBuildDir(context), ec);
     return Result::success();
   }
+
+ private:
+  RecipeConfig config_;
 };
 
 class Mp4Recipe final : public asset_import::BuildRecipe {
@@ -162,7 +200,7 @@ class Mp4Recipe final : public asset_import::BuildRecipe {
     std::vector<std::unique_ptr<BuildStep>> out;
     out.push_back(std::make_unique<ConfigureStep>(config_));
     out.push_back(std::make_unique<CompileStep>(config_));
-    out.push_back(std::make_unique<InstallStep>());
+    out.push_back(std::make_unique<InstallStep>(config_));
     return out;
   }
 

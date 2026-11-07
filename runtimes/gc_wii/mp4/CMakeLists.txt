@@ -135,7 +135,15 @@ list(TRANSFORM GAME_FILES PREPEND "${MPT_MP4_PB}/")
 list(TRANSFORM MPT_MP4_MSM_FILES PREPEND "${MPT_MP4_PB}/")
 # Our replacements for Party Board's port layer (include/mpt_mp4_port.h) and its coroutines.
 set(MPT_MP4_PORT_FILES src/port.c src/sdk_bridge.c src/libco.c src/layout_check.c src/game_reads.c src/msm_swap.c src/msm_diag.c)
-add_library(mpt_mp4_dol OBJECT ${GAME_FILES} ${MPT_MP4_MSM_FILES} ${MPT_MP4_PORT_FILES})
+# Test only: src/layout_probe.c, first in the link, moves the module's code and the game core's data so
+# a Windows run can check that state_hash does not depend on the module layout (docs/titles/mp4.md 20).
+option(MPT_MP4_LAYOUT_PROBE "Test only: shift the module's code and game data to check state_hash's layout independence" OFF)
+set(_mp4_probe "")
+if(MPT_MP4_LAYOUT_PROBE)
+  set(_mp4_probe src/layout_probe.c)
+  list(APPEND MPT_MP4_PORT_FILES src/layout_probe.c)
+endif()
+add_library(mpt_mp4_dol OBJECT ${_mp4_probe} ${GAME_FILES} ${MPT_MP4_MSM_FILES} ${MPT_MP4_PORT_FILES})
 target_link_libraries(mpt_mp4_dol PRIVATE mpt_mp4_game_flags)
 set_source_files_properties(${GAME_FILES} ${MPT_MP4_MSM_FILES} TARGET_DIRECTORY mpt_mp4_dol
                             PROPERTIES COMPILE_OPTIONS "${MPT_MP4_NOWARN}")
@@ -194,7 +202,8 @@ add_library(mp4_game SHARED
   src/game_data.c
   src/abi.cpp
   src/copy_trap.cpp)
-target_link_libraries(mp4_game PRIVATE mpt_mp4_game_flags ${MPT_MP4_REL_LIBS} mpt::gx mpt::musyx)
+include("${CMAKE_CURRENT_SOURCE_DIR}/tools/MptMp4ModuleSymbols.cmake")
+target_link_libraries(mp4_game PRIVATE mpt_mp4_game_flags ${MPT_MP4_REL_LIBS} mpt::gx mpt::musyx mpt_mp4_module_symbols)
 # The shared libraries the module needs at run time (webgpu_dawn with the Dawn backend), one per line,
 # for the asset-import recipe to install next to it. Empty on platforms without DLLs.
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/mp4_game_runtime_deps.txt"
@@ -206,25 +215,28 @@ target_include_directories(mp4_game PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
 # Fixed bases and the main RAM size (ADR 0008 section 11 and its amendment, PR #44).
 include("${CMAKE_CURRENT_SOURCE_DIR}/layout.cmake")
 
-# The build fingerprint save states and golden trails are keyed by (ADR 0008 section 10, ADR 0009): the
-# pinned sources, every patch applied to them (Party Board, aurora, musyx), the GX backend, the main
-# RAM size and the compiler.
-set(_fp "${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION};${MPT_GX_BACKEND};main_ram=${MPT_MP4_MAIN_RAM_BYTES}")
-foreach(_f "${CMAKE_CURRENT_SOURCE_DIR}/decomp.lock" "${CMAKE_CURRENT_SOURCE_DIR}/../gx/aurora.lock")
-  file(SHA256 "${_f}" _h)
-  string(APPEND _fp ";${_h}")
-endforeach()
-file(GLOB _fp_patches "${CMAKE_CURRENT_SOURCE_DIR}/patches/partyboard/*.patch"
-                      "${CMAKE_CURRENT_SOURCE_DIR}/../gx/patches/aurora/*.patch"
-                      "${CMAKE_CURRENT_SOURCE_DIR}/../musyx/patches/*.patch")
-list(SORT _fp_patches)
-foreach(_f IN LISTS _fp_patches)
-  file(SHA256 "${_f}" _h)
-  string(APPEND _fp ";${_h}")
-endforeach()
-string(SHA256 _fp_hash "${_fp}")
-string(SUBSTRING "${_fp_hash}" 0 16 _fp_hash)
-set(MPT_MP4_BUILD_ID "mp4-${_fp_hash}" CACHE INTERNAL "MP4 game module build fingerprint")
+# The build fingerprint (build_id.cmake, ADR 0009 amendment after P1-16): one id for save states,
+# replays, golden trails and the recipe's cache key. The recipe passes MPT_MP4_SOURCE_STATES (what its
+# resolver found for each pin) and MPT_MP4_RECIPE_ARGS_HASH; a developer build without them records its
+# sources as unverified. Every input is a configure dependency, so a content change re-runs this.
+set(MPT_MP4_SOURCE_STATES "" CACHE STRING "Set by the asset-import recipe: <pin>=pinned|unpinned:<fingerprint>, ...")
+set(MPT_MP4_RECIPE_ARGS_HASH "none" CACHE STRING "Set by the asset-import recipe: a hash of its module-build arguments")
+include("${CMAKE_CURRENT_SOURCE_DIR}/build_id.cmake")
+if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+  set(_mp4_msvc_frontend TRUE)
+else()
+  set(_mp4_msvc_frontend FALSE)
+endif()
+mpt_mp4_build_id(ID _mp4_id MANIFEST _mp4_manifest INPUTS _mp4_id_inputs
+  GC_WII_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.." CORE_INCLUDE_DIR "${MPT_CORE_INCLUDE_DIR}"
+  COMPILER "${CMAKE_C_COMPILER}" BUILD_TYPE "${CMAKE_BUILD_TYPE}" GX_BACKEND "${MPT_GX_BACKEND}"
+  MSVC_FRONTEND ${_mp4_msvc_frontend} RECIPE_ARGS_HASH "${MPT_MP4_RECIPE_ARGS_HASH}" SOURCE_STATES ${MPT_MP4_SOURCE_STATES})
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_mp4_id_inputs})
+set(MPT_MP4_BUILD_ID "${_mp4_id}" CACHE INTERNAL "MP4 game module build fingerprint")
+mpt_mp4_tree_state("${CMAKE_CURRENT_SOURCE_DIR}/.." "${MPT_CORE_INCLUDE_DIR}" _mp4_tree_state)
+# The manifest: every component with its hash, then the commit and the dirty flag. The recipe installs
+# it next to the module and checks its id against runtime_build_version.
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/mp4_game_build_id.txt" CONTENT "${_mp4_manifest}${_mp4_tree_state}" @ONLY)
 target_compile_definitions(mp4_game PRIVATE "MPT_MP4_BUILD_ID=\"${MPT_MP4_BUILD_ID}\""
                            MPT_MP4_MAIN_RAM_BYTES=${MPT_MP4_MAIN_RAM_BYTES}u)
 message(STATUS "runtimes/gc_wii/mp4: build ID ${MPT_MP4_BUILD_ID}")
@@ -240,8 +252,13 @@ endforeach()
 # loader either maps it there or fails. Linux: lld links the .so at that base; glibc's loader asks the
 # kernel for that address, and the host runtime checks where it landed.
 mpt_mp4_fixed_base_link(mp4_game)  # layout.cmake
+mpt_mp4_link_symtab(mp4_game)      # tools/MptMp4ModuleSymbols.cmake
+# The state hash names the module's globals and functions by symbol (src/module_symbols.cpp, ADR 0008
+# amendment after P1-16), so the image keeps a symbol table: /DEBUG:SYMTAB writes lld-link's COFF table
+# (next to the PDB, outside every mapped section, so the layout does not change); ELF keeps .symtab
+# unless stripped. No identical-code folding: folded functions would share one name per platform.
 if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-  target_link_options(mp4_game PRIVATE /errorlimit:0)
+  target_link_options(mp4_game PRIVATE /errorlimit:0 /OPT:NOICF)
 else()
   target_link_options(mp4_game PRIVATE -Wl,--error-limit=0)
 endif()

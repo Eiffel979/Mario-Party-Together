@@ -51,6 +51,51 @@ set(_args "-DMPT_GX_BACKEND=${MPT_GX_BACKEND}" "-DMPT_DAWN_PREFIX=${MPT_DAWN_PRE
 if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
   list(APPEND _args "-DCMAKE_PREFIX_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
 endif()
+# Test only: build the module with the layout probe (mp4/src/layout_probe.c). Its trail must equal a
+# normal module's; it has its own build ID through the arguments' hash.
+option(MPT_MP4_RECIPE_LAYOUT_PROBE "Test only: the recipe builds the MP4 module with its layout probe" OFF)
+if(MPT_MP4_RECIPE_LAYOUT_PROBE)
+  list(APPEND _args "-DMPT_MP4_LAYOUT_PROBE=ON")
+endif()
+# The arguments select a different module from the same tree, so they go into the build ID, but by a
+# path-independent identity: two developers building the same commit get the same id (#55 review).
+#  - MPT_DAWN_PREFIX: whether one is given. Dawn's pin is gx/dawn.lock, in the id's tree group, and the
+#    backend is a constant.
+#  - CMAKE_PREFIX_PATH (vcpkg's installed tree): the triplet, vcpkg.json and vcpkg-configuration.json,
+#    which hold the packages and the registry baseline that fix their versions.
+#  - Every other argument as it is.
+# The paths themselves go only into the host's manifest (mp4_recipe_build_id.txt). The module build
+# gets the hash as one more argument.
+set(_args_text "")
+set(_args_paths "")
+foreach(_a IN LISTS _args)
+  string(REPLACE "\\" "/" _a "${_a}")
+  if(_a MATCHES "^-DMPT_DAWN_PREFIX=(.*)$")
+    if(CMAKE_MATCH_1)
+      string(APPEND _args_text "dawn_prefix set\n")
+    else()
+      string(APPEND _args_text "dawn_prefix unset\n")
+    endif()
+    string(APPEND _args_paths "path MPT_DAWN_PREFIX ${CMAKE_MATCH_1}\n")
+  elseif(_a MATCHES "^-DCMAKE_PREFIX_PATH=(.*)$")
+    string(APPEND _args_paths "path CMAKE_PREFIX_PATH ${CMAKE_MATCH_1}\n")
+    string(APPEND _args_text "vcpkg triplet ${VCPKG_TARGET_TRIPLET}\n")
+    foreach(_vf vcpkg.json vcpkg-configuration.json)
+      set(_vp "${CMAKE_SOURCE_DIR}/${_vf}")
+      if(EXISTS "${_vp}")
+        file(SHA256 "${_vp}" _vh)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_vp}")
+      else()
+        set(_vh none)
+      endif()
+      string(APPEND _args_text "vcpkg ${_vf} ${_vh}\n")
+    endforeach()
+  else()
+    string(APPEND _args_text "${_a}\n")
+  endif()
+endforeach()
+string(SHA256 _args_hash "${_args_text}")
+list(APPEND _args "-DMPT_MP4_RECIPE_ARGS_HASH=${_args_hash}")
 set(MPT_MP4_RECIPE_ARGS "")
 foreach(_a IN LISTS _args)
   string(REPLACE "\\" "/" _a "${_a}")
@@ -59,45 +104,28 @@ endforeach()
 foreach(_v GC_WII_SOURCE_DIR CORE_INCLUDE_DIR CLANG_C CLANG_CXX NINJA)
   string(REPLACE "\\" "/" MPT_MP4_RECIPE_${_v} "${MPT_MP4_RECIPE_${_v}}")
 endforeach()
-# The cached module must be rebuilt whenever the code it is built from changes, so the recipe's runtime
-# version is a hash of every file the module build reads from this tree.
-get_filename_component(_gc "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
-file(GLOB_RECURSE _module_inputs CONFIGURE_DEPENDS LIST_DIRECTORIES false
-  "${_gc}/CMakeLists.txt" "${_gc}/sdk/CMakeLists.txt" "${_gc}/sdk/src/*" "${_gc}/sdk/include/*"
-  "${_gc}/gx/CMakeLists.txt" "${_gc}/gx/*.lock" "${_gc}/gx/src/*" "${_gc}/gx/include/*" "${_gc}/gx/patches/*"
-  "${_gc}/musyx/CMakeLists.txt" "${_gc}/musyx/src/*" "${_gc}/musyx/include/*" "${_gc}/musyx/patches/*"
-  "${_gc}/mp4/CMakeLists.txt" "${_gc}/mp4/*.cmake" "${_gc}/mp4/decomp.lock" "${_gc}/mp4/src/*" "${_gc}/mp4/include/*"
-  "${_gc}/mp4/patches/*" "${_gc}/mp4/tools/*")
-# The module also compiles against core's headers (mpt/core/state.h, input.h; the recipe passes
-# MPT_CORE_INCLUDE_DIR), so a change there must rebuild the cached module as well (#49 review).
-file(GLOB_RECURSE _core_inputs CONFIGURE_DEPENDS LIST_DIRECTORIES false "${MPT_MP4_RECIPE_CORE_INCLUDE_DIR}/*")
-list(SORT _core_inputs)
-list(SORT _module_inputs)
-# A content change (not only a new or removed file) must re-run this hash.
-# Only the list files this configure itself reads are left out: CMake tracks those already, and
-# listing one twice is a ninja error. Every other input, CMake files of the Clang build and lock
-# files included, must be listed, or a change to one alone would keep a stale cached module.
-set(_module_deps ${_module_inputs})
-list(REMOVE_ITEM _module_deps "${_gc}/CMakeLists.txt" "${_gc}/mp4/layout.cmake")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_module_deps})
-set(_tree "")
-foreach(_f IN LISTS _module_inputs)
-  file(SHA256 "${_f}" _h)
-  file(RELATIVE_PATH _rel "${_gc}" "${_f}")
-  string(APPEND _tree "${_rel}=${_h};")
-endforeach()
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_core_inputs})
-foreach(_f IN LISTS _core_inputs)
-  file(SHA256 "${_f}" _h)
-  file(RELATIVE_PATH _rel "${MPT_MP4_RECIPE_CORE_INCLUDE_DIR}" "${_f}")
-  string(APPEND _tree "core/include/${_rel}=${_h};")
-endforeach()
-# The module build's own options (GX backend, Dawn prefix, prefix path) select a different module
-# from the same tree, so they are part of the key too.
-string(APPEND _tree "args=${MPT_MP4_RECIPE_ARGS}")
-string(SHA256 _tree_hash "${_tree}")
-string(SUBSTRING "${_tree_hash}" 0 16 _tree_hash)
-set(MPT_MP4_RECIPE_RUNTIME_VERSION "mp4-module-${_tree_hash}")
+# The recipe's runtime version is the module's build ID (build_id.cmake, ADR 0009 amendment after
+# P1-16), computed here from the same inputs the recipe's module build uses: this tree, core/include,
+# the Clang the recipe runs, its build type, the GX backend and the arguments above, with every pin
+# taken as pinned. A pinned recipe build therefore gets this exact id, which its install step checks.
+# Every input is a configure dependency, so a content change re-runs this, not only a new file.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../build_id.cmake")
+# The FP flag set follows the recipe's compiler driver: clang-cl takes the MSVC-style spelling.
+get_filename_component(_recipe_cc_name "${MPT_MP4_RECIPE_CLANG_C}" NAME_WE)
+if(_recipe_cc_name MATCHES "^clang-cl")
+  set(_recipe_msvc_frontend TRUE)
+else()
+  set(_recipe_msvc_frontend FALSE)
+endif()
+mpt_mp4_build_id(ID MPT_MP4_RECIPE_RUNTIME_VERSION MANIFEST _mp4_manifest INPUTS _mp4_id_inputs
+  GC_WII_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../.." CORE_INCLUDE_DIR "${MPT_MP4_RECIPE_CORE_INCLUDE_DIR}"
+  COMPILER "${MPT_MP4_RECIPE_CLANG_C}" BUILD_TYPE "${MPT_MP4_RECIPE_BUILD_TYPE}" GX_BACKEND "${MPT_GX_BACKEND}"
+  MSVC_FRONTEND ${_recipe_msvc_frontend} RECIPE_ARGS_HASH "${_args_hash}"
+  SOURCE_STATES partyboard=pinned musyx=pinned aurora=pinned)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_mp4_id_inputs})
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/mp4_recipe_build_id.txt"
+     CONTENT "${_mp4_manifest}recipe_args ${_args_hash}\n${_args_text}${_args_paths}" @ONLY)
+message(STATUS "runtimes/gc_wii/mp4/host: the recipe builds MP4 module ${MPT_MP4_RECIPE_RUNTIME_VERSION}")
 configure_file(recipe_config.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/recipe_config.h" @ONLY)
 
 add_library(mpt_mp4_register STATIC src/register.cpp)
