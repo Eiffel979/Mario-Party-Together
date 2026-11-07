@@ -766,7 +766,12 @@ So a minigame is covered on both devices unless it needs something a key cannot 
 - `SaveState::format_version` is the module's `state_format()`.
 - If the module was built with the null GX backend, `create` returns `MPT_MP4_ERR_BACKEND` for a GPU request and `boot()` retries with null video. The host keys on that status code, never on the error text (#49 review).
 
-**Mp4Adapter** (`adapters/mp4`) maps the raw party flags to `PartyPhase` and accepts only an empty ruleset. P1-17 adds the catalog and the ID mapping. `phase_of` classifies the raw flags and overlay (a minigame overlay `m4xxDll` gives `minigame`), but until the catalog lands `readParty()` reports a minigame as `PartyPhase::board`: ADR 0005's `minigame` phase needs `current_minigame`, which only the catalog mapping can fill (TODO in `mp4_adapter.cpp`, #49 review).
+**Mp4Adapter** (`adapters/mp4`, P1-17) accepts only an empty ruleset, and maps the raw party read to a `PartySnapshot` (`snapshot_of`, unit-tested without a dump):
+- **Catalog.** §12, from `src/catalog.cpp`: 8 boards, 61 minigames and 8 characters, with their display names.
+- **Board.** `GWSystem.board` (`BOARD_ID_*`: 0–5 the party boards, 6 the tutorial, which is not catalogued, 7 and 8 the Extra Room boards). It is set once a board has run, so not during setup, when the field already holds a value.
+- **Characters.** `GWPlayerCfg.character` in the game's order: Mario, Luigi, Peach, Yoshi, Wario, Donkey Kong, Daisy, Waluigi.
+- **Phase.** `phase_of` is the raw classifier, which calls any `m4NN` overlay a minigame. In the minigame phase, `current_minigame` is the running overlay's catalog entry. An `m4NN` overlay with no row (m452, m454) counts as the board phase, so `current_minigame` is set exactly in the minigame phase (ADR 0005). This replaces the earlier board-phase demotion.
+- **Turn.** The game moves `GWSystem.turn` one past `max_turn` when the last turn ends. The snapshot keeps it at `max_turns`.
 
 The shell registration (`mpt_register_mp4`) gives `--dump` the asset-import recipe, using this tree's `runtimes/gc_wii`, Clang, Ninja, GX backend and packages.
 
