@@ -8,6 +8,7 @@
 #include <iterator>
 #include <memory>
 #include <random>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <variant>
@@ -434,8 +435,19 @@ class Shell final : public IShellCommands {
         take_or_print(Session::start(registry_, config), "session", &last_error_);
     if (!started) return false;
     session_ = std::move(*started);
+    // The title's installed input profile (input/ title_profile.h), before the first
+    // sample(). A missing or invalid file falls back to the built-in default with a
+    // warning and never fails the start. Replays carry mapped InputFrames, so this does
+    // not affect determinism.
+    const input::TitleProfileLoad profile = input_.load_title_profile(config.dump.title);
+    std::printf("input: %s profile\n", profile.from_file() ? display_path(profile.source).c_str() : "built-in default");
     hooks.minigame_changed = [this](const std::optional<MinigameId>& id) {
-      input_.mapper().set_minigame(id ? id->str() : std::string());
+      const std::string minigame = id ? id->str() : std::string();
+      input_.mapper().set_minigame(minigame);
+      const input::Profile* active = input_.mapper().profile(0);
+      if (!minigame.empty() && active && active->minigames.contains(minigame)) {
+        std::printf("input: %s override\n", minigame.c_str());
+      }
     };
     loop_ = std::make_unique<FrameLoop>(*session_, std::move(hooks), recorder);
     // A pad plugged in mid-party must not add a player (input/ ports.h).
@@ -476,6 +488,7 @@ class Shell final : public IShellCommands {
     session_.reset();  // the adapter dies before the runtime (Session's destructor)
     input_.ports().set_auto_assign(true);
     input_.mapper().set_minigame("");
+    input_.mapper().set_profile_all(input::builtin_default_profile());  // no title profile between sessions
     presenter_.clear_frame();
     audio_.pause();
   }
