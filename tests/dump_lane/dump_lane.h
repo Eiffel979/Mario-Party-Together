@@ -142,6 +142,13 @@ class PartyChangeTracker {
     }
     last_ = frame;
   }
+  // Puts the tracker back as it was at frame `now` (after loading a state taken then).
+  void restore(const PartyKey& key, std::uint64_t changed_at, std::uint64_t now) {
+    key_ = key;
+    changed_at_ = changed_at;
+    last_ = now;
+    seen_ = true;
+  }
   // Frames stepped since the last change (0 on the frame of the change).
   std::uint64_t sinceChange() const { return seen_ ? last_ - changed_at_ : 0; }
   bool stuck() const { return seen_ && sinceChange() >= limit_; }

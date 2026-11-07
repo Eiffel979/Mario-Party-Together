@@ -31,6 +31,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <filesystem>
@@ -120,6 +121,10 @@ struct BootOptions {
   std::uint64_t watchdog = 36'000;     // --watchdog N: frames with no party change before failing
   std::filesystem::path replay_out;    // --replay FILE: where --party writes its .mptr
   std::filesystem::path verify_replay; // --verify-replay FILE
+  // Diagnosis: --party-save-at N FILE writes the state before frame N; --party-resume FILE goes on from it.
+  std::uint64_t party_save_at = 0;
+  std::filesystem::path party_save;
+  std::filesystem::path party_resume;
 };
 
 // "start@600", "a@900+10": a button, the first frame it is held, and for how many frames (default 6).
@@ -467,7 +472,34 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
   mpt::dump_lane::PartyChangeTracker tracker(options.watchdog);
   tracker.observe(0, {session->director().party().phase, overlay_of(session->runtime()),
                       session->director().party().turn});
+  // --party-resume FILE (diagnosis only): continue from a --party-save-at state, with the tracker as it
+  // was. A resumed run records no replay, and its result is not evidence.
+  const bool resumed = !options.party_resume.empty();
+  if (resumed) {
+    const auto bytes = mpt::dump_lane::read_file(options.party_resume);
+    std::uint64_t head[3] = {};
+    if (!bytes || bytes->size() < sizeof head) {
+      std::printf("dump lane: cannot read the resume state\n");
+      return 1;
+    }
+    std::memcpy(head, bytes->data(), sizeof head);
+    mpt::SaveState state;
+    state.title = mpt::TitleId::mp4;
+    state.frame = head[0];
+    state.format_version = static_cast<std::uint32_t>(head[1]);
+    state.data.assign(bytes->begin() + sizeof head, bytes->end());
+    if (mpt::Result r = session->loadState(state); !r) {
+      std::printf("dump lane: resume: %s\n", r.error().c_str());
+      return 1;
+    }
+    tracker.restore({session->director().party().phase, overlay_of(session->runtime()),
+                     session->director().party().turn},
+                    head[2], state.frame);
+    std::printf("dump lane: resumed at frame %llu (diagnosis only: no replay)\n",
+                static_cast<unsigned long long>(state.frame));
+  }
   std::size_t events_printed = 0;
+  std::string party_line;
   std::string failure;
   std::optional<std::uint64_t> finished_at;
   std::uint64_t hash_calls = 0;
@@ -483,12 +515,21 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
   Peak peak_osalloc, peak_aram;
   std::array<Peak, MPT_MP4_MEMORY_HEAPS> peak_heap{};
   std::optional<MptMp4MemoryUse> last_use;
-  for (std::uint64_t f = 0; f < options.frames; ++f) {
+  for (std::uint64_t f = session->frame(); f < options.frames; ++f) {
+    if (options.party_save_at != 0 && f == options.party_save_at && !options.party_save.empty()) {
+      const mpt::SaveState state = session->runtime().saveState();
+      const std::uint64_t head[3] = {state.frame, state.format_version, tracker.changedAt()};
+      std::vector<std::byte> out(sizeof head + state.data.size());
+      std::memcpy(out.data(), head, sizeof head);
+      std::memcpy(out.data() + sizeof head, state.data.data(), state.data.size());
+      std::printf("dump lane: saved the state at frame %llu: %s\n", static_cast<unsigned long long>(f),
+                  write_bytes(options.party_save, out) ? "ok" : "FAILED");
+    }
     mpt::InputFrame in;
     in.frame = f;
     in.pads[0] = mpt::dump_lane::party_autopilot(options.script, f, tracker.key(), tracker.sinceChange());
     const mpt::Result stepped = session->step(in);
-    if (session->frame() == f + 1) {
+    if (!resumed && session->frame() == f + 1) {
       if (mpt::Result r = recorder.record(in, *session); !r) {
         failure = "record: " + r.error();
         break;
@@ -499,11 +540,19 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
       break;
     }
     const mpt::PartySnapshot& party = session->director().party();
-    tracker.observe(f + 1, {party.phase, overlay_of(session->runtime()), party.turn});
-    if (tracker.changedAt() == f + 1) {
-      std::printf("frame %llu party overlay %s phase %s turn %d/%d\n", static_cast<unsigned long long>(f + 1),
-                  tracker.key().overlay.empty() ? "-" : tracker.key().overlay.c_str(), phase_name(party.phase),
-                  party.turn, party.max_turns);
+    MptMp4Party raw{};
+    raw.struct_size = sizeof raw;
+    if (mp4 != nullptr) mp4->readParty(raw);
+    tracker.observe(f + 1, {party.phase, raw.overlay_name, party.turn});
+    // The Director's phase and the module's raw read, whenever either changes (the evidence for the
+    // end-of-party flags, docs/titles/mp4.md section 21).
+    char line[192];
+    std::snprintf(line, sizeof line, "overlay %s phase %s turn %d/%d raw flags 0x%02x turn %d/%d board %d",
+                  raw.overlay_name[0] != 0 ? raw.overlay_name : "-", phase_name(party.phase), party.turn,
+                  party.max_turns, raw.flags, raw.turn, raw.max_turns, raw.board);
+    if (party_line != line) {
+      party_line = line;
+      std::printf("frame %llu party %s\n", static_cast<unsigned long long>(f + 1), line);
     }
     const auto events = session->director().events();
     for (; events_printed < events.size(); ++events_printed) print_event(events[events_printed]);
@@ -582,7 +631,7 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
   }
 
   const mpt::Replay replay = recorder.finish();
-  if (!options.replay_out.empty()) {
+  if (!options.replay_out.empty() && !resumed) {
     const std::vector<std::byte> bytes = mpt::encode_replay(replay);
     if (!write_bytes(options.replay_out, bytes)) {
       std::printf("dump lane: could not write the replay\n");
@@ -882,6 +931,11 @@ int main(int argc, char** argv) {
       boot_options.script.wheel_from = std::strtoull(w.substr(0, colon).c_str(), nullptr, 10);
       boot_options.script.wheel_to =
           colon == std::string::npos ? 0 : std::strtoull(w.substr(colon + 1).c_str(), nullptr, 10);
+    } else if (arg == "--party-save-at" && i + 2 < argc) {
+      boot_options.party_save_at = std::strtoull(argv[++i], nullptr, 10);
+      boot_options.party_save = argv[++i];
+    } else if (arg == "--party-resume" && has_value) {
+      boot_options.party_resume = argv[++i];
     } else if (arg == "--watchdog" && has_value) {
       boot_options.watchdog = std::strtoull(argv[++i], nullptr, 10);
     } else if (arg == "--replay" && has_value) {
@@ -896,7 +950,8 @@ int main(int argc, char** argv) {
       std::printf("usage: mpt_dump_lane [--boot <title> [--frames N] [--every N] [--seed S] [--perturb [--perturb-samples N]]\n"
                   "                     [--hash-items FILE] [--conformance] [--save-load-diff N]\n"
                   "                     [--press button@frame[+frames][,...]]... [--capture DIR [--capture-every N]]\n"
-                  "                     [--party [--party-board N] [--party-wheel FROM:TO] [--watchdog N] [--replay FILE]]\n"
+                  "                     [--party [--party-board N] [--party-wheel FROM:TO] [--watchdog N] [--replay FILE]\n"
+                  "                              [--party-save-at N FILE] [--party-resume FILE]]\n"
                   "                     [--verify-replay FILE]]\n");
       return 2;
     }
@@ -920,7 +975,8 @@ int main(int argc, char** argv) {
   // Captures (the user's game output) and the caches (an extracted disc, built modules, decomp
   // checkouts) must stay outside the repository too, and so must --hash-items (it names the game's
   // symbols).
-  const std::array<mpt::dump_lane::GuardedPath, 5> written = {{
+  const std::array<mpt::dump_lane::GuardedPath, 6> written = {{
+      {"--party-save-at", boot_options.party_save},
       {"--capture", boot_options.capture_dir},
       {"--hash-items", boot_options.hash_items},
       {"--replay", boot_options.replay_out},
