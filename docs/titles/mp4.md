@@ -674,7 +674,7 @@ So a minigame is covered on both devices unless it needs something a key cannot 
 
    **`OSResetSystem` is a deterministic soft reset inside the module.** The game core's data returns to its load-time image, MusyX and the renderer reset, and a new SDK boots on the same card from the same seed. Frame numbers and the card generation continue. Halts and faults are terminal module status, kept in the state, for ADR 0011's `status()`.
 
-   **Party reads** (`MptMp4Party::flags`, raw for the adapter's `PartyPhase`; **provisional until the dump lane confirms them**):
+   **Party reads** (`MptMp4Party::flags`, raw for the adapter's `PartyPhase`). `PARTY_MODE`, `IN_SETUP` and `IN_PROGRESS` are **confirmed on the dump lane** (P1-17, M3 run below). `TURNS_OVER` and `RESULTS_FINAL` need a full party and are still provisional:
    - `PARTY_MODE` is `GWSystem.party`.
    - `IN_SETUP`: party mode, and the running overlay is `mentDll`, the party menu that calls `BoardPartyConfigSet`.
    - `IN_PROGRESS`: party mode, and a board overlay (`wNN`) is in the overlay history (`omOvlHisGet`). That covers the board's turns and the minigames it calls.
@@ -746,11 +746,11 @@ So a minigame is covered on both devices unless it needs something a key cannot 
 **Open before M1 (boots headless on the dump lane).** These are listed in the P1-15 report and carried by P1-16:
 - ~~msm's file structures are big-endian~~: converted (patch 0015, above).
 - Process coroutine stacks are game-sized (4–32 KiB). SDK interrupts that fall due at a call boundary inside a process, including the MusyX render on the AI tick, run on that stack. The stack high-water mark must be measured on the dump lane. If it is too high, the SDK should run due interrupts on its interrupt coroutine from a boundary instead.
-- The GX front end's state (`g_gxState`) is not in the save state. Load restores only the object ID counters and resets the renderer caches.
+- The GX front end's state (`g_gxState`) is not in the save state. Load restores only the object ID counters and resets the renderer caches. The front end's game-visible state outside it (the draw-sync callback and token) is now saved and hashed (P1-17, below).
 - MP4's I/O callback mode (P1-16 audit), the fixed module and arena bases, and the hash manifest. v1 covers the SDK, MusyX, the `GW*` blocks, `rnd_seed` and the current overlay.
 - **Linux:** the module has not been built on Linux here, and the ELF section markers and `__start_`/`__stop_` bounds are untested.
 - A soft reset re-creates the SDK. With `arena_base` 0 its arena can move, and states saved before the reset then no longer load; P1-16's fixed arena base removes this. The GX front end's globals are not reset at a soft reset. The game's own `GXInit` at boot re-initializes them; the dump lane should confirm nothing stale is left.
-- The party flags above are derived from the decomp's code paths and have not been observed on a real party yet.
+- The party flags above came from the decomp's code paths; three of them are now confirmed on a real party (P1-17).
 
 ---
 
@@ -937,11 +937,53 @@ The #49 review moved libco's stack high-water statics out of the range as well.
     - the same run on Windows, then a diff of the two trails and the two item files.
 
     The first differing item names the area that needs a typed entry. The full-party replay follows once P1-18's replay exists.
-- The GX front-end state (`g_gxState`) in the hash manifest (E4).
+- The rest of the GX front-end state (`g_gxState`) in the hash manifest (E4). The game-visible draw-sync state is done (P1-17).
 - The fresh-process save/load demonstration (E5).
 - The conformance suite on the dump lane.
 
 ---
+
+## 21. M3: a board turn and a minigame (P1-17, `p1-17-mp4-adapter-m3`)
+
+**Adapter.** See §20: the catalog and `snapshot_of`, with `current_minigame` from the running overlay.
+
+**Scripted party on the dump lane.** `mpt_dump_lane --boot mp4` with a `--press` script runs this sequence with A presses (START at the title and on the minigame's instruction screen):
+- title → file select on the blank card → mode select (the card picker; the first card is party mode);
+- party setup (`mentDll`);
+- Toad's Midway Madness with Mario and three CPU players;
+- the first turn, then the minigame roulette, the instruction screen (`instDll`) and the minigame.
+
+The lane prints the module's party read whenever it changes. Seed 1, frames from boot:
+
+| Frame | Overlay | Flags | Phase | Notes |
+|---|---|---|---|---|
+| 934 | `modeseldll` | 0x00 | none | file select and mode select |
+| 2450 | `mentDll` | 0x00 | none | party setup, before party mode is set |
+| 6158 | `mentDll` | 0x03 | setup | `PARTY_MODE` and `IN_SETUP` confirmed |
+| 6551 | `w01Dll` | 0x05 | board | `IN_PROGRESS` confirmed; `GWSystem.board` 0 → `mp4.board.toads_midway_madness`; turn 1/20 |
+| 12454 | `instDll` | 0x05 | board | the minigame's instruction screen |
+| 12807 | `m401Dll` | 0x05 | minigame | `current_minigame` = `mp4.minigame.manta_rings` |
+
+**Found and fixed on the way:**
+- **Mode select hang** (Party Board patch 0020). After a card is picked, `modesel.c` waits for the opening movie with `while (!HuTHPEndCheck())`. Party Board starts that movie only under `__MWERKS__`, and stubs `HuTHPEndCheck` to TRUE in its own port. We build the original `thpmain.c`, where it stays FALSE while no movie has frames, so every mode hung on a star field. With no movie process, `HuTHPEndCheck` now answers TRUE.
+- **Game globals in a read-only section** (`src/game_section.h`, `tools/MptMp4Rel.cmake`):
+  - **Cause.** LLVM gives an object's game data section the attributes of the first global it emits there. In `board/audio.c` that was `boardMusTbl`, a static the optimizer made constant because nothing writes it, so the object's `.data$mptgame$b` came out read-only. lld-link then linked those sections into a separate read-only `.data`, outside the game data range.
+  - **Damage.**
+    - `boardSeq`, `boardFX`, the board CPU tables, `FontCharFile` and the option REL's `execModeTbl` were neither saved nor hashed.
+    - The first write, in `BoardAudSeqClear` when the board starts, crashed.
+  - **Fix.**
+    - A used, written anchor (`mpt_rw_anchor`) now comes first in every game and REL section.
+    - `const` data goes to `.rdata`.
+    - The symbol reader refuses a module with a read-only game data section.
+- **Draw-sync state outside the save state** (`gx/src/sdk_additions.cpp`). The game's draw-sync callback and token were file statics. MP4's performance meter registers its callback at init, so a runtime that loaded a state had none, its stopwatch stopped querying the clock, and the resumed run diverged within 60 frames. The callback and token are now an SDK state region, part of `state_hash` and the deep hash, and cleared at boot. `mpt_dump_lane --save-load-diff N` found it by diffing `debug_hash_items` between the straight and the resumed run.
+- **Build ID inputs.** Adding a file (patch 0020) did not reconfigure the host, so the cached module was reused. The build ID's globs now use `CONFIGURE_DEPENDS`.
+
+**Conformance on the dump lane.** `mpt_dump_lane --boot mp4 --conformance --frames 1200 --every 60 --press start@900` runs every check in `tests/conformance/conformance.h` against `Mp4Runtime` and `Mp4Adapter` on the real game. It then runs `check_hash_coverage` against the deep hash on a runtime with debug hooks: 6 fixed targets and 64 sampled bytes. **All checks pass** (Windows, null backend), including the save-state round trip after the draw-sync fix, with 70 of 70 coverage targets checked.
+
+**Open:**
+- **Manta Rings crashes while loading its model.** The stack is `Hu3DModelCreate` → `MakeDisplayList` → `MDObjCall` (`hsfdraw.c`), reading address `0xa5`. A child pointer in the model's object tree points at a HuMem block header (magic `0xA5`), so the HSF load or its 64-bit conversion left that object's children wrong. To investigate in `byteswap.cpp` and `hsfload.c`.
+- `TURNS_OVER` and `RESULTS_FINAL` need a full 20-turn party.
+- **Crash reports.** `mpt_dump_lane` prints a module-relative stack on a fatal exception (`crash_report.h`); `llvm-nm -n` on the installed `mp4_game.dll` names the frames.
 
 ## Sections still to fill (P1-18)
 - Spike S1 result and the pinned GX backend version (P1-12). **Reported:** `docs/spikes/s1-gx-backend.md`. Recommendation: aurora GX/MTX on Dawn at `514339438178ef2bed1b14e5149d90ece0c6e0cc`, with a host shim, a null backend and a small patch set. A gate runs at the start of P1-14. Folded into ADR 0007 §6 (Accepted). GX surface measured on Party Board's sources: 131 distinct entry points, 104 implemented by aurora at the pin, one real gap (`GXSetZTexture`, m419), no `GD*` calls.
