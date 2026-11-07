@@ -57,7 +57,7 @@ function(mpt_mp4_add_rel name)
   set(_sect_h "${A_DIR}/${name}_section.h")
   if(MPT_MP4_REL_FORMAT STREQUAL "coff")
     # '$' separators: the linker sorts .data$... by suffix, and no REL name may interleave another's.
-    # const data goes to .rdata, and a written anchor keeps the section writable: see
+    # const data goes to .rdata, and a used, volatile anchor keeps the section writable: see
     # src/game_section.h (an optimized-constant first global would otherwise make it read-only).
     file(CONFIGURE OUTPUT "${_sect_h}" CONTENT "#pragma data_seg(\".data$mptrel$${name}$b\")
 #pragma bss_seg(\".data$mptrel$${name}$b\")

@@ -138,6 +138,10 @@ void copy_trap_enable() {
   SYSTEM_INFO si;
   GetSystemInfo(&si);
   g_page = si.dwPageSize;
+  // First in line, ahead of any other vectored handler, including the dump lane's crash report
+  // (tests/dump_lane/crash_report.h), which is also first in line. Both work only because this one is
+  // installed later (at create): the newest first-in-line handler runs first, so the trap resumes its own
+  // faults before the crash report sees them.
   g_handler = AddVectoredExceptionHandler(1, &handler);
 #else
   g_page = static_cast<std::uintptr_t>(sysconf(_SC_PAGESIZE));
