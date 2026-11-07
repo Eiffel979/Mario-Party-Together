@@ -1,0 +1,39 @@
+Apply order 0021 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+hsfload: keep MaterialLoad's colour writes inside rgba, on MPT_PC
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+MaterialLoad writes each material's lit colour to rgba[i], but rgba has 100 entries and nothing
+reads it. Four models on the disc have more materials (Manta Rings, Paratrooper Plunge, Toad's Quick
+Draw and Bowser's Bigger Blast, 112 to 255). On the console the extra writes land in a local scratch
+buffer of hsfload.c. In our module head follows rgba, so the write for material 107 overwrote
+head.material.count with a negative value. The loop ended there, materials 107 and up kept their
+file symbol indices as attr pointers, and MakeDisplayList faulted on the first face that used one
+(Manta Rings, docs/titles/mp4.md section 21). The writes past rgba are now skipped. The colours for
+materials 0-99 are unchanged, and no material is converted differently.
+
+diff --git a/src/game/hsfload.c b/src/game/hsfload.c
+index 9819ac6..e7b0d94 100644
+--- a/src/game/hsfload.c
++++ b/src/game/hsfload.c
+@@ -882,10 +882,17 @@ static void MaterialLoad(void)
+             new_mat->attrNum = curr_mat->attrNum;
+             // the pointers are being treated as values
+             new_mat->attr = (intptr_t *)(NSymIndex+((uintptr_t)curr_mat->attr));
+-            rgba[i].r = new_mat->litColor[0];
+-            rgba[i].g = new_mat->litColor[1];
+-            rgba[i].b = new_mat->litColor[2];
+-            rgba[i].a = 255;
++#ifdef MPT_PC
++            /* rgba has 100 entries and nothing reads it. A model with more materials wrote past it:
++             * on the console into a scratch buffer, here into head, which ended this loop early. */
++            if (i < (s32)(sizeof(rgba) / sizeof(rgba[0])))
++#endif
++            {
++                rgba[i].r = new_mat->litColor[0];
++                rgba[i].g = new_mat->litColor[1];
++                rgba[i].b = new_mat->litColor[2];
++                rgba[i].a = 255;
++            }
+             for(j=0; j<new_mat->attrNum; j++) {
+                 new_mat->attr[j] = new_mat->attr[j];
+             }
