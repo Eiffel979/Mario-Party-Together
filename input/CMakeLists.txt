@@ -10,6 +10,7 @@ add_library(mpt_input
   src/ports.cpp
   src/profile.cpp
   src/reserved.cpp
+  src/title_profile.cpp
 )
 add_library(mpt::input ALIAS mpt_input)
 target_include_directories(mpt_input PUBLIC include)
@@ -39,12 +40,15 @@ if(MPT_BUILD_TESTS)
     tests/test_ports.cpp
     tests/test_profile.cpp
     tests/test_reserved.cpp
+    tests/test_title_profile.cpp
   )
   target_link_libraries(mpt_input_tests PRIVATE mpt::input doctest::doctest)
   # The shipped profiles and the coverage table they are checked against (read-only).
   target_compile_definitions(mpt_input_tests PRIVATE
     "MPT_INPUT_PROFILES_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/profiles\""
-    "MPT_DOCS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../docs\"")
+    "MPT_DOCS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../docs\""
+    # Synthetic profile directories the loader tests create and delete.
+    "MPT_INPUT_TEST_SCRATCH_DIR=\"${CMAKE_CURRENT_BINARY_DIR}/title_profile_scratch\"")
   mpt_set_warnings(mpt_input_tests)
   add_test(NAME input_unit COMMAND mpt_input_tests)
   add_test(NAME input_core_purity
