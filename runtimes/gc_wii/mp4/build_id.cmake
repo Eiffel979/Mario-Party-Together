@@ -71,11 +71,18 @@ function(mpt_mp4_build_id)
     endif()
   endforeach()
   get_filename_component(_gc "${A_GC_WII_DIR}" ABSOLUTE)
+  # In a configure, the globs re-run at build time, so an added or removed input (a new patch) re-runs
+  # the configure too; script mode (the group test) has no build to re-run.
+  if(CMAKE_SCRIPT_MODE_FILE)
+    set(_cd "")
+  else()
+    set(_cd CONFIGURE_DEPENDS)
+  endif()
   get_filename_component(_core "${A_CORE_INCLUDE_DIR}" ABSOLUTE)
   set(_inputs "")
 
   # ---- tree ----
-  file(GLOB_RECURSE _tree_files LIST_DIRECTORIES false
+  file(GLOB_RECURSE _tree_files LIST_DIRECTORIES false ${_cd}
     "${_gc}/CMakeLists.txt"
     "${_gc}/sdk/CMakeLists.txt" "${_gc}/sdk/*.cmake" "${_gc}/sdk/src/*" "${_gc}/sdk/include/*"
     "${_gc}/gx/CMakeLists.txt" "${_gc}/gx/*.cmake" "${_gc}/gx/*.lock" "${_gc}/gx/src/*" "${_gc}/gx/include/*"
@@ -92,7 +99,7 @@ function(mpt_mp4_build_id)
   list(APPEND _inputs ${_tree_files})
 
   # ---- core ----
-  file(GLOB_RECURSE _core_files LIST_DIRECTORIES false "${_core}/*")
+  file(GLOB_RECURSE _core_files LIST_DIRECTORIES false ${_cd} "${_core}/*")
   list(SORT _core_files)
   set(_core_text "")
   foreach(_f IN LISTS _core_files)
@@ -105,7 +112,7 @@ function(mpt_mp4_build_id)
   # ---- patches, per set in apply order (each set is applied sorted by name) ----
   set(_patches "")
   foreach(_set "mp4/patches/partyboard" "gx/patches/aurora" "musyx/patches")
-    file(GLOB _set_files LIST_DIRECTORIES false "${_gc}/${_set}/*.patch")
+    file(GLOB _set_files LIST_DIRECTORIES false ${_cd} "${_gc}/${_set}/*.patch")
     list(SORT _set_files)
     foreach(_f IN LISTS _set_files)
       file(SHA256 "${_f}" _h)
