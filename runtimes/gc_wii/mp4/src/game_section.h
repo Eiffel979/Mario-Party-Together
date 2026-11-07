@@ -6,9 +6,10 @@
  * that can be read-only: a static the optimizer made constant because nothing writes it (board/audio.c's
  * boardMusTbl), or a const global (data_seg takes those too unless const_seg is set). lld-link then
  * linked that object's section apart from the game range, read-only: its writable globals (boardSeq,
- * for one) were neither saved nor hashed, and the first write to one crashed (P1-17). A used, written
- * static emitted first keeps the section writable. It exists on every platform, so the state hash
- * sees the same symbols; its value never changes. const data goes to .rdata as usual. */
+ * for one) were neither saved nor hashed, and the first write to one crashed (P1-17). A static emitted
+ * first keeps the section writable: it is never written, but `used` keeps it in the object and
+ * `volatile` stops the optimizer from making it constant. It exists on every platform, so the state
+ * hash sees the same symbols; its value never changes. const data goes to .rdata as usual. */
 #if defined(_WIN32)
 #pragma data_seg(".data$mptgame$b")
 #pragma bss_seg(".data$mptgame$b")

@@ -983,7 +983,7 @@ The phase is `board` on the instruction and results screens, and `minigame` with
     - `boardSeq`, `boardFX`, the board CPU tables, `FontCharFile` and the option REL's `execModeTbl` were neither saved nor hashed.
     - The first write, in `BoardAudSeqClear` when the board starts, crashed.
   - **Fix.**
-    - A used, written anchor (`mpt_rw_anchor`) now comes first in every game and REL section.
+    - An anchor (`mpt_rw_anchor`) now comes first in every game and REL section. It is never written; `used` and `volatile` keep it in the object and writable.
     - `const` data goes to `.rdata`.
     - The symbol reader refuses a module with a read-only game data section.
 - **Draw-sync state outside the save state** (`gx/src/sdk_additions.cpp`). The game's draw-sync callback and token were file statics. MP4's performance meter registers its callback at init, so a runtime that loaded a state had none, its stopwatch stopped querying the clock, and the resumed run diverged within 60 frames. The callback and token are now an SDK state region, part of `state_hash` and the deep hash, and cleared at boot. `mpt_dump_lane --save-load-diff N` found it by diffing `debug_hash_items` between the straight and the resumed run.
