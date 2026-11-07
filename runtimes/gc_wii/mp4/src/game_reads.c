@@ -11,10 +11,14 @@
 #include "libco/libco.h"
 
 #include "mpt/mp4/game_abi.h"
+#include "mpt_mp4_party_flags.h"
 #include "mpt_mp4_reads.h"
 
 extern FileListEntry _ovltbl[];
 extern s32 rnd_seed;
+/* objmain.c: the overlay a switch is heading to while omcurovl is DLL_NONE, and its event. */
+extern OMOVL omnextovl;
+extern s32 omnextovlevtno;
 
 static const char* overlay_name(int32_t ovl) {
   return (ovl >= 0 && ovl < DLL_MAX) ? _ovltbl[ovl].name : NULL;
@@ -43,17 +47,23 @@ void mpt_mp4_read_party(MptMp4Party* out) {
     if (n > sizeof out->overlay_name - 1) n = sizeof out->overlay_name - 1;
     memcpy(out->overlay_name, _ovltbl[out->overlay].name, n); /* the rest was zeroed above */
   }
-  uint32_t flags = 0;
-  if (GWSystem.party) flags |= MPT_MP4_PARTY_MODE;
+  /* The facts for mpt_mp4_party_flags (mpt_mp4_party_flags.h), all from game memory. */
+  MptMp4PartyFacts facts;
+  facts.party = GWSystem.party;
+  facts.turn = GWSystem.turn;
+  facts.max_turn = GWSystem.max_turn;
   const char* running = overlay_name(out->overlay);
-  if (GWSystem.party && running != NULL && strcmp(running, "mentDll") == 0) flags |= MPT_MP4_PARTY_IN_SETUP;
-  const int on_board = GWSystem.party && board_in_history();
-  if (on_board) flags |= MPT_MP4_PARTY_IN_PROGRESS;
-  if (GWSystem.party && GWSystem.max_turn > 0 && GWSystem.turn > GWSystem.max_turn) {
-    flags |= MPT_MP4_PARTY_TURNS_OVER;
-    if (!on_board) flags |= MPT_MP4_PARTY_RESULTS_FINAL;
+  facts.setup_running = running != NULL && strcmp(running, "mentDll") == 0;
+  facts.board_in_history = board_in_history();
+  const int32_t heading = out->overlay >= 0 ? out->overlay : (int32_t)omnextovl;
+  const s32 heading_event = out->overlay >= 0 ? omovlevtno : omnextovlevtno;
+  facts.heading = MPT_MP4_HEADING_OTHER;
+  if (heading == DLL_mentdll) {
+    facts.heading = MPT_MP4_HEADING_SETUP;
+  } else if (heading == DLL_mstory3dll) {
+    facts.heading = heading_event == 0 ? MPT_MP4_HEADING_BONUS_STARS : MPT_MP4_HEADING_FINAL_RESULTS;
   }
-  out->flags = flags;
+  out->flags = mpt_mp4_party_flags(&facts);
   out->board = GWSystem.board;
   out->turn = GWSystem.turn;
   out->max_turns = GWSystem.max_turn;
