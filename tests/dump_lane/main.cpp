@@ -40,11 +40,14 @@
 #include <vector>
 
 #include "dump_lane.h"
+#include "crash_report.h"
 #include "path_guard.h"
 #include "png.h"
 #include "mpt/core/title_id.h"
 #include "real_titles.h"
 #if defined(MPT_DUMP_LANE_MP4)
+#include "../conformance/conformance.h"
+#include "mpt/mp4/adapter.h"
 #include "mpt/mp4/runtime.h"
 #endif
 
@@ -100,6 +103,8 @@ struct BootOptions {
   bool perturb = false;
   std::uint32_t perturb_samples = 32;  // sampled bytes per checkpoint with --perturb
   std::filesystem::path hash_items;    // --hash-items FILE: state_hash's parts at the last checkpoint
+  bool conformance = false;            // --conformance: the runtime conformance suite instead of a boot run
+  std::uint64_t save_load_diff = 0;    // --save-load-diff N: where a resumed run first differs, by hash item
   // M2: scripted input on player 1 and frame captures.
   struct Press {
     std::uint32_t buttons;
@@ -223,6 +228,164 @@ int perturb_checks(mpt::mp4::Mp4Runtime& mp4, std::uint64_t frame, std::uint64_t
 }
 #endif
 
+#if defined(MPT_DUMP_LANE_MP4)
+// `--conformance` (P1-20c on the dump lane): every conformance check (tests/conformance/conformance.h)
+// against Mp4Runtime and Mp4Adapter on the real game, driven by the --press script, then the E4
+// hash-coverage check against the deep hash on a runtime booted with debug hooks. Prints each problem;
+// returns the number found.
+int conformance_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::TitleRegistry& registry) {
+  using namespace mpt::conformance;
+  Target t;
+  t.name = "Mp4Runtime";
+  t.runtime = [&registry] { return registry.createRuntime(mpt::TitleId::mp4); };
+  t.adapter = [](mpt::ITitleRuntime& runtime) -> std::unique_ptr<mpt::ITitleAdapter> {
+    auto* mp4 = dynamic_cast<mpt::mp4::Mp4Runtime*>(&runtime);
+    if (mp4 == nullptr) return nullptr;
+    return std::make_unique<mpt::mp4::Mp4Adapter>(*mp4);
+  };
+  t.dump = dump;
+  t.config.seed = options.seed;
+  t.inputs = [&options](std::uint64_t f) {
+    mpt::InputFrame in;
+    in.pads[0] = scripted_pad(options, f);
+    return in;
+  };
+  t.frames = options.frames;
+  t.interval = options.every != 0 ? options.every : 60;
+  t.save_frame = options.frames / 2;
+  struct Check {
+    const char* name;
+    Problems (*fn)(const Target&);
+  };
+  static constexpr Check kChecks[] = {
+      {"frame rate validity", &check_frame_rate},     {"frame numbering and determinism", &check_frame_numbering},
+      {"save state round trip", &check_save_load},    {"video and audio views", &check_views},
+      {"presentation options", &check_presentation_options}, {"save media", &check_save_media},
+      {"stick folding", &check_stick_folding},        {"adapter snapshots", &check_adapter},
+      {"runtime status", &check_status},
+  };
+  int found = 0;
+  for (const Check& c : kChecks) {
+    const Problems problems = c.fn(t);
+    std::printf("conformance %s: %s\n", c.name, problems.empty() ? "ok" : "FAIL");
+    for (const std::string& p : problems) std::printf("  %s\n", p.c_str());
+    found += static_cast<int>(problems.size());
+  }
+
+  // E4 against the deep hash, at the end of the script, on a runtime with debug hooks.
+  std::unique_ptr<mpt::ITitleRuntime> runtime = registry.createRuntime(mpt::TitleId::mp4);
+  auto* mp4 = dynamic_cast<mpt::mp4::Mp4Runtime*>(runtime.get());
+  if (mp4 == nullptr) {
+    std::puts("conformance hash coverage: FAIL (not an Mp4Runtime)");
+    return found + 1;
+  }
+  mp4->setDebugHooks(true);
+  if (mpt::Result r = runtime->boot(dump, t.config); !r) {
+    std::printf("conformance hash coverage: FAIL (boot: %s)\n", r.error().c_str());
+    return found + 1;
+  }
+  for (std::uint64_t f = 0; f < t.frames; ++f) runtime->stepFrame(detail::input_at(t.inputs, f));
+  HashCoverageProbe probe;
+  probe.state_hash = [mp4] { return mp4->stateHash(); };
+  probe.deep_hash = [mp4] { return mp4->debugDeepHash().value_or(0); };
+  probe.perturb = [mp4](std::uint32_t target) { return mp4->debugPerturb(target); };
+  probe.targets = {{MPT_MP4_PERTURB_GAME_DATA, "game data"},   {MPT_MP4_PERTURB_HEAP_BLOCK, "heap block"},
+                   {MPT_MP4_PERTURB_ARAM, "aram in use"},      {MPT_MP4_PERTURB_GLOBAL, "registered global"},
+                   {MPT_MP4_PERTURB_FREE_HEAP, "free heap"},   {MPT_MP4_PERTURB_STACK, "process stack"}};
+  for (std::uint32_t k = 0; k < 64; ++k)
+    probe.targets.push_back({MPT_MP4_PERTURB_SAMPLE | (k << 8), "sample " + std::to_string(k)});
+  const HashCoverageResult coverage = check_hash_coverage(probe);
+  std::printf("conformance hash coverage: %s (%zu of %zu targets had a byte to flip)\n",
+              coverage.problems.empty() && coverage.checked >= 60 ? "ok" : "FAIL", coverage.checked,
+              probe.targets.size());
+  for (const std::string& p : coverage.problems) std::printf("  %s\n", p.c_str());
+  found += static_cast<int>(coverage.problems.size()) + (coverage.checked >= 60 ? 0 : 1);
+  std::printf("dump lane: conformance: %d problem(s)\n", found);
+  return found;
+}
+#endif
+
+#if defined(MPT_DUMP_LANE_MP4)
+// `--save-load-diff N` (E5 diagnosis): save at frame N, run on to every checkpoint, then load the
+// state into a fresh runtime booted with another seed and run the same frames. At the first checkpoint
+// where stateHash() differs, prints the debug_hash_items lines that differ: the symbol or range whose
+// state the save state does not carry, or carries wrongly.
+int save_load_diff(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::TitleRegistry& registry) {
+  const std::uint64_t at = options.save_load_diff;
+  const std::uint64_t every = options.every != 0 ? options.every : 60;
+  auto input = [&options](std::uint64_t f) {
+    mpt::InputFrame in;
+    in.frame = f;
+    in.pads[0] = scripted_pad(options, f);
+    return in;
+  };
+  auto make = [&](std::uint64_t seed) {
+    std::unique_ptr<mpt::ITitleRuntime> runtime = registry.createRuntime(mpt::TitleId::mp4);
+    if (auto* mp4 = dynamic_cast<mpt::mp4::Mp4Runtime*>(runtime.get())) mp4->setDebugHooks(true);
+    mpt::RuntimeConfig config;
+    config.seed = seed;
+    if (mpt::Result r = runtime->boot(dump, config); !r) {
+      std::printf("dump lane: boot failed: %s\n", r.error().c_str());
+      runtime.reset();
+    }
+    return runtime;
+  };
+  std::vector<std::pair<std::uint64_t, std::string>> straight;  // (frame, items) at each checkpoint
+  mpt::SaveState saved;
+  {
+    std::unique_ptr<mpt::ITitleRuntime> producer = make(options.seed);
+    if (!producer) return 1;
+    auto* mp4 = dynamic_cast<mpt::mp4::Mp4Runtime*>(producer.get());
+    for (std::uint64_t f = 0; f < options.frames; ++f) {
+      if (f == at) saved = producer->saveState();
+      producer->stepFrame(input(f));
+      if (f >= at && (f + 1) % every == 0) straight.emplace_back(f + 1, mp4->debugHashItems());
+    }
+  }
+  std::unique_ptr<mpt::ITitleRuntime> consumer = make(options.seed + 1);
+  if (!consumer) return 1;
+  if (mpt::Result r = consumer->loadState(saved); !r) {
+    std::printf("dump lane: loadState failed: %s\n", r.error().c_str());
+    return 1;
+  }
+  auto* mp4 = dynamic_cast<mpt::mp4::Mp4Runtime*>(consumer.get());
+  std::size_t next = 0;
+  for (std::uint64_t f = at; f < options.frames && next < straight.size(); ++f) {
+    consumer->stepFrame(input(f));
+    if ((f + 1) != straight[next].first) continue;
+    const std::string resumed = mp4->debugHashItems();
+    if (resumed == straight[next].second) {
+      ++next;
+      continue;
+    }
+    std::printf("dump lane: the resumed run differs at frame %llu; items that differ (straight | resumed):\n",
+                static_cast<unsigned long long>(f + 1));
+    auto lines = [](const std::string& text) {
+      std::vector<std::string> out;
+      for (std::size_t from = 0; from < text.size();) {
+        const std::size_t nl = text.find('\n', from);
+        out.push_back(text.substr(from, nl - from));
+        from = nl == std::string::npos ? text.size() : nl + 1;
+      }
+      return out;
+    };
+    const std::vector<std::string> a = lines(straight[next].second), b = lines(resumed);
+    int shown = 0;
+    for (std::size_t i = 0; i < std::max(a.size(), b.size()) && shown < 40; ++i) {
+      const std::string x = i < a.size() ? a[i] : "-", y = i < b.size() ? b[i] : "-";
+      if (x != y) {
+        std::printf("  %s | %s\n", x.c_str(), y.c_str());
+        ++shown;
+      }
+    }
+    return 1;
+  }
+  std::printf("dump lane: the resumed run matches at all %zu checkpoints\n", straight.size());
+  return 0;
+}
+
+#endif
+
 // The M1 check: boot headless on the dump, no input, and step.
 int boot(const BootOptions& options, const std::filesystem::path& dump_dir) {
   const std::optional<mpt::TitleId> title = mpt::parse_title_id(options.title);
@@ -240,6 +403,26 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir) {
   if (mpt::Result* failure = std::get_if<mpt::Result>(&dump)) {
     std::printf("dump lane: %s\n", failure->error().c_str());
     return 1;
+  }
+  if (options.save_load_diff != 0) {
+#if defined(MPT_DUMP_LANE_MP4)
+    return save_load_diff(options, std::get<mpt::VerifiedDump>(dump), registry);
+#else
+    std::puts("dump lane: --save-load-diff needs the MP4 runtime");
+    return 1;
+#endif
+  }
+  if (options.conformance) {
+#if defined(MPT_DUMP_LANE_MP4)
+    if (*title != mpt::TitleId::mp4) {
+      std::puts("dump lane: --conformance runs on mp4 only for now");
+      return 1;
+    }
+    return conformance_run(options, std::get<mpt::VerifiedDump>(dump), registry) == 0 ? 0 : 1;
+#else
+    std::puts("dump lane: --conformance needs the MP4 runtime, which this build does not have");
+    return 1;
+#endif
   }
   std::unique_ptr<mpt::ITitleRuntime> runtime = registry.createRuntime(*title);
 #if defined(MPT_DUMP_LANE_MP4)
@@ -260,12 +443,33 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir) {
   mpt::InputFrame input;
   std::string stopped;
   int perturb_failures = 0;
+  std::string party_line;  // the last printed MP4 party read
   std::uint64_t hash_calls = 0, deep_calls = 0;
   std::chrono::steady_clock::duration hash_time{}, deep_time{};
   for (std::uint64_t f = 0; f < options.frames; ++f) {
     input.frame = f;
     input.pads[0] = scripted_pad(options, f);
     runtime->stepFrame(input);
+#if defined(MPT_DUMP_LANE_MP4)
+    // MP4's party read and the adapter's phase, printed whenever either changes: the evidence for the
+    // party flags (docs/titles/mp4.md section 19) and the phases a script goes through.
+    if (mp4 != nullptr) {
+      MptMp4Party raw{};
+      if (mp4->readParty(raw)) {
+        const mpt::PartySnapshot snap = mpt::mp4::snapshot_of(raw);
+        static const char* const kPhases[] = {"none", "setup", "board", "minigame", "results", "finished"};
+        char line[256];
+        std::snprintf(line, sizeof line, "overlay %s flags 0x%02x phase %s board %d turn %d/%d minigame %s",
+                      raw.overlay_name[0] != 0 ? raw.overlay_name : "-", raw.flags,
+                      kPhases[static_cast<int>(snap.phase)], raw.board, raw.turn, raw.max_turns,
+                      snap.current_minigame ? snap.current_minigame->str().c_str() : "-");
+        if (party_line != line) {
+          party_line = line;
+          std::printf("frame %llu party %s\n", static_cast<unsigned long long>(f), line);
+        }
+      }
+    }
+#endif
     const mpt::RuntimeHealth health = runtime->status();
     if (health.status != mpt::RuntimeStatus::running) {
       stopped = (health.status == mpt::RuntimeStatus::halted ? "halted: " : "faulted: ") + health.message;
@@ -352,6 +556,7 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir) {
 int main(int argc, char** argv) {
   // Unbuffered, so a crash still leaves everything printed before it (the boot mode is a diagnostic).
   std::setvbuf(stdout, nullptr, _IONBF, 0);
+  mpt::dump_lane::install_crash_report();  // a crash prints its stack (crash_report.h)
   BootOptions boot_options;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -366,6 +571,10 @@ int main(int argc, char** argv) {
       boot_options.seed = std::strtoull(argv[++i], nullptr, 10);
     } else if (arg == "--perturb") {
       boot_options.perturb = true;
+    } else if (arg == "--save-load-diff" && has_value) {
+      boot_options.save_load_diff = std::strtoull(argv[++i], nullptr, 10);
+    } else if (arg == "--conformance") {
+      boot_options.conformance = true;
     } else if (arg == "--hash-items" && has_value) {
       boot_options.hash_items = argv[++i];
     } else if (arg == "--perturb-samples" && has_value) {
@@ -390,7 +599,7 @@ int main(int argc, char** argv) {
       boot_options.capture_every = std::strtoull(argv[++i], nullptr, 10);
     } else {
       std::printf("usage: mpt_dump_lane [--boot <title> [--frames N] [--every N] [--seed S] [--perturb [--perturb-samples N]]\n"
-                  "                     [--hash-items FILE]\n"
+                  "                     [--hash-items FILE] [--conformance] [--save-load-diff N]\n"
                   "                     [--press button@frame[+frames][,...]]... [--capture DIR [--capture-every N]]]\n");
       return 2;
     }

@@ -1,6 +1,8 @@
 // See mpt/mp4/adapter.h.
 #include "mpt/mp4/adapter.h"
 
+#include "catalog.h"
+
 #include <cstring>
 
 namespace mpt::mp4 {
@@ -31,27 +33,40 @@ Result Mp4Adapter::applyRuleset(const ResolvedRuleset& rules) {
   return Result::success();
 }
 
+Catalog Mp4Adapter::catalog() { return mp4_catalog(); }
+
 PartySnapshot Mp4Adapter::readParty() {
-  PartySnapshot snap;
   MptMp4Party raw{};
-  if (!runtime_.readParty(raw)) return snap;
+  if (!runtime_.readParty(raw)) return PartySnapshot{};
+  return snapshot_of(raw);
+}
+
+PartySnapshot snapshot_of(const MptMp4Party& raw) {
+  PartySnapshot snap;
   snap.phase = phase_of(raw);
   if (snap.phase == PartyPhase::none) return snap;
-  snap.turn = raw.turn;
   snap.max_turns = raw.max_turns;
+  // The game moves GWSystem.turn one past max_turn when the last turn ends (BoardTurnNext); the
+  // snapshot keeps turn within max_turns (ADR 0005), so the results phases report the last turn.
+  snap.turn = (raw.max_turns > 0 && raw.turn > raw.max_turns) ? raw.max_turns : raw.turn;
+  // GWSystem.board holds a value from the first board on; it names the party's board once a board has
+  // run (in progress, or the end-of-party phases after it).
+  if ((raw.flags & (MPT_MP4_PARTY_IN_PROGRESS | MPT_MP4_PARTY_TURNS_OVER)) != 0) snap.board = board_for(raw.board);
   for (std::size_t i = 0; i < kMaxPlayers; ++i) {
     const MptMp4PartyPlayer& p = raw.players[i];
     snap.players[i].is_cpu = p.is_cpu != 0;
     snap.players[i].coins = p.coins;
     snap.players[i].stars = p.stars;
     snap.players[i].board_space = p.space;
-    // character, board and current_minigame IDs: P1-17's catalog mapping.
+    snap.players[i].character = character_for(p.character);
   }
-  // ADR 0005: PartyPhase::minigame needs current_minigame. phase_of classifies the raw overlay, but
-  // until P1-17's catalog fills current_minigame, a minigame during a party is reported as part of
-  // the board phase.
-  // TODO(P1-17): drop this once readParty maps the overlay to current_minigame.
-  if (snap.phase == PartyPhase::minigame && !snap.current_minigame) snap.phase = PartyPhase::board;
+  // ADR 0005: current_minigame is set exactly in the minigame phase. phase_of classifies the overlay
+  // by its name; one the catalog does not list (m452 and m454 point back at m450 and have no row) is
+  // reported as part of the board phase.
+  if (snap.phase == PartyPhase::minigame) {
+    snap.current_minigame = minigame_for_overlay(raw.overlay_name);
+    if (!snap.current_minigame) snap.phase = PartyPhase::board;
+  }
   return snap;
 }
 

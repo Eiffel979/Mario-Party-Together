@@ -12,7 +12,9 @@
 // Both give the same game-visible state; the null-against-real test checks it.
 
 #include <cstdint>
+#include <cstddef>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -70,6 +72,14 @@ struct ObjectIdCounters {
 };
 ObjectIdCounters object_id_counters();
 void set_object_id_counters(const ObjectIdCounters& counters);
+
+// The front end's game-visible state outside aurora's GX state: the draw-sync callback the game
+// registered (MP4's performance meter reads the clock in it) and the last draw-sync token. It changes
+// what the game does, so a title saves it with its state (an SdkConfig state region), hashes it and
+// clears it at boot: a runtime that loads a state never ran the game's init that registered the
+// callback (P1-17, conformance save/load). Plain data at a fixed address in the module.
+std::span<std::byte> game_visible_state();
+void reset_game_visible_state();
 
 // Debug hook for the copy-destination trap (ADR 0007 section 5): called by GXCopyTex with each
 // destination and its CPU-side size in bytes. nullptr (the default) turns it off.

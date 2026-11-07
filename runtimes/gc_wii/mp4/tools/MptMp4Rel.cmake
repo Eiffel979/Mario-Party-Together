@@ -57,12 +57,17 @@ function(mpt_mp4_add_rel name)
   set(_sect_h "${A_DIR}/${name}_section.h")
   if(MPT_MP4_REL_FORMAT STREQUAL "coff")
     # '$' separators: the linker sorts .data$... by suffix, and no REL name may interleave another's.
+    # const data goes to .rdata, and a written anchor keeps the section writable: see
+    # src/game_section.h (an optimized-constant first global would otherwise make it read-only).
     file(CONFIGURE OUTPUT "${_sect_h}" CONTENT "#pragma data_seg(\".data$mptrel$${name}$b\")
 #pragma bss_seg(\".data$mptrel$${name}$b\")
+#pragma const_seg(\".rdata$mptrel\")
+__attribute__((used)) static volatile unsigned char mpt_rw_anchor = 1;
 ")
     set(_fi "/FI${_sect_h}")
   else()
     file(CONFIGURE OUTPUT "${_sect_h}" CONTENT "#pragma clang section data=\"mptrel_${name}\"
+__attribute__((used)) static volatile unsigned char mpt_rw_anchor = 1;
 ")
     set(_fi "SHELL:-include \"${_sect_h}\"")  # SHELL: so CMake keeps each -include
   endif()

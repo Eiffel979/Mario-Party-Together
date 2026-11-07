@@ -1,0 +1,30 @@
+Apply order 0020 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+thpmain: a movie that never started has ended, on MPT_PC
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+Party Board leaves the movie starts to __MWERKS__ ("TODO PC"), and its own port stubs
+HuTHPEndCheck to TRUE. We build the original thpmain.c, where HuTHPEndCheck is FALSE while no movie
+has frames, so every wait for a movie that never starts hangs: after a card is picked in the mode
+select (modesel.c), the game stays on the star field forever and never reaches party mode (P1-17,
+docs/titles/mp4.md). With no movie process (THPProc == NULL: none was started, or it has ended),
+HuTHPEndCheck now answers TRUE, as Party Board's stub does. A movie that was started keeps the console
+behaviour, so this changes nothing once the movies play.
+
+diff --git a/src/game/thpmain.c b/src/game/thpmain.c
+index d978696..9564d95 100644
+--- a/src/game/thpmain.c
++++ b/src/game/thpmain.c
+@@ -111,6 +111,13 @@ BOOL HuTHPEndCheck(void)
+ {
+     s32 temp_r31;
+ 
++#ifdef MPT_PC
++    /* No movie process: none was started (Party Board leaves the movies to __MWERKS__), or it has
++     * ended. Its stub answers TRUE; without this the waits for a movie that never plays never end. */
++    if (THPProc == NULL) {
++        return TRUE;
++    }
++#endif
+     temp_r31 = THPSimpleGetTotalFrame() - 1;
+     if (temp_r31 <= 0) {
+         return FALSE;
