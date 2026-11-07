@@ -1,0 +1,31 @@
+Apply order 0022 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+w01Dll: CoasterPathUpdate's link list holds BOARD_SPACE_LINKMAX entries, on MPT_PC
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+On Toad's Midway Madness, when boardWork->hostSide is set (the coaster's other direction),
+CoasterPathUpdate fills a three-entry s16 list with BoardSpaceLinkTargetListGet, which clears and
+fills BOARD_SPACE_LINKMAX (4) entries. On the console the two extra bytes land in the frame. Clang
+builds the module with /GS, so here they overwrite the stack cookie and the function fails fast
+(0xC0000409, FAST_FAIL_STACK_COOKIE_CHECK_FAILURE) on return: seed 5 stopped in turn 2 (P1-17,
+docs/titles/mp4.md section 21). The list now has BOARD_SPACE_LINKMAX entries, as the board's other
+caller (the coaster's player path, linkTbl[4]) already has. Only linkTbl[0] is read, so the game
+behaves as on the console.
+
+diff --git a/src/REL/w01Dll/main.c b/src/REL/w01Dll/main.c
+index 79dbbf2..44e0ebc 100644
+--- a/src/REL/w01Dll/main.c
++++ b/src/REL/w01Dll/main.c
+@@ -725,7 +725,13 @@ static void CoasterPathUpdate(void)
+     float time;
+     s32 spaceId;
+     s32 spaceIdLink;
++#ifdef MPT_PC
++    /* BoardSpaceLinkTargetListGet clears and fills BOARD_SPACE_LINKMAX entries; the console's three
++     * overran into the frame. With /GS the overrun fails the stack cookie (P1-17). */
++    s16 linkTbl[BOARD_SPACE_LINKMAX];
++#else
+     s16 linkTbl[3];
++#endif
+     BoardSpace *space;
+     BoardSpace *spaceLink;
+ 
