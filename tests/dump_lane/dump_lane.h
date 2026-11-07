@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -108,6 +109,109 @@ inline Result verify_fixture(std::span<const std::byte> replay_bytes, std::strin
                            test::describe_divergence(*sidecar, produced));
   }
   return Result::success();
+}
+
+// ---- The --party autopilot (M4-01) -----------------------------------------------------------
+//
+// A scripted party on one human seat: player 1's pad is a pure function of the frame, the Director's
+// phase, the running overlay and the frames since the last party change. No clock, no RNG: the same
+// inputs give the same pads, so a recorded run replays exactly.
+
+// What the autopilot keys on. A "party change" is any change of the Director's phase, the running
+// overlay or the turn; `since_change` is the number of frames stepped since the last one.
+struct PartyKey {
+  PartyPhase phase = PartyPhase::none;
+  std::string overlay;  // the running overlay's name, empty before the first
+  std::int32_t turn = 0;
+
+  friend bool operator==(const PartyKey&, const PartyKey&) = default;
+};
+
+// Tracks the frames since the last party change, and is the soft-lock watchdog: stuck() once the key
+// has stayed the same for `limit` frames.
+class PartyChangeTracker {
+ public:
+  explicit PartyChangeTracker(std::uint64_t limit = 36'000) : limit_(limit) {}
+
+  // The key read after stepping frame `frame` (frames increase by one per call).
+  void observe(std::uint64_t frame, const PartyKey& key) {
+    if (!seen_ || key != key_) {
+      key_ = key;
+      changed_at_ = frame;
+      seen_ = true;
+    }
+    last_ = frame;
+  }
+  // Frames stepped since the last change (0 on the frame of the change).
+  std::uint64_t sinceChange() const { return seen_ ? last_ - changed_at_ : 0; }
+  bool stuck() const { return seen_ && sinceChange() >= limit_; }
+  const PartyKey& key() const { return key_; }
+  std::uint64_t changedAt() const { return changed_at_; }
+
+ private:
+  std::uint64_t limit_;
+  PartyKey key_{};
+  bool seen_ = false;
+  std::uint64_t changed_at_ = 0;
+  std::uint64_t last_ = 0;
+};
+
+// The menu script's choices.
+struct PartyScript {
+  // Board index on mentDll's board wheel, by GWSystem.board (BOARD_ID_*). 0 (Toad's Midway Madness)
+  // is the wheel's default and needs no move; any other board is reached by holding left or right
+  // in the wheel's window (below).
+  std::int32_t board = 0;
+  // No input before this frame (the boot logos).
+  std::uint64_t boot_wait = 900;
+  // The wheel's window in mentDll, as frames since mentDll started (measured on seed 1; see
+  // docs/titles/mp4.md section 21). Outside it the autopilot never presses a direction.
+  std::uint64_t wheel_from = 0, wheel_to = 0;
+};
+
+// mentDll's wheel order: position -> GWSystem.board (mentDll main.c, fn_1_99CC); it starts at
+// position 2. Returns the signed number of moves from the default to `board`, or 0 if not listed.
+inline int board_wheel_moves(std::int32_t board) {
+  constexpr std::int32_t kWheel[6] = {1, 2, 0, 3, 4, 5};
+  for (int p = 0; p < 6; ++p)
+    if (kWheel[p] == board) return p - 2;
+  return 0;
+}
+
+// Player 1's pad for the step of `frame`, given the key and frames since its last change as of the
+// step before. The autopilot:
+//   - presses nothing before boot_wait;
+//   - pulses START on the boot/title overlay and on the minigame instruction screen (instDll);
+//   - mashes A (2 frames on, 2 off) while a minigame runs;
+//   - otherwise pulses A (4 frames every 30) on menus, setup, the board and the results;
+//   - on mentDll's board wheel window, holds the direction toward script.board instead.
+inline PadState party_autopilot(const PartyScript& script, std::uint64_t frame, const PartyKey& key,
+                                std::uint64_t since_change) {
+  PadState pad;
+  pad.connected = 1;
+  if (frame < script.boot_wait) return pad;
+  const std::string_view overlay = key.overlay;
+  if (overlay == "bootDll" || overlay == "instDll") {
+    if (since_change >= 60 && since_change % 60 < 6) pad.buttons |= kButtonStart;
+    return pad;
+  }
+  if (key.phase == PartyPhase::minigame) {
+    if (frame % 4 < 2) pad.buttons |= kButtonA;
+    return pad;
+  }
+  if (overlay == "mentDll" && key.phase == PartyPhase::none && script.board != 0 &&
+      since_change >= script.wheel_from && since_change < script.wheel_to) {
+    // One 4-frame direction pulse per 30 frames, one per move: the wheel takes a held direction once
+    // it has been idle for 21 frames, then waits again, so each pulse moves it exactly one board. No A
+    // is pressed in the window.
+    const int moves = board_wheel_moves(script.board);
+    const std::uint64_t in_window = since_change - script.wheel_from;
+    const std::uint64_t pulses = static_cast<std::uint64_t>(moves < 0 ? -moves : moves);
+    if (in_window / 30 < pulses && in_window % 30 < 4) pad.buttons |= moves < 0 ? kButtonDpadLeft : kButtonDpadRight;
+    return pad;
+  }
+  if (since_change >= 30 && since_change % 30 < 4) pad.buttons |= kButtonA;
+  return pad;
 }
 
 }  // namespace mpt::dump_lane
