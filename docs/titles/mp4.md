@@ -964,10 +964,11 @@ The lane prints the module's party read whenever it changes. Seed 1, frames from
 | 12454 | `instDll` | 0x05 | board | the minigame's instruction screen |
 | 12807 | `m401Dll` | 0x05 | minigame | `current_minigame` = `mp4.minigame.manta_rings` |
 
-**One board turn and one minigame, end to end** (null backend; seeds pick the minigame through the roulette). With START timed to each seed's instruction screen, four seeds play their minigame to the end, and each one returns to the board on turn 2/20:
+**One board turn and one minigame, end to end** (null backend; seeds pick the minigame through the roulette). With START timed to each seed's instruction screen, all five seeds play their minigame to the end, and each one returns to the board on turn 2/20 (rerun after patches 0021 and 0022, 22,000 frames each, no halt, fault or fail-fast):
 
 | Seed | Minigame (`current_minigame`) | Minigame frames | Results (`resultDll`) | Back on the board, turn 2 |
 |---|---|---|---|---|
+| 1 | `mp4.minigame.manta_rings` (m401) | 12847–16574 | 16575 | 17072 |
 | 2 | `mp4.minigame.blame_it_on_the_crane` (m424) | 13906–17963 | 17964 | 18451 |
 | 3 | `mp4.minigame.team_treasure_trek` (m429) | 14606–19182 | 19183 | 19551 |
 | 4 | `mp4.minigame.three_throw` (m410) | 14006–16668 | 16669 | 17231 |
@@ -988,14 +989,14 @@ The phase is `board` on the instruction and results screens, and `minigame` with
     - The symbol reader refuses a module with a read-only game data section.
 - **Draw-sync state outside the save state** (`gx/src/sdk_additions.cpp`). The game's draw-sync callback and token were file statics. MP4's performance meter registers its callback at init, so a runtime that loaded a state had none, its stopwatch stopped querying the clock, and the resumed run diverged within 60 frames. The callback and token are now an SDK state region, part of `state_hash` and the deep hash, and cleared at boot. `mpt_dump_lane --save-load-diff N` found it by diffing `debug_hash_items` between the straight and the resumed run.
 - **Build ID inputs.** Adding a file (patch 0020) did not reconfigure the host, so the cached module was reused. The build ID's globs now use `CONFIGURE_DEPENDS`.
+- **Manta Rings crashed loading its model** (Party Board patch 0021). `MaterialLoad` (`hsfload.c`) writes each material's colour to `rgba[i]`, which has 100 entries and is never read. In our module `head` follows `rgba`, so the write for material 107 overwrote `head.material.count` and ended the loop. Materials 107 and up kept their file symbol index as the `attr` pointer, and `MakeDisplayList` faulted on the first face that used one (material 165, `attr` = 0xA5). On the console the extra writes land in a scratch buffer. The writes past `rgba` are now skipped. Four models on the disc have more than 100 materials: Manta Rings (255), Paratrooper Plunge (112), Toad's Quick Draw (122) and Bowser's Bigger Blast (206); all of them were affected.
+- **Seed 5 failed fast in turn 2** (Party Board patch 0022). `CoasterPathUpdate` (`w01Dll`, Toad's Midway Madness) passes a three-entry `s16` list to `BoardSpaceLinkTargetListGet`, which clears and fills `BOARD_SPACE_LINKMAX` (4). The module is built with `/GS`, so the overrun hit the stack cookie and the return failed fast (0xC0000409, `FAST_FAIL_STACK_COOKIE_CHECK_FAILURE`). On the console the two bytes land in the frame. The list now has four entries, as the board's other caller already has. The other callers all leave room for four.
 
-**Conformance on the dump lane.** `mpt_dump_lane --boot mp4 --conformance --frames 1200 --every 60 --press start@900` runs every check in `tests/conformance/conformance.h` against `Mp4Runtime` and `Mp4Adapter` on the real game. It then runs `check_hash_coverage` against the deep hash on a runtime with debug hooks: 6 fixed targets and 64 sampled bytes. **All checks pass** (Windows, null backend), including the save-state round trip after the draw-sync fix, with 70 of 70 coverage targets checked.
+**Conformance on the dump lane.** `mpt_dump_lane --boot mp4 --conformance --frames 1200 --every 60 --press start@900` runs every check in `tests/conformance/conformance.h` against `Mp4Runtime` and `Mp4Adapter` on the real game. It then runs `check_hash_coverage` against the deep hash on a runtime with debug hooks: 6 fixed targets and 64 sampled bytes. **All checks pass** (Windows, null backend), including the save-state round trip after the draw-sync fix, with 70 of 70 coverage targets checked. Rerun after patches 0021 and 0022: 0 problems, 70 of 70.
 
 **Open:**
-- **Manta Rings crashes while loading its model.** The stack is `Hu3DModelCreate` → `MakeDisplayList` → `MDObjCall` (`hsfdraw.c`), reading address `0xa5`. A child pointer in the model's object tree points at a HuMem block header (magic `0xA5`), so the HSF load or its 64-bit conversion left that object's children wrong. To investigate in `byteswap.cpp` and `hsfload.c`.
-- **Seed 5 stops in turn 2** with a fail-fast (0xC0000409) after frame 17112, after Slime Time and its results. To reproduce with the crash report.
 - `TURNS_OVER` and `RESULTS_FINAL` need a full 20-turn party.
-- **Crash reports.** `mpt_dump_lane` prints a module-relative stack on a fatal exception (`crash_report.h`); `llvm-nm -n` on the installed `mp4_game.dll` names the frames.
+- **Crash reports.** `mpt_dump_lane` prints a module-relative stack on a fatal exception and on `abort`, `std::terminate` and CRT invalid-parameter fail-fasts (`crash_report.h`); `llvm-nm -n` on the installed `mp4_game.dll` names the frames. A `/GS` stack-cookie failure skips every in-process hook, so it still ends the run without a report; the seed 5 stack came from running the lane under a debugger.
 
 ## Sections still to fill (P1-18)
 - Spike S1 result and the pinned GX backend version (P1-12). **Reported:** `docs/spikes/s1-gx-backend.md`. Recommendation: aurora GX/MTX on Dawn at `514339438178ef2bed1b14e5149d90ece0c6e0cc`, with a host shim, a null backend and a small patch set. A gate runs at the start of P1-14. Folded into ADR 0007 §6 (Accepted). GX surface measured on Party Board's sources: 131 distinct entry points, 104 implemented by aurora at the pin, one real gap (`GXSetZTexture`, m419), no `GD*` calls.
