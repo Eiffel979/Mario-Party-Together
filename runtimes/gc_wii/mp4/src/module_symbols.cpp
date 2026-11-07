@@ -183,7 +183,7 @@ bool isProbe(std::string_view plain) { return plain.rfind("mpt_layout_probe", 0)
     if (!readAt(f, ph, type) || !readAt(f, ph + 16, vaddr) || !readAt(f, ph + 40, memsz))
       return error = "truncated ELF program headers", false;
     if (type != 1) continue;  // PT_LOAD
-    lo = std::min(lo, vaddr & ~0xFFFull);
+    lo = std::min(lo, vaddr & ~std::uint64_t{0xFFF});  // uint64_t is unsigned long on LP64
     hi = std::max(hi, vaddr + memsz);
   }
   if (hi == 0) return error = "the ELF image has no loadable segment", false;
