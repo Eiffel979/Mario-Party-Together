@@ -139,3 +139,72 @@ TEST_CASE("dump lane: fixtures are found with their sidecars, sorted") {
   CHECK(found[1].name == "b");
   CHECK(dump_lane::find_fixtures(dir).empty());  // a missing directory is not an error
 }
+
+// M4-01: the --party autopilot is a pure function of its inputs, and the watchdog fires only after
+// `limit` frames without a party change.
+TEST_CASE("dump lane: the party change tracker counts frames since a change and is the watchdog") {
+  dump_lane::PartyChangeTracker tracker(100);
+  const dump_lane::PartyKey board{PartyPhase::board, "w01Dll", 3};
+  tracker.observe(0, board);
+  CHECK(tracker.sinceChange() == 0);
+  tracker.observe(99, board);
+  CHECK(tracker.sinceChange() == 99);
+  CHECK_FALSE(tracker.stuck());
+  tracker.observe(100, board);
+  CHECK(tracker.stuck());
+  // Any of phase, overlay or turn resets it.
+  tracker.observe(101, {PartyPhase::board, "w01Dll", 4});
+  CHECK(tracker.changedAt() == 101);
+  CHECK_FALSE(tracker.stuck());
+  tracker.observe(102, {PartyPhase::board, "instDll", 4});
+  CHECK(tracker.changedAt() == 102);
+  tracker.observe(103, {PartyPhase::minigame, "instDll", 4});
+  CHECK(tracker.changedAt() == 103);
+  CHECK(tracker.key().phase == PartyPhase::minigame);
+}
+
+TEST_CASE("dump lane: the party autopilot presses by overlay, phase and frames since a change") {
+  const dump_lane::PartyScript script{};
+  auto pad = [&](std::uint64_t frame, PartyPhase phase, const char* overlay, std::uint64_t since) {
+    return dump_lane::party_autopilot(script, frame, {phase, overlay, 0}, since);
+  };
+  // Connected on every frame, silent during the boot logos.
+  CHECK(pad(0, PartyPhase::none, "bootDll", 0).connected == 1);
+  for (std::uint64_t f = 0; f < script.boot_wait; ++f) CHECK(pad(f, PartyPhase::none, "bootDll", f).buttons == 0);
+  // START on the title and the instruction screen, A pulses elsewhere.
+  CHECK(pad(1000, PartyPhase::none, "bootDll", 60).buttons == kButtonStart);
+  CHECK(pad(20000, PartyPhase::board, "instDll", 120).buttons == kButtonStart);
+  CHECK(pad(20000, PartyPhase::board, "instDll", 30).buttons == 0);
+  CHECK(pad(20000, PartyPhase::board, "w01Dll", 30).buttons == kButtonA);
+  CHECK(pad(20000, PartyPhase::board, "w01Dll", 34).buttons == 0);
+  CHECK(pad(20000, PartyPhase::board, "w01Dll", 10).buttons == 0);  // not in the first 30 frames
+  // A minigame: the stick held down for 40 of every 120 frames, then A mashed.
+  CHECK(pad(24000, PartyPhase::minigame, "m444dll", 5).stick_y == -32767);
+  CHECK(pad(24000, PartyPhase::minigame, "m444dll", 5).buttons == 0);
+  CHECK(pad(24040, PartyPhase::minigame, "m444dll", 45).buttons == kButtonA);
+  CHECK(pad(24040, PartyPhase::minigame, "m444dll", 45).stick_y == 0);
+  CHECK(pad(24042, PartyPhase::minigame, "m444dll", 47).buttons == 0);
+  // The same inputs give the same pad.
+  CHECK(pad(31337, PartyPhase::minigame, "m401Dll", 7) == pad(31337, PartyPhase::minigame, "m401Dll", 7));
+}
+
+TEST_CASE("dump lane: the party autopilot moves mentDll's board wheel only in its window") {
+  CHECK(dump_lane::board_wheel_moves(0) == 0);  // the default
+  CHECK(dump_lane::board_wheel_moves(1) == -2);
+  CHECK(dump_lane::board_wheel_moves(2) == -1);
+  CHECK(dump_lane::board_wheel_moves(3) == 1);
+  CHECK(dump_lane::board_wheel_moves(5) == 3);
+  dump_lane::PartyScript script{};
+  script.board = 3;
+  script.wheel_from = 500;
+  script.wheel_to = 700;
+  auto pad = [&](std::uint64_t since) {
+    return dump_lane::party_autopilot(script, 5000 + since, {PartyPhase::none, "mentDll", 0}, since);
+  };
+  CHECK(pad(480).buttons == kButtonA);  // before the window: the A pulses
+  CHECK(pad(500).buttons == kButtonDpadRight);
+  CHECK(pad(504).buttons == 0);
+  CHECK(pad(530).buttons == 0);  // one move only
+  CHECK(pad(690).buttons == 0);  // no A inside the window
+  CHECK(pad(720).buttons == kButtonA);
+}
