@@ -297,6 +297,14 @@ The user delegated the choice of MP4 game source. These follow from P1-01 and ar
 | A5 | **Save media:** a stable card serial, and **synthetic save dates** in Phase 1 (real dates later only as a new determinism input, through an ADR). | ADR 0004 r7–r8 |
 | A6 | **E5 narrowing rule** (in-process if fixed bases fail by M1), **E2 = party-eligible minigames**, MP4 frame rate **60000/1001**. | §4, P1-16, P1-17 |
 
+### M4 rulings (architect, 2026-11-07)
+
+Rulings for M4 (full local party, E1, E2) that need no user input. Letters follow the M4 plan; rulings that wait for the user, or that land with a later M4 item, are not recorded here yet.
+
+| # | Ruling | Affects |
+|---|---|---|
+| M4-A | **No core contract change for M4.** `ITitleRuntime`, `ITitleAdapter` and the Party Director types stay as they are. A full local party runs on the Phase 1 contract: the Director reads phase and current minigame through `readParty`, and per-minigame input profiles hang off the existing `FrameLoopHooks::minigame_changed` hook in the shell. Anything M4 finds that does need a contract change goes through an ADR first (CLAUDE.md rule 3). | `core/`, all M4 items |
+
 ### Local dump locations
 
 Developers keep dumps and any game-source checkout **outside the repo** and point the tools at them through `MPT_DUMP_DIR` (and, for development only, a game-source override directory such as `MPT_MP4_SOURCE_DIR`). Committed files never contain a developer's personal path, and nothing from those directories is ever copied into the repo. Docs use a generic example such as `MPT_DUMP_DIR=D:\path\to\dumps`.
