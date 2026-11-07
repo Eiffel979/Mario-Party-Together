@@ -130,6 +130,14 @@ bool isProbe(std::string_view plain) { return plain.rfind("mpt_layout_probe", 0)
     const SectionKind kind = (ch & 0x20000000u) != 0   ? SectionKind::code
                              : (ch & 0x80000000u) != 0 ? SectionKind::data
                                                        : SectionKind::rodata;
+    // A read-only output section named .data holds a .data$mpt... input section that clang-cl made
+    // read-only (const globals in a data_seg): its writable globals sit outside the game data range.
+    char sname[9] = {};
+    std::memcpy(sname, f.data() + sh + i * 40u, 8);
+    if (std::string_view(sname) == ".data" && kind != SectionKind::data)
+      return error = "a read-only .data section: game globals landed outside the game data range "
+                     "(see src/game_section.h on const_seg)",
+             false;
     sections.push_back({base + va, base + va + vsize, kind});
   }
   const std::uint64_t strtab = symtab + std::uint64_t{nsyms} * 18u;
@@ -207,6 +215,22 @@ bool isProbe(std::string_view plain) { return plain.rfind("mpt_layout_probe", 0)
     }
   }
   if (symoff == 0) return error = "the module image has no .symtab (it must not be stripped)", false;
+  // The game data sections (mptgame, mptrel_<REL>) must be writable, as on COFF above.
+  std::uint16_t shstrndx = 0;
+  std::uint64_t shstroff = 0;
+  readAt(f, 0x3E, shstrndx);
+  if (shstrndx < shnum && readAt(f, shoff + std::uint64_t{shstrndx} * shentsize + 24, shstroff)) {
+    for (std::uint16_t i = 0; i < shnum; ++i) {
+      std::uint32_t name_off = 0;
+      std::uint64_t fl = 0;
+      if (!readAt(f, shoff + std::uint64_t{i} * shentsize, name_off) ||
+          !readAt(f, shoff + std::uint64_t{i} * shentsize + 8, fl) || shstroff + name_off >= f.size())
+        continue;
+      const std::string_view n = reinterpret_cast<const char*>(f.data() + shstroff + name_off);
+      if ((n == "mptgame" || n.rfind("mptrel_", 0) == 0) && (fl & 0x1) == 0)
+        return error = "the game data section " + std::string(n) + " is read-only", false;
+    }
+  }
   std::uint64_t stroff = 0, strsize = 0;
   if (!readAt(f, shoff + strsect * shentsize + 24, stroff) || !readAt(f, shoff + strsect * shentsize + 32, strsize))
     return error = "truncated ELF string table header", false;
