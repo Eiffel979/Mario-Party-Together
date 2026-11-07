@@ -1,0 +1,16 @@
+{
+  "format": "mpt.input_profile",
+  "version": 1,
+  "name": "Fake shell test profile (synthetic)",
+  "title": "mp4",
+  "bindings": {
+    "a": ["key:k"],
+    "b": ["key:j"],
+    "z": ["key:u"]
+  },
+  "minigames": {
+    "mp4.minigame.fake_mash": { "note": "synthetic shell test override", "bindings": { "a": ["key:space"] } },
+    "mp4.minigame.fake_dodge": { "note": "synthetic shell test override", "bindings": { "b": [] } },
+    "mp4.minigame.fake_race": { "note": "synthetic shell test override", "options": { "stick_deadzone_percent": 20 } }
+  }
+}

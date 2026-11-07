@@ -117,6 +117,13 @@ add_test(NAME determinism_cross_process
 add_executable(mpt_shell_fake shell/fake_shell_main.cpp)
 target_link_libraries(mpt_shell_fake PRIVATE mpt::shell_app)
 mpt_set_warnings(mpt_shell_fake)
+# The fake shell looks up input profiles next to its executable, as the real shell does
+# (SdlInput::profile_search_dirs). It gets a synthetic mp4 profile, never the shipped one,
+# so the profile test below does not depend on input/profiles/ content.
+add_custom_command(TARGET mpt_shell_fake POST_BUILD
+  COMMAND "${CMAKE_COMMAND}" -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/shell/profiles"
+          "$<TARGET_FILE_DIR:mpt_shell_fake>/profiles"
+  VERBATIM)
 add_executable(mpt_make_fake_replay shell/make_fake_replay.cpp)
 target_link_libraries(mpt_make_fake_replay PRIVATE mpt::shell_core mpt::asset_import)
 mpt_set_warnings(mpt_make_fake_replay)
@@ -154,6 +161,16 @@ add_test(NAME shell_fake_verify_golden
     "-DUSER_DIR=${MPT_SHELL_USER_DIR}"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/shell/verify_trail.cmake")
 set_tests_properties(shell_fake_verify_golden PROPERTIES FIXTURES_REQUIRED shell_fake_party)
+
+# M4-05: a session loads the title's input profile, and a minigame change selects that
+# profile's override. The whole-party replay enters minigames; the synthetic profile has
+# an override for every fake minigame. (Headless there are no devices, so the mapped
+# frames cannot show the override; input/ tests cover what an override does.)
+add_test(NAME shell_fake_title_profile
+  COMMAND mpt_shell_fake --headless --replay "${MPT_SHELL_TEST_DIR}/party.mptr" --user-dir "${MPT_SHELL_USER_DIR}")
+set_tests_properties(shell_fake_title_profile PROPERTIES
+  FIXTURES_REQUIRED shell_fake_party
+  PASS_REGULAR_EXPRESSION "input: .*profiles.mp4.default\\.json profile.*input: mp4\\.minigame\\.fake_[a-z]+ override.*replay OK")
 
 # The shell must boot, run frames and exit cleanly without a display.
 add_test(NAME shell_headless_smoke COMMAND mpt_shell --headless --frames 120)
