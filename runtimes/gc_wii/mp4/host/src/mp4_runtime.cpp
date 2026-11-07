@@ -237,6 +237,14 @@ std::string Mp4Runtime::debugHashItems() const {
   return out;
 }
 
+std::optional<MptMp4MemoryUse> Mp4Runtime::memoryUse() const {
+  if (game_ == nullptr || api_->struct_size < MPT_MP4_API_SIZE_V1_4 || api_->memory_use == nullptr) return std::nullopt;
+  MptMp4MemoryUse use{};
+  use.struct_size = sizeof use;
+  if (api_->memory_use(game_, &use) != MPT_MP4_OK) return std::nullopt;
+  return use;
+}
+
 bool Mp4Runtime::readParty(MptMp4Party& out) const {
   if (game_ == nullptr) return false;
   out = MptMp4Party{};

@@ -1066,11 +1066,36 @@ void party(const MptMp4Game* game, MptMp4Party* out) {
 
 MptMp4StepResult statusOf(const MptMp4Game* game) { return game ? result(*game) : MPT_MP4_STEP_FAULTED; }
 
+// ABI v1.4: arena use. OSAlloc's allocated blocks are the ranges forEachHashedRamRange reports with
+// data (each block's header and data); the HuMem heaps are among them.
+std::int32_t memoryUse(const MptMp4Game* game, MptMp4MemoryUse* out) {
+  if (game == nullptr || out == nullptr || out->struct_size < MPT_MP4_MEMORY_USE_SIZE_V1_4) return MPT_MP4_ERR_ARGUMENT;
+  const std::uint32_t size = out->struct_size;
+  *out = MptMp4MemoryUse{};
+  out->struct_size = size;
+  out->main_ram = game->sdk->mainRam().size();
+  std::uint64_t used = 0;
+  game->sdk->forEachHashedRamRange([&](const mpt::gc::Sdk::RamRange& r) {
+    if (r.data != nullptr) used += r.bytes.size();
+  });
+  out->osalloc_used = used;
+  const int heaps = std::min<int>(mpt_mp4_heap_count(), static_cast<int>(MPT_MP4_MEMORY_HEAPS));
+  out->heap_count = static_cast<std::uint32_t>(heaps);
+  for (int i = 0; i < heaps; ++i) {
+    std::size_t heap_size = 0, heap_used = 0;
+    mpt_mp4_heap_use(i, &heap_size, &heap_used);
+    out->heap_size[i] = heap_size;
+    out->heap_used[i] = heap_used;
+  }
+  out->aram_used = game->sdk->aramInUse().size();
+  return MPT_MP4_OK;
+}
+
 const MptMp4Api kApi = {
     sizeof(MptMp4Api), MPT_MP4_ABI_VERSION, MPT_MP4_BUILD_ID,
     &create, &destroy, &step, &frame, &fault, &frameRate, &stateHash, &saveState, &loadState, &stateFormat,
     &saveMediaGeneration, &saveMedia, &cardFormat, &video, &audio, &rumble, &setReport, &party, &statusOf,
-    &debugPerturb, &debugDeepHash, &debugHashItems,
+    &debugPerturb, &debugDeepHash, &debugHashItems, &memoryUse,
 };
 
 }  // namespace

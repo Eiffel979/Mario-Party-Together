@@ -54,6 +54,13 @@ int main(int argc, char** argv) {
     CHECK(api->debug_hash_items != NULL && api->debug_hash_items(NULL, NULL, NULL) == MPT_MP4_ERR_ARGUMENT);
     CHECK(api->debug_perturb(NULL, MPT_MP4_PERTURB_SAMPLE | (5u << 8)) == MPT_MP4_ERR_ARGUMENT);
   }
+  CHECK(api->struct_size >= MPT_MP4_API_SIZE_V1_4 && api->memory_use != NULL);
+  {
+    MptMp4MemoryUse use;
+    memset(&use, 0, sizeof use);
+    use.struct_size = sizeof use;
+    CHECK(api->memory_use(NULL, &use) == MPT_MP4_ERR_ARGUMENT);
+  }
   {
     /* A v1.0 table ends at struct_size 160: the host's check rejects it whatever lies past the end
      * (here a copy with a non-NULL status beyond struct_size). */

@@ -279,3 +279,24 @@ void* mpt_mp4_humem_find_stack(void) {
   }
   return NULL;
 }
+
+/* For memory_use (ABI v1.4): each HuMem heap's size and allocated bytes (headers included). Walks the
+ * chain with humem_walk's bounds checks, so a broken chain stops the count instead of the game. */
+static int humem_count_used(struct mpt_humem_block* block, uint32_t offset, void* ctx) {
+  (void)offset;
+  if (block->flag) *(size_t*)ctx += (size_t)block->size;
+  return 0;
+}
+
+int mpt_mp4_heap_use(int heap, size_t* size, size_t* used) {
+  *size = 0;
+  *used = 0;
+  if (heap < 0 || heap >= HEAP_MAX) return 0;
+  unsigned char* base = (unsigned char*)HuMemHeapPtrGet((HeapID)heap);
+  if (base == NULL) return 1;
+  *size = HuMemHeapSizeGet((HeapID)heap);
+  humem_walk(base, *size, humem_count_used, used);
+  return 1;
+}
+
+int mpt_mp4_heap_count(void) { return HEAP_MAX; }
