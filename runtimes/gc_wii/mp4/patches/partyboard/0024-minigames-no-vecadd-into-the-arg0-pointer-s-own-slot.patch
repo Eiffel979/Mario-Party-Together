@@ -1,0 +1,115 @@
+Apply order 0024 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+m402, m405, m429, m432, m441, m450: no VECAdd into the arg0 pointer's own stack slot, on MPT_PC
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+Six minigames share a movement helper, fn_1_1FC4(Vec *arg0, ...), that ends with
+VECAdd((Vec *)&arg0, &sp18, (Vec *)&arg0). Like Goooooooal's hit test (patch 0023), it adds to the
+bytes of the pointer, not to the vector, and writes 12 bytes over the pointer's stack slot. On the
+console that slot and its neighbours are dead when the function returns, so the game is unaffected.
+In the 64-bit module the slot is 8 bytes and /GS checks the frame on return, so the overrun is a
+fail-fast waiting for the right stack layout: patch 0023's fail-fast had the same cause. None of the
+six has failed yet (Slime Time and Team Treasure Trek ran in P1-17 and M4-01). On MPT_PC the call
+is left out, which keeps the console's behaviour: the call never changed *arg0.
+
+diff --git a/src/REL/m402Dll/main.c b/src/REL/m402Dll/main.c
+index badd9d3..5545d87 100644
+--- a/src/REL/m402Dll/main.c
++++ b/src/REL/m402Dll/main.c
+@@ -682,7 +682,12 @@ static void fn_1_1FC4(Vec *arg0, float *arg1, s32 arg2, s32 arg3)
+             var_r30 = 1;
+         }
+     }
++#ifndef MPT_PC
++    /* On MPT_PC this is left out: it adds sp18 to the bytes of the pointer arg0, not to *arg0. On the
++     * console the write lands in a dead stack slot; here it overruns the 8-byte slot, which /GS turns
++     * into a fail-fast (Party Board patch 0024, after Goooooooal's in 0023). */
+     VECAdd((Vec *)&arg0, &sp18, (Vec *)&arg0);
++#endif
+ }
+ 
+ #ifdef __MWERKS__
+diff --git a/src/REL/m405Dll/main.c b/src/REL/m405Dll/main.c
+index 24f4f6b..b9d8b8a 100644
+--- a/src/REL/m405Dll/main.c
++++ b/src/REL/m405Dll/main.c
+@@ -675,7 +675,12 @@ void fn_1_1FC4(Vec *arg0, float *arg1, s32 arg2, s32 arg3)
+             var_r30 = 1;
+         }
+     }
++#ifndef MPT_PC
++    /* On MPT_PC this is left out: it adds sp18 to the bytes of the pointer arg0, not to *arg0. On the
++     * console the write lands in a dead stack slot; here it overruns the 8-byte slot, which /GS turns
++     * into a fail-fast (Party Board patch 0024, after Goooooooal's in 0023). */
+     VECAdd((Vec *)&arg0, &sp18, (Vec *)&arg0);
++#endif
+ }
+ 
+ s32 fn_1_23B4(Vec *arg0)
+diff --git a/src/REL/m429Dll/main.c b/src/REL/m429Dll/main.c
+index 9fb47bd..47c5635 100644
+--- a/src/REL/m429Dll/main.c
++++ b/src/REL/m429Dll/main.c
+@@ -478,7 +478,12 @@ void fn_1_1FC4(Vec *arg0, float *arg1, s32 arg2, s32 arg3)
+             var_r30 = 1;
+         }
+     }
++#ifndef MPT_PC
++    /* On MPT_PC this is left out: it adds sp18 to the bytes of the pointer arg0, not to *arg0. On the
++     * console the write lands in a dead stack slot; here it overruns the 8-byte slot, which /GS turns
++     * into a fail-fast (Party Board patch 0024, after Goooooooal's in 0023). */
+     VECAdd((Vec *)&arg0, &sp18, (Vec *)&arg0);
++#endif
+ }
+ 
+ typedef struct data_1340_sub_struct {
+diff --git a/src/REL/m432Dll/main.c b/src/REL/m432Dll/main.c
+index cfe0450..4a2a8eb 100644
+--- a/src/REL/m432Dll/main.c
++++ b/src/REL/m432Dll/main.c
+@@ -485,7 +485,12 @@ void fn_1_1FC4(Vec *arg0, float *arg1, s32 arg2, s32 arg3)
+             var_r30 = 1;
+         }
+     }
++#ifndef MPT_PC
++    /* On MPT_PC this is left out: it adds sp18 to the bytes of the pointer arg0, not to *arg0. On the
++     * console the write lands in a dead stack slot; here it overruns the 8-byte slot, which /GS turns
++     * into a fail-fast (Party Board patch 0024, after Goooooooal's in 0023). */
+     VECAdd((Vec *)&arg0, &sp18, (Vec *)&arg0);
++#endif
+ }
+ 
+ s16 lbl_1_data_0[8] = { 0, 1, 2, 3, 4, 5, 6, 7 };
+diff --git a/src/REL/m441Dll/main.c b/src/REL/m441Dll/main.c
+index 48c9c8d..c1073f6 100644
+--- a/src/REL/m441Dll/main.c
++++ b/src/REL/m441Dll/main.c
+@@ -482,7 +482,12 @@ void fn_1_1FC4(Vec *arg0, float *arg1, s32 arg2, s32 arg3)
+             var_r30 = 1;
+         }
+     }
++#ifndef MPT_PC
++    /* On MPT_PC this is left out: it adds sp18 to the bytes of the pointer arg0, not to *arg0. On the
++     * console the write lands in a dead stack slot; here it overruns the 8-byte slot, which /GS turns
++     * into a fail-fast (Party Board patch 0024, after Goooooooal's in 0023). */
+     VECAdd((Vec *)&arg0, &sp18, (Vec *)&arg0);
++#endif
+ }
+ 
+ omObjData *lbl_1_bss_4C;
+diff --git a/src/REL/m450Dll/main.c b/src/REL/m450Dll/main.c
+index 39e6d97..e610a3a 100644
+--- a/src/REL/m450Dll/main.c
++++ b/src/REL/m450Dll/main.c
+@@ -494,7 +494,12 @@ void fn_1_1FC4(Vec *arg0, float *arg1, s32 arg2, s32 arg3)
+             var_r30 = 1;
+         }
+     }
++#ifndef MPT_PC
++    /* On MPT_PC this is left out: it adds sp18 to the bytes of the pointer arg0, not to *arg0. On the
++     * console the write lands in a dead stack slot; here it overruns the 8-byte slot, which /GS turns
++     * into a fail-fast (Party Board patch 0024, after Goooooooal's in 0023). */
+     VECAdd((Vec *)&arg0, &sp18, (Vec *)&arg0);
++#endif
+ }
+ 
+ typedef struct UnkData1380Struct {
