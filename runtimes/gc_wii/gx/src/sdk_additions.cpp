@@ -15,9 +15,16 @@
 #include "mpt/gx/renderer.h"
 
 namespace {
-GXDrawSyncCallback s_drawSyncCallback = nullptr;
-u16 s_lastDrawSyncToken = 0;
+// Game-visible (mpt::gx::game_visible_state): saved, hashed and cleared at boot by the title.
+struct GameVisible {
+  GXDrawSyncCallback draw_sync_callback;
+  u64 last_draw_sync_token;  // u16 widened: no padding bytes in the saved and hashed region
+};
+static_assert(sizeof(GameVisible) == 16, "no padding: the region is hashed as words");
+GameVisible s_visible{};
 }  // namespace
+#define s_drawSyncCallback s_visible.draw_sync_callback
+#define s_lastDrawSyncToken s_visible.last_draw_sync_token
 
 extern "C" {
 
@@ -34,7 +41,7 @@ void GXSetDrawSync(u16 token) {
   }
 }
 
-u16 GXReadDrawSync(void) { return s_lastDrawSyncToken; }
+u16 GXReadDrawSync(void) { return static_cast<u16>(s_lastDrawSyncToken); }
 
 void GXWaitDrawDone(void) {}
 void GXResetWriteGatherPipe(void) {}
@@ -111,5 +118,8 @@ void set_object_id_counters(const ObjectIdCounters& counters) {
 }
 
 void set_copy_tex_observer(CopyTexObserver observer) { aurora::gx::g_copyTexObserver = observer; }
+
+std::span<std::byte> game_visible_state() { return {reinterpret_cast<std::byte*>(&s_visible), sizeof s_visible}; }
+void reset_game_visible_state() { s_visible = GameVisible{}; }
 
 }  // namespace mpt::gx

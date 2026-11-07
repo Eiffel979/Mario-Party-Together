@@ -205,6 +205,9 @@ bool boot(MptMp4Game& game, std::optional<mpt::SaveMedia> card, std::string& err
   sc.audio_engine = mpt::gc::MusyxEngine::engine();
   sc.audio_output = game.audio_output;
   sc.state_regions = mpt::gc::MusyxEngine::stateRegions();
+  // The GX front end's game-visible state (the draw-sync callback): saved with the state, cleared here.
+  mpt::gx::reset_game_visible_state();
+  sc.state_regions.push_back(mpt::gx::game_visible_state());
   sc.pointer_id = &modulePointerId;  // stable function and module-data IDs in the SDK's manifest
   for (auto r : gameStateRegions()) sc.state_regions.push_back(r);
 
@@ -462,6 +465,7 @@ std::uint64_t deepHash(const MptMp4Game& game) {
   game.sdk->hashState(h);  // includes the attached sound engine
   mpt_mp4_hash_game(&hashBytes, &h);
   hashMemory(game, h);
+  hashRange(h, mpt::gx::game_visible_state());  // the GX front end's game-visible state, raw
   return h.digest();
 }
 
@@ -722,6 +726,14 @@ std::uint64_t crossPlatformHash(const MptMp4Game& game, const Items* items) {
     mpt::StateHasher p;
     game.sdk->hashState(p);  // the SDK and the sound engine by value; module pointers by symbol
     part("sdk", p.digest());
+  }
+  {
+    // The GX front end's game-visible state: a callback (by symbol) and a token, as canonical words.
+    mpt::StateHasher p;
+    CanonSink sink{&p, &c};
+    const std::span<std::byte> gx = mpt::gx::game_visible_state();
+    canonFields(&sink, gx.data(), gx.size());
+    part("gx", p.digest());
   }
   // GWPlayerCfg, GWPlayer, GWSystem and GWGameStat are not hashed here as raw structs: they hold
   // bitfields, whose layout and padding the MSVC and Itanium ABIs may lay out differently. The symbol
