@@ -178,6 +178,9 @@ TEST_CASE("dump lane: the party autopilot presses by overlay, phase and frames s
   CHECK(pad(20000, PartyPhase::board, "w01Dll", 30).buttons == kButtonA);
   CHECK(pad(20000, PartyPhase::board, "w01Dll", 34).buttons == 0);
   CHECK(pad(20000, PartyPhase::board, "w01Dll", 10).buttons == 0);  // not in the first 30 frames
+  // mstory3Dll: A on the bonus stars, START once finished (A there opens the records view).
+  CHECK(pad(250000, PartyPhase::results, "mstory3Dll", 60).buttons == kButtonA);
+  CHECK(pad(250850, PartyPhase::finished, "mstory3Dll", 60).buttons == kButtonStart);
   // A minigame: the stick held down for 40 of every 120 frames, then A mashed.
   CHECK(pad(24000, PartyPhase::minigame, "m444dll", 5).stick_y == -32767);
   CHECK(pad(24000, PartyPhase::minigame, "m444dll", 5).buttons == 0);

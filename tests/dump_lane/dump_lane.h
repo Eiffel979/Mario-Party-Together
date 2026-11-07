@@ -188,7 +188,8 @@ inline int board_wheel_moves(std::int32_t board) {
 // Player 1's pad for the step of `frame`, given the key and frames since its last change as of the
 // step before. The autopilot:
 //   - presses nothing before boot_wait;
-//   - pulses START on the boot/title overlay and on the minigame instruction screen (instDll);
+//   - pulses START on the boot/title overlay, on the minigame instruction screen (instDll) and on the
+//     final ranking;
 //   - in a minigame, repeats a 120-frame cycle: 40 frames of the stick held down, then A mashed (2
 //     frames on, 2 off) with the stick released. Mashing alone soft-locks a human seat in Reversal of
 //     Fortune (m444), whose plunger only fires once the stick has pulled it back;
@@ -200,7 +201,9 @@ inline PadState party_autopilot(const PartyScript& script, std::uint64_t frame, 
   pad.connected = 1;
   if (frame < script.boot_wait) return pad;
   const std::string_view overlay = key.overlay;
-  if (overlay == "bootDll" || overlay == "instDll") {
+  // START also leaves the final ranking (mstory3Dll, once finished): A there opens the records view,
+  // which only B leaves.
+  if (overlay == "bootDll" || overlay == "instDll" || (overlay == "mstory3Dll" && key.phase == PartyPhase::finished)) {
     if (since_change >= 60 && since_change % 60 < 6) pad.buttons |= kButtonStart;
     return pad;
   }

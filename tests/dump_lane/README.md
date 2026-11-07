@@ -101,7 +101,7 @@ mpt_dump_lane --boot mp4 --verify-replay FILE
 - `--party` plays a whole party through a `Session` on an autopilot (`party_autopilot` in
   `dump_lane.h`): player 1's pad is a pure function of the frame, the Director's phase, the running
   overlay and the frames since the last party change (phase, overlay or turn). It pulses START on
-  the title and on the instruction screen, pulls the stick and mashes A in minigames, and pulses A
+  the title, on the instruction screen and on the final ranking, pulls the stick and mashes A in minigames, and pulses A
   everywhere else. The default menu choices give Toad's Midway Madness, 20 turns, player 1 human
   and three COM players (mentDll asks for at least one human player).
 - The oracle is `Session::director()`: exit 0 only once its phase is `finished`. The run fails on a
