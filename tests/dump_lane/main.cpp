@@ -509,7 +509,10 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
   struct Peak {
     std::uint64_t bytes = 0, frame = 0;
     void take(std::uint64_t b, std::uint64_t f) {
-      if (b > bytes) bytes = b, frame = f;
+      if (b > bytes) {
+        bytes = b;
+        frame = f;
+      }
     }
   };
   Peak peak_osalloc, peak_aram;
