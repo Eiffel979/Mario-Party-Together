@@ -90,6 +90,35 @@ mpt_dump_lane --boot <title> [--frames N] [--every N] [--seed S] [--perturb]
   (with `--capture-every N`, only checkpoints whose frame is a multiple of N; make N a multiple of `--every`). Captures are your own game's output: **never
   commit them**.
 
+## Party mode (M4, MP4)
+
+```
+mpt_dump_lane --boot mp4 --party [--seed S] [--frames N] [--every N] [--watchdog N] [--replay FILE]
+              [--party-board N --party-wheel FROM:TO]
+mpt_dump_lane --boot mp4 --verify-replay FILE
+```
+
+- `--party` plays a whole party through a `Session` on an autopilot (`party_autopilot` in
+  `dump_lane.h`): player 1's pad is a pure function of the frame, the Director's phase, the running
+  overlay and the frames since the last party change (phase, overlay or turn). It pulses START on
+  the title and on the instruction screen, pulls the stick and mashes A in minigames, and pulses A
+  everywhere else. The default menu choices give Toad's Midway Madness, 20 turns, player 1 human
+  and three COM players (mentDll asks for at least one human player).
+- The oracle is `Session::director()`: exit 0 only once its phase is `finished`. The run fails on a
+  halt or fault, on a soft lock (`--watchdog`, default 36,000 frames with no party change) or when
+  `--frames` (default 1,000,000) runs out.
+- It prints the Director's events, the raw party read whenever it changes, the peak arena use (ABI
+  v1.4 `memory_use`, sampled at every checkpoint) and the save and load times at the end.
+- `--replay FILE` writes the run as an `.mptr` with blank media and a checkpoint every `--every`
+  frames. `--verify-replay FILE` plays one back on a fresh `Session` and checks every checkpoint's
+  state hash and party digest. Run it in a separate process for the E3 check. Replays of your own
+  runs stay outside the repository unless they are fixtures (below).
+- `--party-board N` picks another board on mentDll's wheel, inside the `--party-wheel` window
+  (frames since mentDll started). Only the default board has been validated.
+- Diagnosis: `--party-save-at N FILE` saves the state before frame N, and `--party-resume FILE`
+  goes on from it (no replay, not evidence). State files hold game memory: keep them outside the
+  repository.
+
 ## Paths outside the repository
 
 The lane refuses to start if any of these lies inside the repository (`path_guard.h`, tested by
@@ -99,6 +128,7 @@ The lane refuses to start if any of these lies inside the repository (`path_guar
 |---|---|---|
 | `MPT_DUMP_DIR` | your dumps | required |
 | `--capture DIR` | frame captures | off |
+| `--replay FILE`, `--party-save-at N FILE` | a party's replay, a diagnostic state | off |
 | `MPT_BUILD_CACHE` | the extracted disc and the built game module | `<MPT_DUMP_DIR>/mpt-build-cache` |
 | `MPT_SOURCE_CACHE` | pinned source checkouts (`<name>/<commit>`), used instead of fetching | off |
 
