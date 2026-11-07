@@ -964,6 +964,17 @@ The lane prints the module's party read whenever it changes. Seed 1, frames from
 | 12454 | `instDll` | 0x05 | board | the minigame's instruction screen |
 | 12807 | `m401Dll` | 0x05 | minigame | `current_minigame` = `mp4.minigame.manta_rings` |
 
+**One board turn and one minigame, end to end** (null backend; seeds pick the minigame through the roulette). With START timed to each seed's instruction screen, four seeds play their minigame to the end, and each one returns to the board on turn 2/20:
+
+| Seed | Minigame (`current_minigame`) | Minigame frames | Results (`resultDll`) | Back on the board, turn 2 |
+|---|---|---|---|---|
+| 2 | `mp4.minigame.blame_it_on_the_crane` (m424) | 13906–17963 | 17964 | 18451 |
+| 3 | `mp4.minigame.team_treasure_trek` (m429) | 14606–19182 | 19183 | 19551 |
+| 4 | `mp4.minigame.three_throw` (m410) | 14006–16668 | 16669 | 17231 |
+| 5 | `mp4.minigame.slime_time` (m402) | 13607–16587 | 16588 | 17112 |
+
+The phase is `board` on the instruction and results screens, and `minigame` with the right ID while the minigame runs. Seed 4 was also captured with the Dawn backend: frames of the party start, the first turn, Three Throw and its results. The captures stay in the developer's scratch directory, never in the repository.
+
 **Found and fixed on the way:**
 - **Mode select hang** (Party Board patch 0020). After a card is picked, `modesel.c` waits for the opening movie with `while (!HuTHPEndCheck())`. Party Board starts that movie only under `__MWERKS__`, and stubs `HuTHPEndCheck` to TRUE in its own port. We build the original `thpmain.c`, where it stays FALSE while no movie has frames, so every mode hung on a star field. With no movie process, `HuTHPEndCheck` now answers TRUE.
 - **Game globals in a read-only section** (`src/game_section.h`, `tools/MptMp4Rel.cmake`):
@@ -982,6 +993,7 @@ The lane prints the module's party read whenever it changes. Seed 1, frames from
 
 **Open:**
 - **Manta Rings crashes while loading its model.** The stack is `Hu3DModelCreate` → `MakeDisplayList` → `MDObjCall` (`hsfdraw.c`), reading address `0xa5`. A child pointer in the model's object tree points at a HuMem block header (magic `0xA5`), so the HSF load or its 64-bit conversion left that object's children wrong. To investigate in `byteswap.cpp` and `hsfload.c`.
+- **Seed 5 stops in turn 2** with a fail-fast (0xC0000409) after frame 17112, after Slime Time and its results. To reproduce with the crash report.
 - `TURNS_OVER` and `RESULTS_FINAL` need a full 20-turn party.
 - **Crash reports.** `mpt_dump_lane` prints a module-relative stack on a fatal exception (`crash_report.h`); `llvm-nm -n` on the installed `mp4_game.dll` names the frames.
 
