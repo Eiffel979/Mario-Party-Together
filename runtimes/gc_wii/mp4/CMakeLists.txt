@@ -273,9 +273,9 @@ mpt_mp4_link_symtab(mp4_game)      # tools/MptMp4ModuleSymbols.cmake
 # The state hash names the module's globals and functions by symbol (src/module_symbols.cpp, ADR 0008
 # amendment after P1-16), so the image keeps a symbol table: /DEBUG:SYMTAB writes lld-link's COFF table
 # (next to the PDB, outside every mapped section, so the layout does not change); ELF keeps .symtab
-# unless stripped. No identical-code folding: folded functions would share one name per platform.
+# unless stripped. No identical-code folding and no incremental link: mpt_mp4_fixed_base_link above.
 if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-  target_link_options(mp4_game PRIVATE /errorlimit:0 /OPT:NOICF)
+  target_link_options(mp4_game PRIVATE /errorlimit:0)
 else()
   # Export only mpt_mp4_get_api, as the dllexport does on Windows. The objects are PIE (the distro
   # Clang default), not PIC: they reach the module's own globals PC-relative. In a -shared link lld
