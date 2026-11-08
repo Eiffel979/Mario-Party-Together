@@ -17,4 +17,8 @@
 #else
 #pragma clang section data="mptgame"
 #endif
+/* The layout probe (src/layout_probe.c) has no anchor: its own written array keeps its section
+ * writable, and an extra anchor would add a symbol the normal module lacks. */
+#ifndef MPT_MP4_LAYOUT_PROBE_TU
 __attribute__((used)) static volatile unsigned char mpt_rw_anchor = 1;
+#endif

@@ -149,6 +149,10 @@ set_source_files_properties(${GAME_FILES} ${MPT_MP4_MSM_FILES} TARGET_DIRECTORY 
                             PROPERTIES COMPILE_OPTIONS "${MPT_MP4_NOWARN}")
 set_source_files_properties(${MPT_MP4_PORT_FILES} TARGET_DIRECTORY mpt_mp4_dol
                             PROPERTIES COMPILE_OPTIONS "${MPT_MP4_WARN_FLAGS}")
+if(MPT_MP4_LAYOUT_PROBE)
+  set_source_files_properties(src/layout_probe.c TARGET_DIRECTORY mpt_mp4_dol
+                              PROPERTIES COMPILE_DEFINITIONS MPT_MP4_LAYOUT_PROBE_TU)
+endif()
 
 # Party Board port code we reuse unchanged: the 64-bit HSF model-format conversion (P1-15 piece 4).
 # Its only file-scope data is a host container (std::unordered_set sVisitedPtrs, cleared but never
