@@ -1,0 +1,10 @@
+/* ELF export list for mp4_game.so (linked with --version-script in mp4/CMakeLists.txt). The module
+ * exports exactly one symbol, as on Windows where only the dllexport is exported (game_abi.h). Every
+ * other symbol is local, so none can be interposed and lld resolves the PIE objects' PC-relative
+ * references inside the image. */
+{
+  global:
+    mpt_mp4_get_api;
+  local:
+    *;
+};
