@@ -399,16 +399,20 @@ std::uint64_t ModuleSymbols::canonical(std::uintptr_t p, PointerClass* cls) cons
     out = PointerClass::cxx;
     return mix(kTagCxx ^ static_cast<std::uint64_t>(sec->kind));
   }
-  out = PointerClass::symbol;
+  out = sec->kind == SectionKind::code && p != sym->addr ? PointerClass::code_interior : PointerClass::symbol;
   return mix(kTagSymbol ^ mix(sym->id + 0x9E3779B97F4A7C15ull * (p - sym->addr)));
 }
 
 std::string ModuleSymbols::nameAt(std::uintptr_t p) const {
   auto it = std::upper_bound(syms_.begin(), syms_.end(), p,
                              [](std::uintptr_t a, const ModuleSymbol& s) { return a < s.addr; });
-  if (it == syms_.begin()) return {};
+  char off[40];
+  if (it == syms_.begin()) {
+    if (!contains(p)) return {};
+    std::snprintf(off, sizeof off, "<module>+0x%llx", static_cast<unsigned long long>(p - base_));
+    return off;
+  }
   --it;
-  char off[24];
   std::snprintf(off, sizeof off, "+0x%llx", static_cast<unsigned long long>(p - it->addr));
   return it->name + off;
 }

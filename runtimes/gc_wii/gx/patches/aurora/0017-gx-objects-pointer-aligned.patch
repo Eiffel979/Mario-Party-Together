@@ -1,0 +1,41 @@
+Apply order 0017 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc: GXTexObj and GXTlutObj get
+a pointer's alignment on TARGET_PC. Their PC layouts (GXTexObj_, GXTlutObj_) hold pointers, and a u32 array
+is only 4-aligned, so a game struct embedding one at a 4 mod 8 offset stored those pointers misaligned: a
+module address there escaped the state hash's word canonicalization and tied MP4's trail to the module
+layout (docs/titles/mp4.md section 20). Contains code from aurora (MIT; see LICENSE-aurora in this
+folder). Applied in order by runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+
+diff --git a/include/dolphin/gx/GXStruct.h b/include/dolphin/gx/GXStruct.h
+index 3a4e3ec..af49756 100644
+--- a/include/dolphin/gx/GXStruct.h
++++ b/include/dolphin/gx/GXStruct.h
+@@ -61,7 +61,19 @@ typedef struct {
+   u8 a;
+ } GXColor;
+ 
+-typedef struct {
++/* GXTexObj_ and GXTlutObj_ (lib/gfx/texture.hpp) keep pointers in these opaque objects. On a 64-bit
++ * host a u32 array is only 4-aligned, so a game struct that embeds one at a 4 mod 8 offset (MP4's
++ * AnimTexData, after two bools) stored those pointers misaligned. Give them a pointer's alignment. */
++#ifdef TARGET_PC
++#if defined(_MSC_VER) && !defined(__clang__)
++#define AURORA_GX_PTR_ALIGN __declspec(align(8))
++#else
++#define AURORA_GX_PTR_ALIGN __attribute__((aligned(8)))
++#endif
++#else
++#define AURORA_GX_PTR_ALIGN
++#endif
++typedef struct AURORA_GX_PTR_ALIGN {
+ #ifdef TARGET_PC
+   u32 dummy[16];
+ #else
+@@ -69,7 +81,7 @@ typedef struct {
+ #endif
+ } GXTexObj;
+ 
+-typedef struct {
++typedef struct AURORA_GX_PTR_ALIGN {
+ #ifdef TARGET_PC
+   u32 dummy[10];
+ #else

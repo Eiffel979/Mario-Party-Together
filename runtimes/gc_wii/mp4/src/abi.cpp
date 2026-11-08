@@ -495,6 +495,10 @@ std::uint64_t splitmix(std::uint64_t x) {
 struct CanonCounts {
   std::uint64_t arena = 0, module_symbol = 0, module_text = 0, module_cxx = 0, module_unknown = 0;
   std::uint64_t nan32 = 0, nan64 = 0;
+  // Layout hazards, counted but not changed (the hash is unaffected): a code address at a nonzero
+  // offset (most likely an integer pair, which then hashes by a layout-dependent function and offset),
+  // and a module address at 4 mod 8, which no rule sees, so it hashes raw.
+  std::uint64_t module_code_interior = 0, module_misaligned = 0;
   // Where the walk is (a symbol or a range), and what each C++ or unknown module hit pointed at:
   // diagnostics for names that differ between platforms.
   std::string where;
@@ -531,6 +535,12 @@ struct Canon {
       if (counts != nullptr) {
         switch (cls) {
           case mpt::mp4::PointerClass::symbol: ++counts->module_symbol; break;
+          case mpt::mp4::PointerClass::code_interior:
+            ++counts->module_symbol;
+            ++counts->module_code_interior;
+            counts->notes.push_back("code_interior " + counts->where + " -> " +
+                                    symbols->nameAt(static_cast<std::uintptr_t>(w)));
+            break;
           case mpt::mp4::PointerClass::text: ++counts->module_text; break;
           case mpt::mp4::PointerClass::cxx:
             ++counts->module_cxx;
@@ -555,6 +565,21 @@ struct Canon {
     if (hi == 0xFFC0'0000u) hi = kNan32;
     return (std::uint64_t{hi} << 32) | lo;
   }
+  // debug_hash_items only: notes each module address at offset 4 mod 8 in [b, b + n), where the
+  // canonical words (taken from b) cannot see it. counts->where names the range for the note.
+  void noteMisaligned(const std::byte* b, std::size_t n) const {
+    if (counts == nullptr) return;
+    for (std::size_t i = 4; i + 8 <= n; i += 8) {
+      std::uint64_t w;
+      std::memcpy(&w, b + i, 8);
+      if (w - module_lo >= module_size) continue;
+      ++counts->module_misaligned;
+      char off[24];
+      std::snprintf(off, sizeof off, "+0x%zx", i);
+      counts->notes.push_back("misaligned " + counts->where + off + " -> " +
+                              symbols->nameAt(static_cast<std::uintptr_t>(w)));
+    }
+  }
 };
 
 Canon canonFor(const MptMp4Game& game) {
@@ -577,6 +602,7 @@ Canon canonFor(const MptMp4Game& game) {
 
 // A range of untyped memory: its size and its canonical digest.
 void hashCanonRange(mpt::StateHasher& h, std::span<const std::byte> bytes, const Canon& c) {
+  c.noteMisaligned(bytes.data(), bytes.size());
   h.update_u64(bytes.size());
   h.update_u64(mpt::gc::memoryDigestWords(bytes, c));
 }
@@ -639,6 +665,7 @@ std::uint64_t hashGameSymbols(const Canon& c, const Items* items) {
       if (c.counts != nullptr) c.counts->where = "sym " + s.name;
       scratch.resize(static_cast<std::size_t>(s.gap));
       std::memcpy(scratch.data(), reinterpret_cast<const void*>(s.addr), scratch.size());
+      c.noteMisaligned(scratch.data(), scratch.size());
       for (std::size_t k = 0; k + 8 <= scratch.size(); k += 8) {
         std::uint64_t w;
         std::memcpy(&w, scratch.data() + k, 8);
@@ -747,7 +774,8 @@ std::uint64_t crossPlatformHash(const MptMp4Game& game, const Items* items) {
         {"count arena", counts.arena},           {"count module_symbol", counts.module_symbol},
         {"count module_text", counts.module_text}, {"count module_cxx", counts.module_cxx},
         {"count module_unknown", counts.module_unknown}, {"count nan32", counts.nan32},
-        {"count nan64", counts.nan64}};
+        {"count nan64", counts.nan64}, {"count module_code_interior", counts.module_code_interior},
+        {"count module_misaligned", counts.module_misaligned}};
     for (const auto& [name, value] : n) (*items)(name, value, 0);
     for (const std::string& note : counts.notes) (*items)("note " + note, 0, 0);
   }
