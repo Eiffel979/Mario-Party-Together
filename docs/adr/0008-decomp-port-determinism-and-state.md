@@ -378,7 +378,8 @@ So the proposal alone does not fix this hit. On Windows the word would hash raw,
    - **Save states.** States from builds at the old base do not load into the new build. The build fingerprint (§10) already rejects them, so no format rule changes.
 2. **In a code section, only an exact function start is canonicalized.**
    - A module word in a code section becomes a symbol ID only if it equals the address of a **function symbol**: `STT_FUNC` on ELF, or on COFF a symbol whose complex type is `IMAGE_SYM_DTYPE_FUNCTION`. Section symbols, labels and untyped symbols do not count. Neither do layout-probe symbols, which exist only in the ON build.
-   - Every other word in a code section is **hashed raw**. That covers code interiors, padding between functions, and the image header below the first symbol.
+   - Every other word in a code section is **hashed raw**. That covers code interiors, padding between functions, and code below a section's first function symbol.
+   - **C++ symbols follow the same rule in code.** A C++ function start becomes the one C++ value (the `cxx` class, since MSVC and Itanium mangle differently). A word inside a C++ function hashes raw. In data and read-only data the `cxx` rule is unchanged.
    - The rule needs no symbol sizes, so ELF and COFF follow it the same way.
    - **Why it only narrows: game state never legitimately holds a mid-function code address.**
      - Coroutine records hash the **entry** function (`mpt_co_stack_record`), and the saved stack pointer as an offset.
@@ -387,10 +388,13 @@ So the proposal alone does not fix this hit. On Windows the word would hash raw,
      - Callbacks, process entries and overlay hooks are function pointers, so they point at function starts.
 
      A genuine interior code address in hashed memory would be a new kind of state. Hashed raw, it stays deterministic on one platform, and E3c flags it across platforms. That is the right outcome.
-3. **Data and read-only data keep the current rule.** Data pointers legitimately point into an object (an array element, a struct field), and string pointers into a literal, so these sections cannot be narrowed the same way. The base move in point 1 protects them.
+3. **Outside code sections:**
+   - **Data and read-only data keep the current rule.** Data pointers legitimately point into an object (an array element, a struct field), and string pointers into a literal, so these sections cannot be narrowed the same way. The base move in point 1 protects them.
+   - **A module word in no section is hashed raw.** That covers the PE and ELF headers, and any gap between sections. No game state points there. The unknown sentinel that `canonical()` returns today for a word outside every section is dropped, because it merged values that no legitimate pointer produces. The sentinel remains only for a word inside a data or read-only data section with no symbol at or below it.
 4. **Function addresses must be unique, and the same set on both platforms.**
    - Identical code folding (ICF) could merge functions differently under lld-link and ld.lld. That would change which name a start canonicalizes to. It would also change game behaviour wherever the game compares callbacks.
    - The module links with ICF off on both OSes (`/OPT:NOICF`, `--icf=none`), and the build states this explicitly instead of relying on defaults.
+   - **No incremental linking** (`/INCREMENTAL:NO`, stated explicitly next to `/OPT:NOICF`). An incremental link routes function addresses through incremental-link-table thunks, so a stored function pointer would be a thunk address, not a function start. If `link.exe` cannot be held to this, its path in `layout.cmake` is dropped and lld-link becomes the only Windows linker for the module.
 5. **(a) remains the fix for any hit left over.**
    - If E3c or the dump lane still finds a false positive after points 1 and 2, the field gets a typed manifest entry for its allocation site or symbol, as "Fixing failures" says.
    - The untyped rules are never widened.
