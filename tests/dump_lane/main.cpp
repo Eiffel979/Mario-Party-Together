@@ -36,6 +36,7 @@
 #include <optional>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <string>
 #include <variant>
 #include <vector>
@@ -57,6 +58,9 @@
 #endif
 #ifndef MPT_REPO_ROOT
 #error "MPT_REPO_ROOT must point at the repository root"
+#endif
+#ifndef MPT_DUMP_LANE_LAYOUT_PROBE
+#define MPT_DUMP_LANE_LAYOUT_PROBE "none"  // no MP4 runtime in this build
 #endif
 #ifndef MPT_KNOWN_DUMPS_JSON
 #error "MPT_KNOWN_DUMPS_JSON must point at asset-import/known_dumps.json"
@@ -104,6 +108,7 @@ struct BootOptions {
   bool perturb = false;
   std::uint32_t perturb_samples = 32;  // sampled bytes per checkpoint with --perturb
   std::filesystem::path hash_items;    // --hash-items FILE: state_hash's parts at the last checkpoint
+  bool note_module_hits = false;       // --note-module-hits: with --hash-items, a note per module hit
   bool conformance = false;            // --conformance: the runtime conformance suite instead of a boot run
   std::uint64_t save_load_diff = 0;    // --save-load-diff N: where a resumed run first differs, by hash item
   // M2: scripted input on player 1 and frame captures.
@@ -442,6 +447,55 @@ bool write_bytes(const std::filesystem::path& path, std::span<const std::byte> b
   return static_cast<bool>(out);
 }
 
+// `--party --hash-items FILE`: debug_hash_items at every checkpoint. FILE holds the last checkpoint's
+// list, as in the boot mode. Over the whole run, each "count <rule>" is summed and its largest value
+// kept, and every distinct "note" line is kept with the number of checkpoints it appeared at, written
+// to FILE.notes. The notes name game symbols: both files stay in the directory given.
+struct HashItemTally {
+  std::uint64_t checkpoints = 0;
+  std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> counts;  // rule -> (total, max)
+  std::map<std::string, std::uint64_t> notes;                             // note -> checkpoints
+
+  bool take(const std::filesystem::path& file, const std::string& items) {
+    if (items.empty()) return false;
+    ++checkpoints;
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out.write(items.data(), static_cast<std::streamsize>(items.size()));
+    // Lines are "name size digest"; a name may hold spaces, so size and digest are the last two fields.
+    for (std::size_t from = 0; from < items.size();) {
+      const std::size_t eol = std::min(items.find('\n', from), items.size());
+      const std::string line = items.substr(from, eol - from);
+      from = eol + 1;
+      const std::size_t d = line.rfind(' ');
+      const std::size_t z = d == std::string::npos ? std::string::npos : line.rfind(' ', d - 1);
+      if (z == std::string::npos) continue;
+      const std::string name = line.substr(0, z);
+      if (name.rfind("count ", 0) == 0) {
+        const std::uint64_t n = std::strtoull(line.c_str() + z + 1, nullptr, 10);
+        auto& [total, max] = counts[name.substr(6)];
+        total += n;
+        max = std::max(max, n);
+      } else if (name.rfind("note ", 0) == 0) {
+        ++notes[name.substr(5)];
+      }
+    }
+    return static_cast<bool>(out);
+  }
+
+  bool finish(const std::filesystem::path& file) const {
+    std::printf("dump lane: hash items at %llu checkpoints\n", static_cast<unsigned long long>(checkpoints));
+    for (const auto& [rule, v] : counts)
+      std::printf("dump lane: hash items count %s total %llu max %llu\n", rule.c_str(),
+                  static_cast<unsigned long long>(v.first), static_cast<unsigned long long>(v.second));
+    std::printf("dump lane: hash items %zu distinct notes\n", notes.size());
+    std::filesystem::path path = file;
+    path += ".notes";
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    for (const auto& [note, n] : notes) out << n << ' ' << note << '\n';
+    return static_cast<bool>(out);
+  }
+};
+
 // `--party` (M4-01): a whole party on the autopilot, through a Session, recorded as an .mptr with blank
 // media. The oracle is Session::director(): the run passes once its phase is `finished`. It fails on
 // a halt or fault, on a soft lock (no change of phase, overlay or turn for --watchdog frames) or when
@@ -456,7 +510,29 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
     std::printf("dump lane: replay header: %s\n", failure->error().c_str());
     return 1;
   }
-  auto started = mpt::Session::start(registry, config);
+  // --hash-items needs MPT_MP4_BOOT_DEBUG_HOOKS, which is set before boot: the Session creates the
+  // runtime, so it gets a registry whose MP4 runtime has the hooks on. They are never hashed, so the
+  // trail is the same as without them.
+  mpt::TitleRegistry hooked;
+  const bool items_wanted = !options.hash_items.empty();
+  if (items_wanted) {
+    const mpt::Result added = hooked.add(
+        mpt::TitleId::mp4,
+        [&registry, &options]() {
+          std::unique_ptr<mpt::ITitleRuntime> r = registry.createRuntime(mpt::TitleId::mp4);
+          if (auto* m = dynamic_cast<mpt::mp4::Mp4Runtime*>(r.get())) {
+            m->setDebugHooks(true);
+            m->setNoteModuleHits(options.note_module_hits);
+          }
+          return r;
+        },
+        [&registry](mpt::ITitleRuntime& r) { return registry.createAdapter(mpt::TitleId::mp4, r); });
+    if (!added) {
+      std::printf("dump lane: %s\n", added.error().c_str());
+      return 1;
+    }
+  }
+  auto started = mpt::Session::start(items_wanted ? hooked : registry, config);
   if (mpt::Result* failure = std::get_if<mpt::Result>(&started)) {
     std::printf("dump lane: session: %s\n", failure->error().c_str());
     return 1;
@@ -464,6 +540,7 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
   std::unique_ptr<mpt::Session>& session = std::get<std::unique_ptr<mpt::Session>>(started);
   auto* mp4 = dynamic_cast<mpt::mp4::Mp4Runtime*>(&session->runtime());
   if (mp4 != nullptr) mp4->setReportSink(&print_report, nullptr);
+  HashItemTally tally;
   std::printf("dump lane: party autopilot, seed %llu, board %d, watchdog %llu frames\n",
               static_cast<unsigned long long>(options.seed), options.script.board,
               static_cast<unsigned long long>(options.watchdog));
@@ -575,6 +652,10 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
       if ((f + 1) % (interval * 100) == 0)
         std::printf("frame %llu hash %016llx\n", static_cast<unsigned long long>(f + 1),
                     static_cast<unsigned long long>(hash));
+      if (items_wanted && mp4 != nullptr && !tally.take(options.hash_items, mp4->debugHashItems())) {
+        failure = "could not write the hash items";
+        break;
+      }
     }
     if (party.phase == mpt::PartyPhase::finished && !finished_at) {
       finished_at = f + 1;
@@ -596,6 +677,7 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
     std::printf("dump lane: stateHash %.0f us per call (mean of %llu)\n",
                 std::chrono::duration<double, std::micro>(hash_time).count() / static_cast<double>(hash_calls),
                 static_cast<unsigned long long>(hash_calls));
+  if (items_wanted && !tally.finish(options.hash_items) && failure.empty()) failure = "could not write the hash notes";
 
   if (last_use) {
     const auto mib = [](std::uint64_t b) { return static_cast<double>(b) / (1024.0 * 1024.0); };
@@ -757,7 +839,10 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir) {
   auto* mp4 = dynamic_cast<mpt::mp4::Mp4Runtime*>(runtime.get());
   if (mp4 != nullptr) mp4->setReportSink(&print_report, nullptr);
   // debug_perturb, debug_deep_hash and debug_hash_items need MPT_MP4_BOOT_DEBUG_HOOKS.
-  if (mp4 != nullptr) mp4->setDebugHooks(options.perturb || !options.hash_items.empty());
+  if (mp4 != nullptr) {
+    mp4->setDebugHooks(options.perturb || !options.hash_items.empty());
+    mp4->setNoteModuleHits(options.note_module_hits);
+  }
 #endif
   mpt::RuntimeConfig config;
   config.seed = options.seed;
@@ -907,6 +992,13 @@ int main(int argc, char** argv) {
       boot_options.conformance = true;
     } else if (arg == "--hash-items" && has_value) {
       boot_options.hash_items = argv[++i];
+    } else if (arg == "--layout-probe") {
+      // The layout probe mode of the MP4 module this lane's recipe builds (MPT_MP4_RECIPE_LAYOUT_PROBE),
+      // for layout_perturbation.cmake to check its two lanes. Needs no dump.
+      std::printf("dump lane: layout probe %s\n", MPT_DUMP_LANE_LAYOUT_PROBE);
+      return 0;
+    } else if (arg == "--note-module-hits") {
+      boot_options.note_module_hits = true;
     } else if (arg == "--perturb-samples" && has_value) {
       boot_options.perturb_samples = static_cast<std::uint32_t>(std::strtoul(argv[++i], nullptr, 10));
     } else if (arg == "--press" && has_value) {
@@ -951,11 +1043,13 @@ int main(int argc, char** argv) {
       boot_options.capture_every = std::strtoull(argv[++i], nullptr, 10);
     } else {
       std::printf("usage: mpt_dump_lane [--boot <title> [--frames N] [--every N] [--seed S] [--perturb [--perturb-samples N]]\n"
-                  "                     [--hash-items FILE] [--conformance] [--save-load-diff N]\n"
+                  "                     [--hash-items FILE [--note-module-hits]] [--conformance] [--save-load-diff N]\n"
                   "                     [--press button@frame[+frames][,...]]... [--capture DIR [--capture-every N]]\n"
                   "                     [--party [--party-board N] [--party-wheel FROM:TO] [--watchdog N] [--replay FILE]\n"
+                  "                              [--hash-items FILE [--note-module-hits]]\n"
                   "                              [--party-save-at N FILE] [--party-resume FILE]]\n"
-                  "                     [--verify-replay FILE]]\n");
+                  "                     [--verify-replay FILE]]\n"
+                  "       mpt_dump_lane --layout-probe\n");
       return 2;
     }
   }

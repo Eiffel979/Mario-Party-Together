@@ -49,6 +49,9 @@ class Mp4Runtime final : public ITitleRuntime {
   // need (PR #48).
   // Not a determinism input and never in a save state. Call before boot().
   void setDebugHooks(bool on) { debug_hooks_ = on; }
+  // Test only: with debug hooks, debugHashItems also notes every module word the state hash meets
+  // (MPT_MP4_BOOT_DEBUG_NOTE_MODULE_HITS), not only the hazards. Call before boot().
+  void setNoteModuleHits(bool on) { note_module_hits_ = on; }
 
   // Test only (E4 hash coverage, ABI v1.2 debug_perturb): flips one byte of a memory class
   // (MptMp4PerturbTarget); the same call again restores it. Between frames only. False if the
@@ -77,8 +80,9 @@ class Mp4Runtime final : public ITitleRuntime {
   void updateHealth(MptMp4StepResult result);
 
   const MptMp4Api* api_ = nullptr;
-  bool holds_module_ = false;
-  bool debug_hooks_ = false;  // setDebugHooks  // one hold on the loaded module (module_loader.h)
+  bool holds_module_ = false;  // one hold on the loaded module (module_loader.h)
+  bool debug_hooks_ = false;       // setDebugHooks
+  bool note_module_hits_ = false;  // setNoteModuleHits
   MptMp4Game* game_ = nullptr;
   RuntimeHealth health_{};
   void (*report_)(void*, const char*) = nullptr;
