@@ -763,6 +763,7 @@ So a minigame is covered on both devices unless it needs something a key cannot 
   - v1.1 appends `status`. The loader requires it (`mpt_mp4_api_has_v1_1`), and `mp4_game_abi` checks that a 160-byte v1.0 table is rejected.
   - v1.2 appends `debug_perturb`, a test-only hook for the hash coverage proof (accepted in PR #48). It acts only on a game created with the unhashed boot flag `MPT_MP4_BOOT_DEBUG_HOOKS`; without it, it returns `MPT_MP4_ERR_ARGUMENT` and changes nothing. `Mp4Runtime::setDebugHooks` sets the flag (the dump lane's `--perturb` does), and `debugPerturb` uses the entry only when the table is at least 176 bytes. A dump-lane run without `--perturb` checks on the real game that the module refuses.
   - v1.3 appends `debug_deep_hash`, the deep hash of ADR 0008 §9: P1-16's raw-memory hash, kept for bisecting desyncs on one machine and build and as the E4 coverage oracle (amendment after P1-16 hash coverage). Same flag and refusal as `debug_perturb`: without `MPT_MP4_BOOT_DEBUG_HOOKS` it returns `MPT_MP4_ERR_ARGUMENT` and computes nothing. `Mp4Runtime::debugDeepHash` uses it only when the table is at least 192 bytes. v1.3 also appends `debug_hash_items`, which lists every part of `state_hash` with its digest (below), and the perturbation target `MPT_MP4_PERTURB_SAMPLE`. The hooks-off dump-lane check covers both entries.
+  - v1.4 appends `memory_use` (M4-01), which reports the arena use between steps: OSAlloc's allocated blocks, each HuMem heap's size and allocated bytes, and ARAM in use. Like `party`, it only reads, and it needs no debug hooks. `Mp4Runtime::memoryUse` uses it only when the table is at least 200 bytes. The dump lane's `--party` samples it at every checkpoint for the peak arena use.
 - `SaveState::format_version` is the module's `state_format()`.
 - If the module was built with the null GX backend, `create` returns `MPT_MP4_ERR_BACKEND` for a GPU request and `boot()` retries with null video. The host keys on that status code, never on the error text (#49 review).
 
@@ -821,7 +822,12 @@ The `armem.c` loops would never see their callback under the default mode, so MP
 - **Save states.** They record the arena layout (main RAM, ARAM, total), and `load_state` rejects a mismatch.
 - **Hardware getters.** `OSGetPhysicalMemSize` and `OSGetConsoleSimulatedMemSize` still answer 24 MiB. `init.c` only prints them; its `meminfo.bin` path is not on the disc.
 - **Failures.** An OSAlloc failure is a deterministic fault (`SdkConfig::fault_on_alloc_failure`).
-- **Still to measure.** The sizing rule is the smallest multiple of 8 MiB that covers the heaps plus the SDK's fixed allocations, with at least 10% margin. Peak arena use over the full-party replay with music playing, and save and load times, are **still to be measured** on the dump lane. The size is confirmed or reduced from that measurement.
+- **Measured (M4-01).** The sizing rule is the smallest multiple of 8 MiB that covers the heaps plus the SDK's fixed allocations, with at least 10% margin. The seed 1 party in §21 (250,800 frames, null backend, music on) measured, at checkpoints every 60 frames (ABI v1.4 `memory_use`):
+  - OSAlloc: 110.82 of 112 MiB allocated from frame 60 on. `HuMemInitAll` hands the five heaps everything, and the SDK's own blocks are 1.00 MiB.
+  - Peak use inside each heap: SYSTEM 2.36 of 9 MiB (26%), MUSIC 19.75 of 21 MiB (94%, from frame 60), DATA 19.09 of 42 MiB (45%), DVD 4.99 of 22 MiB (23%), MISC 0 of 15.82 MiB (the remainder heap is never used).
+  - ARAM in use: 0.02 MiB (MusyX keeps its samples in msm's heap on PC, patch 0018).
+  - The heaps' peaks add up to 46.2 MiB. Every heap except MUSIC has at least half its size free, and MUSIC's 94% is msm's fixed heap, allocated at boot. So the sizes stand; any reduction would shrink DATA, DVD or MISC, which needs a Party Board change to `malloc.c`, and is left for the M5 performance work.
+  - Save and load at the end of the party: a 148,974,061-byte state, saved in 178–303 ms and loaded in 13–32 ms (two runs).
 
 **MusyX's PC sample store (Party Board patch 0018).** MusyX's PC renderer keeps every resident sample in msm's heap (through `salMalloc`, `aramStoreData`), where the console kept them in the 16 MB ARAM. It also keeps decoded copies of each pushed group's project, pool and 64-bit sample directory there. The first boots failed `sndPushGroup` with "pool out of memory". Patch 0018 grows HEAP_MUSIC by 16 MB and makes msm's heap three times the console's size plus 16 MB.
 
@@ -931,7 +937,7 @@ The #49 review moved libco's stack high-water statics out of the range as well.
 
 **Still open in P1-16:**
 - **Linux: built, run and diffed (E3c).** The module has never been built on Linux, and this machine has neither Linux nor WSL. No MP4 golden trail is committed until Windows and Linux match on the full-party replay (ADR 0008 amendment, point 3). Two ways to get there, both of them without the dump ever going on CI infrastructure (D4):
-  - **A CI job, without a dump.** A Linux job that configures `MPT_BUILD_MP4_GAME_MODULE=ON` from the pinned sources (compile-only, as on Windows) proves that the module builds and links on Linux. It also shows that the ELF section markers (`__start_`/`__stop_`), lld `--image-base` and `.symtab` are in place, and it runs `mp4_game_abi`, `mp4_rel_isolation` and the host tests. It cannot run the game.
+  - **A CI job, without a dump.** A Linux job that configures `MPT_BUILD_MP4_GAME_MODULE=ON` from the pinned sources (compile-only, as on Windows) proves that the module builds and links on Linux. It also shows that the ELF section markers (`__start_`/`__stop_`), lld `--image-base` and `.symtab` are in place, and it runs `mp4_rel_isolation` and the host tests. It excludes `mp4_game_abi`, which loads the module: ADR 0009 allows no CI test that runs the module (the M4-12 job builds the module and leaves that test out). It cannot run the game.
   - **A Linux machine with the user's own dump.** For example a native Linux install, or WSL2 if the user enables it. Clang, lld, CMake and Ninja are needed, and `mpt_dump_lane` must be built from this branch. The runs to make:
     - `mpt_dump_lane --boot mp4 --frames 10000 --every 100 --seed 1 --hash-items <dir>/items_linux.txt`, plus `--perturb`;
     - the same run on Windows, then a diff of the two trails and the two item files.
@@ -994,8 +1000,85 @@ The phase is `board` on the instruction and results screens, and `minigame` with
 
 **Conformance on the dump lane.** `mpt_dump_lane --boot mp4 --conformance --frames 1200 --every 60 --press start@900` runs every check in `tests/conformance/conformance.h` against `Mp4Runtime` and `Mp4Adapter` on the real game. It then runs `check_hash_coverage` against the deep hash on a runtime with debug hooks: 6 fixed targets and 64 sampled bytes. **All checks pass** (Windows, null backend), including the save-state round trip after the draw-sync fix, with 70 of 70 coverage targets checked. Rerun after patches 0021 and 0022: 0 problems, 70 of 70.
 
+### M4-01: a whole party on an autopilot (`m4-01-party-autopilot`)
+
+**The autopilot.** `mpt_dump_lane --boot mp4 --party` plays a party through a `Session` (`tests/dump_lane/README.md`). Player 1's pad is a pure function of the frame, the Director's phase, the running overlay and the frames since the last change of phase, overlay or turn (`party_autopilot`, `dump_lane.h`, unit-tested):
+- START pulses on bootDll, instDll and (once `finished`) the final ranking, A pulses everywhere else, and in minigames a 120-frame cycle of 40 frames with the stick held down, then mashed A. A alone soft-locks a human seat in Reversal of Fortune (m444): its plunger only fires after the stick pulls it back.
+- **Seats.** mentDll needs at least one human player: player 0's slot starts human and the others COM (`fn_1_7304` and the player-count screen), so there is no all-COM party. Player 1 is human and driven by the autopilot; three COM players.
+- **Board.** The default choices give Toad's Midway Madness and 20 turns. `--party-board N` holds a direction on mentDll's board wheel (position order 1, 2, 0, 3, 4, 5, starting at 0), but only inside a `--party-wheel` window that is **not measured yet**, so only the default board is validated.
+- **Watchdog.** The run fails if phase, overlay and turn stay unchanged for 36,000 frames. It caught the Reversal of Fortune soft lock.
+- **Oracle.** `Session::director()`: the run exits 0 only once its phase is `finished`, then stops at the next checkpoint.
+
+**The end-of-party flags (fixed).** `TURNS_OVER` and `RESULTS_FINAL` never fired, because a party board never moves `GWSystem.turn` past `max_turn`:
+- On the last turn, `mg_setup.c` sets flag (0,10) before the minigame. When the board comes back from it, `MainFunc` sees the flag and kills the board at once, without `BoardTurnNext`. The board returns to mstory3Dll, which mentDll put in its own history slot (`omOvlHisChg`) when it called the board.
+- mstory3Dll event 0 is the end-of-party board result (the bonus stars). It then switches to event 1, the final ranking, which saves and returns to mode select.
+- The raw reads, seed 1 (turn 20/20 throughout):
+
+| Frame | Overlay | Raw flags before | Raw flags after the fix | Director phase |
+|---|---|---|---|---|
+| 235478 | `m428Dll` | 0x05 | 0x05 | minigame (`cliffhangers`, the last one) |
+| 245699 | `resultDll` | 0x05 | 0x05 | board |
+| 246051 | `w01Dll` (3 frames) | 0x05 | 0x05 | board |
+| 246054 | none (switching) | 0x01 | 0x09 | none before, **results** after |
+| 246055 | `mstory3Dll` event 0 | 0x01 | 0x09 | results (bonus stars) |
+| 250789 | none (switching) | 0x01 | 0x19 | **finished** |
+| 250790 | `mstory3Dll` event 1 | 0x01 | 0x19 | finished (final ranking) |
+
+- **The fix** (`game_reads.c`, through the pure `mpt_mp4_party_flags` in `include/mpt_mp4_party_flags.h`, all from game memory, no latch in the adapter):
+  - The turns are over when `turn > max_turn` (the Extra Room boards' `BoardTurnNext`), or when `turn == max_turn` and no board is in the overlay history, outside mentDll.
+  - The results are final once the turns are over, no board is in the history, and the game is not on mstory3Dll's event 0.
+  - Between two overlays (`omcurovl` is `DLL_NONE`), the overlay the switch is heading to (`omnextovl`, `omnextovlevtno`) stands in for the running one.
+  - `IN_SETUP` still keys on the running overlay. A new party's mentDll, before `BoardSaveInit` resets the turn, is setup, not finished.
+- **Known limit.** Quitting a party from the pause menu during its last turn would also read as turns over: no game state tells it apart from a finished party once the board has left the history.
+- **Tests.** `test_mp4_host.cpp` checks `mpt_mp4_party_flags` on these facts and `snapshot_of` on the raw sequence above, with synthetic structs.
+
+**Found and fixed on the way:**
+- **Goooooooal failed fast in turn 19** (Party Board patch 0023). The game module failed fast with 0xC0000409, which skips the crash report; a minimal local debugger (not in the tree) gave the stack, `__report_gsfailure` ← `m423Dll fn_1_137C4`. Its six hit cases end with `VECAdd((Vec *)&arg3, &sp10, (Vec *)&arg3)`, which adds to the bytes of the pointer `arg3`, not to `*arg3`. On the console those 12 bytes land on a dead 4-byte slot and its neighbours. In the 64-bit module the slot is 8 bytes, so /GS catches the overrun. The call is left out, which keeps the console's behaviour.
+  - It did not fail in every process. One run passed turn 19, and three runs of a later host build failed at the same frame.
+- **The same bug in six minigames** (patch 0024). m402, m405, m429, m432, m441 and m450 share a movement helper (`fn_1_1FC4`) that ends with the same `VECAdd((Vec *)&arg0, ...)`. None has failed yet; the call is left out the same way.
+- **The final ranking crashed about 20,000 frames in** (patch 0025). Party Board left mstory3Dll's `fn_1_16924` without a return ("TODO PC return value"). Its caller leaves the ranking only when it returns non-zero: START from the winner, or 300 frames for a COM winner. In the module it returned 0, so the ranking cycled through the records view, and each round left a window open. A host-side count of `winData` showed one more window in use about every 630 frames. At 32, `HuWinCreate` returned -1 and `HuWinBGTPLvlSet` read a null sprite member (0xC0000005). The function now returns its exit flag.
+
+**Evidence, seed 1, Windows, null backend** (the final module, patches up to 0025; Party Board `98ac07fd1e8f7ab938bbb6fe75789fad99419010`, the decomp is fully matching for GMPE01_00):
+- `mpt_dump_lane --boot mp4 --party --seed 1 --replay <file>` exits 0: **the Director reports `finished` at frame 250,789**, and the replay has 250,800 frames, 45,967 input runs, 4,180 checkpoints, 6,168,073 bytes and blank media. Last state hash `800fb3b3d91d29b4`.
+- `--verify-replay` on that file in two more separate processes: 250,800 of 250,800 frames and 4,180 of 4,180 checkpoints (state hash and party digest) match, the last hash is `800fb3b3d91d29b4`, and the Director phase at the end is `finished`, in both.
+- After merging main (PRs #60–#62), the party and both `--verify-replay` processes were rerun: the replay is byte-identical, the Director again reports `finished` at frame 250,789, and both verifications pass with last hash `800fb3b3d91d29b4`.
+- The run before patch 0025, with a byte-identical replay, also passed two separate `--verify-replay` processes. Patch 0025 changes only the final ranking, after the replay's last frame.
+- The party: 20 turns and 25 minigames, 21 of them different. Player 1 (human) ends with 1 star and 67 coins; the COM players with 2/70, 0/116 and 2/160.
+
+| Turn | Starts (frame) | Minigames, `mp4.minigame.*` (start frame) |
+|---|---|---|
+| 1 | 3,914 (setup) | `paratrooper_plunge` 11,181 |
+| 2 | 14,515 | `long_claw_of_the_law` 18,591 |
+| 3 | 21,151 | `fruits_of_doom` 22,787, `team_treasure_trek` 35,431 |
+| 4 | 40,009 | `cliffhangers` 46,697 |
+| 5 | 53,934 | `fish_n_drips` 60,238 |
+| 6 | 64,318 | `money_belts` 72,323 |
+| 7 | 75,495 | `candlelight_flight` 81,200 |
+| 8 | 83,545 | `hide_and_go_boom` 93,181 |
+| 9 | 97,621 | `the_great_deflate` 108,389 |
+| 10 | 111,323 | `reversal_of_fortune` 111,808, `pair_a_sailing` 122,268 |
+| 11 | 126,279 | `right_oar_left` 133,193 |
+| 12 | 139,109 | `blame_it_on_the_crane` 144,994 |
+| 13 | 148,598 | `mario_medley` 154,935 |
+| 14 | 159,841 | `reversal_of_fortune` 160,928 and 166,079, `team_treasure_trek` 170,853 |
+| 15 | 175,576 | `toads_quick_draw` 180,071 |
+| 16 | 186,368 | `hop_or_pop` 195,778 |
+| 17 | 199,803 | `bowsers_bigger_blast` 203,185, `candlelight_flight` 215,255 |
+| 18 | 218,745 | `take_a_breather` 224,503 |
+| 19 | 226,450 | `goooooooal` 229,786 |
+| 20 | 232,627 | `cliffhangers` 235,477; results 246,053, finished 250,788 (event frames) |
+
+- **Cost.** About 9 minutes of wall time for the party on this machine; `stateHash()` 6.3–10.3 ms per call (means of 4,180, two runs).
+- Peak arena use and save/load times: §20, Memory.
+- **Past `finished`** (diagnosis, resumed with `--party-resume` from a state saved at frame 250,000 on the final module; not evidence):
+  - The ranking waits for the winner's pad. A on it opens the records view, which only B leaves, so the autopilot now pulses START on mstory3Dll once the phase is `finished`. That change acts only after the replay's last frame.
+  - The ranking ends at frame 251,623, and mode select follows at 251,624, still `finished`. The autopilot then starts a new party: mentDll at 252,125 reads as setup (turn still 20/20), `BoardSaveInit` resets the turn to 1/20 at 254,264, the board starts at 254,657, and its first minigame (m419) runs and ends.
+  - The window count stays at one through the ranking. Before patch 0025 it grew by one about every 630 frames.
+- **Determinism across builds.** Patches 0023 and 0024 change only code in minigames that load later, yet the state-hash trail moved from the first printed checkpoint (frame 6,000) on, while the Director's events stayed identical. Patch 0025 did not move it. So a trail belongs to one module build, which a fixture's build pin already requires; why a code-only REL change moves early hashes is still to find (qa, architect).
+
 **Open:**
-- `TURNS_OVER` and `RESULTS_FINAL` need a full 20-turn party.
+- `--party-board` for boards other than the default: measure mentDll's wheel window.
+- E1 still needs 4 human seats through the launcher UI, and E3c the Linux run of this replay.
 - **Crash reports.** `mpt_dump_lane` prints a module-relative stack on a fatal exception and on `abort`, `std::terminate` and CRT invalid-parameter fail-fasts (`crash_report.h`); `llvm-nm -n` on the installed `mp4_game.dll` names the frames. A `/GS` stack-cookie failure skips every in-process hook, so it still ends the run without a report; the seed 5 stack came from running the lane under a debugger.
 
 ## Sections still to fill (P1-18)

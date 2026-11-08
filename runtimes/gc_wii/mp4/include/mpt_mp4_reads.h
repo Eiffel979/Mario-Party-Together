@@ -29,6 +29,10 @@ void* mpt_mp4_humem_find_block(int allocated, size_t min_size);
 void* mpt_mp4_humem_find_stack(void);
 /* For the perturbation test: GWSystem, a registered global the manifest hashes by name. */
 void* mpt_mp4_registered_global(size_t* size);
+/* For memory_use (ABI v1.4): HuMem heap `heap`'s size and its allocated bytes, headers included (0 and
+ * 0 before HuMemInitAll). Returns 0 for a heap index out of range. Reads only. */
+int mpt_mp4_heap_use(int heap, size_t* size, size_t* used);
+int mpt_mp4_heap_count(void);
 
 #ifdef __cplusplus
 }

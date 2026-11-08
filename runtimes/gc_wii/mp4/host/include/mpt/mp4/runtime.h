@@ -66,6 +66,10 @@ class Mp4Runtime final : public ITitleRuntime {
   // debugDeepHash.
   std::string debugHashItems() const;
 
+  // ABI v1.4 memory_use: the arena use right now (main RAM, OSAlloc, each HuMem heap, ARAM). Reads
+  // only. nullopt before boot or for a module older than v1.4.
+  std::optional<MptMp4MemoryUse> memoryUse() const;
+
   // The OSReport text sink (presentation only). Called from inside stepFrame.
   void setReportSink(void (*sink)(void* user, const char* text), void* user);
 

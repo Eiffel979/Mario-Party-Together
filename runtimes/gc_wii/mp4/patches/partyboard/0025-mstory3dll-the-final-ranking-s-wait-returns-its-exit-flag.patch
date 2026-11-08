@@ -1,0 +1,32 @@
+Apply order 0025 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+mstory3Dll: fn_1_16924 returns whether the final ranking is left, on MPT_PC
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+The party's final ranking (mstory3Dll event 1, result.c) loops in fn_1_17DC0 until fn_1_16924
+returns non-zero: START from the winner's pad, or 300 frames when the winner is a COM. Party Board
+left that function without a return ("TODO PC return value"), so the value is undefined. In the
+module it came back 0: the ranking went into the records view (fn_1_16AD4) and back, again and
+again, and each round left a window behind. After 32 rounds, about 20,000 frames, HuWinCreate had
+no window left, returned -1, and HuWinBGTPLvlSet read a null sprite member (seed 1's party autopilot,
+M4-01, docs/titles/mp4.md section 21). The function now returns var_r31, the flag its two exits set,
+which is what the caller tests.
+
+diff --git a/src/REL/mstory3Dll/result.c b/src/REL/mstory3Dll/result.c
+index c1bf76e..73fa29f 100644
+--- a/src/REL/mstory3Dll/result.c
++++ b/src/REL/mstory3Dll/result.c
+@@ -372,7 +372,14 @@ s32 fn_1_16924(void) {
+         }
+         lbl_1_bss_1A0C.unk10 = fn_1_1834(-1, 1);
+     }
++#ifdef MPT_PC
++    /* fn_1_17DC0 leaves the final ranking when this is non-zero (START, or a COM winner after 300
++     * frames). Without a return its value is undefined: here it came back 0, so the ranking looped into
++     * the records view forever and leaked a window each time until HuWinCreate had none left (M4-01). */
++    return var_r31;
++#else
+     // TODO PC return value
++#endif
+ }
+ 
+ void fn_1_16AD4(void) {
