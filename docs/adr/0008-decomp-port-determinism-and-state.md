@@ -61,7 +61,7 @@ Cross-platform identity is a **Phase 1 exit requirement** (D5): the same replay 
 ### Save states into a fresh process (Phase 1 exit criterion E5)
 11. A state saved in one process is loaded into a **fresh process** of the same build on the same platform. That only works if every address stored in the arena or in registered globals is the same in both processes:
     - **Arena at a fixed virtual address,** reserved early at `boot()`. `boot()` fails with a clear `Result` if the address is unavailable.
-    - **Game module at a fixed base.** The SDK layer is linked into the game module (both are built with the same Clang flags, rule 4), so game code, SDK code and their data share one base. Function pointers stored in the arena (process entry points, object callbacks, overlay hooks) then stay valid. On **Windows**, the module is linked with a fixed image base and no dynamic base, and `boot()` checks that it was loaded at that base. On **Linux**, `dlopen` cannot choose an address, so either the module is linked as **non-PIE at a fixed address** and mapped there by our own loader, or it is **relocated on load** to the fixed base. P1-16 picks one.
+    - **Game module at a fixed base** *(the base and the reasons for it: amendment of 2026-11-07, "Module words", point 1)*. The SDK layer is linked into the game module (both are built with the same Clang flags, rule 4), so game code, SDK code and their data share one base. Function pointers stored in the arena (process entry points, object callbacks, overlay hooks) then stay valid. On **Windows**, the module is linked with a fixed image base and no dynamic base, and `boot()` checks that it was loaded at that base. On **Linux**, `dlopen` cannot choose an address, so either the module is linked as **non-PIE at a fixed address** and mapped there by our own loader, or it is **relocated on load** to the fixed base. P1-16 picks one.
     - **Nothing in the arena points into host memory** outside the module and the arena: no host heap, CRT objects or host-runtime code.
     - P1-16 demonstrates this on both OSes by milestone **M1**. If it fails, **E5 narrows to in-process save states** (save, destroy the runtime, create a fresh runtime in the same process, load), and the fresh-process case moves to the Phase 2 ADR that closes §10.
 
@@ -290,11 +290,11 @@ That conflicts with the user's decision D5 and exit criterion E3c: identical Win
    - **Globals by symbol.** A build step writes the module's game data symbols (name, size, type class) from the game sources' object files, the same set on both OSes. The hash visits them in name order, so section layout does not matter. Symbols from the host C++ runtime, the CRT and other non-game translation units are excluded. **Game data ranges must hold game state only** (the `unordered_set` lesson): a host object found there is moved out of the game data range, or is a P1-16 fault in debug builds.
    - **Heap blocks by allocation.** `OSAlloc` and `HuMem` blocks are visited in allocation order. Each block is hashed by its type, from the allocation site's registered type, where the manifest knows it. Otherwise it is hashed as words with three canonicalizations:
      - a 64-bit aligned word inside the arena becomes its arena offset;
-     - a word inside the module becomes its symbol ID and offset;
+     - a word inside the module becomes its symbol ID and offset *(narrowed on 2026-11-07: in a code section, only at an exact function start. See "Module words: a safe rule must not depend on layout")*;
      - an aligned word holding the x86 default NaN with either sign becomes the canonical NaN *(narrowed after #55: see "Untyped words: only the default NaN's sign is merged")*.
 
      Canonicalization can only merge values, never split them. The cost is that an integer that happens to look like a NaN or a module pointer hides a difference.
-   - **Choosing the image base.** The module base (`0x500000000000`) puts pointers in a range that a pair of game `s32` fields almost never forms. That keeps false-positive pointer matches rare, and E3c is the test that shows it.
+   - **Choosing the image base.** *(Replaced on 2026-11-07: the base is now `0x5B97_9E3C_0000`. See "Module words: a safe rule must not depend on layout", point 1.)* History: this point chose `0x500000000000` on the assumption that a pair of game `s32` fields would rarely form a module address. The layout probe disproved that for `(small value, 0x5000)` pairs.
    - **Fixing failures.** Any area where Windows and Linux still differ after this (garbage padding, MS versus Itanium bitfield layout, `wchar_t`) gets a typed manifest entry. A byte-wise exception is never acceptable.
 2. **The raw-memory hash becomes the deep hash (§9).**
    - It stays exactly as P1-16 built it, valid for the same build on the same platform.
@@ -345,3 +345,89 @@ runtime-gc-wii implemented the cross-platform `state_hash` (#55). It deviated fr
   - The deep hash takes 3.95 ms.
   - Perturbation passes 60 of 60 fixed cases and 640 of 640 sampled.
   - The layout-probe build, which shifts every function and global, keeps `state_hash` identical while the deep hash changes. That is direct evidence for the cross-platform claim, so **it becomes a standing regression check** on the dump lane, run with the E4 perturbation tests.
+
+## Module words: a safe rule must not depend on layout (architect, 2026-11-07)
+### Context
+The layout probe on PR #66 found an integer pair that the untyped-word rules read as a module pointer (`docs/titles/mp4.md` §20):
+- A game struct in a `HuMem` block holds two aligned `s32` fields, `0x216e` and `0x5000`. A neighbouring struct holds `0x598e` and `0x6000` in the same slot.
+- Read as one 64-bit word, the first pair is `0x00005000_0000216e`: module base + `0x216e`, inside `.text`.
+- The module rule maps it to a function and an offset: `CoinChgDisappear+0xe` normally, `mpt_layout_probe_code+0x116e` under the ON probe, and something else on Linux. So `state_hash` moves whenever code moves. There were 14 hits by frame 6,000.
+
+"Choosing the image base" assumed such pairs are rare. For `0x5000`, a plausible flag word or size, they are not.
+
+runtime-gc-wii proposed canonicalizing a code word only when it is exactly a function symbol's address, and hashing every other in-module code word raw. The alternatives were (a) a typed manifest entry for that allocation site, and (b) also moving the module base.
+
+### The criterion
+A canonical rule for untyped words is safe against false positives only if **its value for a given raw word is the same on every platform**. A word that is really an integer then hashes the same everywhere, even when the rule misreads it.
+- **The arena rule passes.** Its value is a tag plus `w - arena_base`. The arena base and the arena layout are the same on both OSes (§7, §11), so a false positive in the arena range merges at most. It never splits.
+- **The default NaN rule passes.** It maps two fixed bit patterns.
+- **The module rule fails, in every section.** Its value depends on which section and symbol the offset falls in, and the DLL and the `.so` lay out sections differently:
+  - The offset `0x216e` is in `.text` on Windows. On Linux, lld's first segment at the base holds the ELF headers, `.dynsym`, `.dynstr`, relocations and usually `.rodata` before any code, so the same offset is probably not code at all.
+  - A false positive in `.data` maps to a data symbol and an offset, which depend on layout.
+  - A false positive in `.rodata` hashes the text of whatever literal sits at a layout-dependent address.
+
+So the proposal alone does not fix this hit. On Windows the word would hash raw, but on Linux it would probably hash as a literal's text or as the unknown sentinel. **The real fix is to make false positives in the module range improbable, and only the base can do that.** A narrower code rule is still worth having as a second defense.
+
+### Decision: (b) plus the narrowed code rule, with (a) for anything left over
+1. **Move the module base to `0x5B97_9E3C_0000`** (`layout.cmake`, §11), replacing `0x5000_0000_0000`.
+   - **Both halves are now implausible.** A false positive needs an aligned 64-bit word whose upper `s32` is exactly 23,447 (`0x5B97`) and whose lower `u32` lies in `[0x9E3C_0000, 0x9E3C_0000 + image size)`. As an `s32`, that lower half is about -1.64 billion. As an `f32`, it is a tiny negative value of the order of -1e-20. Game integer pairs, flag words and coordinates do not take that shape. The old base needed only `(small value, 0x5000)`.
+   - **The image must not cross a 4 GiB boundary**, so that every module address has the same upper half. `0x9E3C_0000` leaves about 1.5 GiB of room. The host's base check at `boot()` also checks that the module's end stays at or below `0x5B98_0000_0000`.
+   - **`special()`'s window is unchanged.** The upper half `0x5B97` stays inside `[0x4000, 0x6000)`, so `canonFor()`'s check still holds.
+   - **The arena stays at `0x4000_0000_0000`.** By the criterion above, its false positives are harmless.
+   - The base is 64 KiB aligned (Windows) and page aligned (ELF). It stays inside the 47-bit user address space, away from where either OS places images, heaps and stacks by default.
+   - **Save states.** States from builds at the old base do not load into the new build. The build fingerprint (§10) already rejects them, so no format rule changes.
+2. **In a code section, only an exact function start is canonicalized.**
+   - A module word in a code section becomes a symbol ID only if it equals the address of a **function symbol**: `STT_FUNC` on ELF, or on COFF a symbol whose complex type is `IMAGE_SYM_DTYPE_FUNCTION`. Section symbols, labels and untyped symbols do not count. Neither do layout-probe symbols, which exist only in the ON build.
+   - Every other word in a code section is **hashed raw**. That covers code interiors, padding between functions, and code below a section's first function symbol.
+   - **C++ symbols follow the same rule in code.** A C++ function start becomes the one C++ value (the `cxx` class, since MSVC and Itanium mangle differently). A word inside a C++ function hashes raw. In data and read-only data the `cxx` rule is unchanged.
+   - The rule needs no symbol sizes, so ELF and COFF follow it the same way.
+   - **Why it only narrows: game state never legitimately holds a mid-function code address.**
+     - Coroutine records hash the **entry** function (`mpt_co_stack_record`), and the saved stack pointer as an offset.
+     - Saved continuations (return addresses and callee-saved registers) live on coroutine stacks, whose contents are never hashed.
+     - Heap headers hold a constant caller address, not a return address (`mp4.md` §11).
+     - Callbacks, process entries and overlay hooks are function pointers, so they point at function starts.
+
+     A genuine interior code address in hashed memory would be a new kind of state. Hashed raw, it stays deterministic on one platform, and E3c flags it across platforms. That is the right outcome.
+3. **Outside code sections:**
+   - **Data and read-only data keep the current rule.** Data pointers legitimately point into an object (an array element, a struct field), and string pointers into a literal, so these sections cannot be narrowed the same way. The base move in point 1 protects them.
+   - **A module word in no section is hashed raw.** That covers the PE and ELF headers, and any gap between sections. No game state points there. The unknown sentinel that `canonical()` returns today for a word outside every section is dropped, because it merged values that no legitimate pointer produces. The sentinel remains only for a word inside a data or read-only data section with no symbol at or below it.
+4. **Function addresses must be unique, and the same set on both platforms.**
+   - Identical code folding (ICF) could merge functions differently under lld-link and ld.lld. That would change which name a start canonicalizes to. It would also change game behaviour wherever the game compares callbacks.
+   - The module links with ICF off on both OSes (`/OPT:NOICF`, `--icf=none`), and the build states this explicitly instead of relying on defaults.
+   - **No incremental linking** (`/INCREMENTAL:NO`, stated explicitly next to `/OPT:NOICF`). An incremental link routes function addresses through incremental-link-table thunks, so a stored function pointer would be a thunk address, not a function start. If `link.exe` cannot be held to this, its path in `layout.cmake` is dropped and lld-link becomes the only Windows linker for the module.
+5. **(a) remains the fix for any hit left over.**
+   - If E3c or the dump lane still finds a false positive after points 1 and 2, the field gets a typed manifest entry for its allocation site or symbol, as "Fixing failures" says.
+   - The untyped rules are never widened.
+6. **Acceptance:**
+   - Synthetic unit tests on both the COFF and the ELF reader, with no game material:
+     - an exact function start canonicalizes to its ID;
+     - an interior code address, padding between functions and a header address hash raw;
+     - a C++ function start gives the `cxx` value, and a word inside a C++ function hashes raw;
+     - a data or label symbol in a code section is not a start;
+     - a probe symbol is not a start.
+   - **Real linkers keep the function type.** The synthetic stub module in `tests/mp4_loader`, linked by the real lld-link and ld.lld, reports a static C function, an extern C function and a function written in assembly as function starts. This shows that `IMAGE_SYM_DTYPE_FUNCTION` and `STT_FUNC` survive both linkers. Hand-written assembly needs explicit type directives (`.type sym,@function`, `.def`/`.scl`/`.type 32`), and the test covers that.
+   - The host rejects a module loaded at the old base, and a module that crosses the 4 GiB boundary.
+   - On the dump lane, the layout-probe run (ON against OFF) gives identical `state_hash` trails. **The gate is the full party played to `finished`, with exit 0 on both lanes.** The layout test's default (`--party --frames 6000`, where both lanes exit 1) is a quick check, not this gate.
+   - In that run, `count module_code_interior` is 0, and `count module_unknown` is 0 or each hit is explained, with a typed entry per point 5.
+   - One dump-lane run writes a note for **every** module hit, not only C++, unknown and code-interior hits. runtime-gc-wii checks that each one is a real pointer and records the counts in `mp4.md` §20.
+   - E3c, the Windows and Linux replay, is the test that decides it.
+
+### Alternatives
+- **The proposal alone.** Rejected as insufficient. The section and symbol an offset falls in are themselves layout-dependent. A code-only rule leaves false positives in data and read-only data, and a hit that is code on one OS can be something else on the other.
+- **(a) alone.** Rejected as the primary fix, because it is whack-a-mole: every struct that holds a `(small, 0x5000)` pair would need its own entry. It is kept for leftover hits (point 5).
+- **No module canonicalization in untyped words**, so that module pointers appear only in typed entries. Not now. E3c would need a typed entry for every heap struct that stores a function pointer before it could pass, and the base move makes the false-positive risk small.
+- **A base outside `special()`'s window.** Not needed. A non-round upper half inside the window works as well, and the fast path stays as it is.
+
+### Consequences
+- runtime-gc-wii changes:
+  - `layout.cmake`: the base, and the link flags (`/OPT:NOICF`, `/INCREMENTAL:NO`, `--icf=none`);
+  - the end-of-image check: it lives in the **host's base check** in `mp4/host`, at `boot()`, next to the existing base check, using the image size from the loaded module's headers. It does not live in `ModuleSymbols::load`, which is a hash helper and must not decide whether a module may run;
+  - in `ModuleSymbols::canonical()`: the code-section rule, the C++ rule in code, and raw words outside every section; plus a function-symbol flag in both symbol readers;
+  - the comment on `special()`'s window in `abi.cpp` (line 515 on main), which names `0x5000'0000'0000`.
+- `docs/titles/mp4.md`, kept by runtime-gc-wii:
+  - §20 records the new base and closes its open item;
+  - the fixed-address table (line 783) gets the new image base;
+  - the cost note on the check (line 869) names the new base.
+- In the amendment after P1-16 hash coverage, point 1, "a word inside the module becomes its symbol ID and offset" now holds *in a code section, only at an exact function start*. "Choosing the image base" is replaced by point 1 above.
+- `module_code_interior` stays as a diagnostic count, although those words now hash raw. It is expected to be 0 at the new base.
+- The layout-probe standing check (amendment of 2026-11-06) stays, with the acceptance checks of point 6 added.
