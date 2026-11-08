@@ -10,6 +10,7 @@
 
 #include <doctest/doctest.h>
 
+#include <RmlUi/Core.h>
 #include <SDL3/SDL.h>
 
 #include <cstdint>
@@ -19,6 +20,8 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -112,6 +115,11 @@ class TestShell final : public IShellCommands {
   int stops = 0;
   bool running = false;
   bool paused = false;
+  // What app.cpp reports from the Director (M4-06), kept after a stop.
+  PartyPhase phase = PartyPhase::none;
+  std::int32_t turn = 0;
+  std::int32_t max_turns = 0;
+  std::filesystem::path replay_path;
 };
 
 SDL_Event key_event(SDL_EventType type, SDL_Keycode key, SDL_Scancode scancode) {
@@ -163,6 +171,10 @@ struct Harness {
       SessionStatus s;
       s.running = shell.running;
       s.paused = shell.paused;
+      s.phase = shell.phase;
+      s.turn = shell.turn;
+      s.max_turns = shell.max_turns;
+      s.replay_path = shell.replay_path;
       return s;
     };
     overlay = ui::make_launcher(host, ui::LauncherOptions{std::filesystem::path(MPT_UI_SOURCE_DIR)});
@@ -212,9 +224,11 @@ void drain_events() {
 
 // Plays `replay` the way the shell does. `script` maps a host tick to the events pushed
 // before that tick's poll. Returns the trail; `stepped_at` records frames per tick.
+// `after_tick` runs after each tick's overlay update.
 std::vector<ReplayCheckpoint> play(const Replay& replay, Harness* ui,
                                    const std::map<std::uint64_t, std::vector<SDL_Event>>& script,
-                                   std::vector<std::uint64_t>* frames_at_tick = nullptr) {
+                                   std::vector<std::uint64_t>* frames_at_tick = nullptr,
+                                   const std::function<void(std::uint64_t)>& after_tick = {}) {
   const TitleRegistry registry = fake_registry();
   auto config = session_config_for(replay.header, test::fake_shell_dump());
   REQUIRE(std::holds_alternative<SessionConfig>(config));
@@ -229,6 +243,13 @@ std::vector<ReplayCheckpoint> play(const Replay& replay, Harness* ui,
   };
   hooks.after_step = [&](Session& s) {
     if (s.frame() % replay.header.checkpoint_interval == 0) trail.push_back(checkpoint_of(s));
+    if (ui) {
+      // As app.cpp fills SessionStatus from the Director.
+      const PartySnapshot& party = s.director().party();
+      ui->shell.phase = party.phase;
+      ui->shell.turn = party.turn;
+      ui->shell.max_turns = party.max_turns;
+    }
   };
   FrameLoop loop(*session, std::move(hooks));
   IOverlay* overlay = ui ? ui->overlay.get() : nullptr;
@@ -236,7 +257,10 @@ std::vector<ReplayCheckpoint> play(const Replay& replay, Harness* ui,
   if (!ui) own_input.emplace();
   input::SdlInput& input = ui ? ui->input : *own_input;
   GameInputGate gate;
-  if (ui) ui->shell.running = true;
+  if (ui) {
+    ui->shell.running = true;
+    ui->shell.replay_path = ui->user_dir / "replays" / "fake-42-0.mptr";
+  }
   drain_events();
 
   for (std::uint64_t tick = 0; tick < 20 * kFrames; ++tick) {
@@ -277,11 +301,70 @@ std::vector<ReplayCheckpoint> play(const Replay& replay, Harness* ui,
       overlay->update(tick * kTickNs);
       ui->draw(/*read_back=*/false);
     }
+    if (after_tick) after_tick(tick);
     if (frames_at_tick) frames_at_tick->push_back(loop.frames_stepped());
     if (result == FrameLoop::Tick::input_ended) break;
     REQUIRE(result != FrameLoop::Tick::failed);
   }
   return trail;
+}
+
+// The launcher's documents, read back through RmlUi (its context is named "launcher").
+// Data bindings are evaluated by the overlay's update().
+Rml::ElementDocument* shown_document() {
+  Rml::Context* context = Rml::GetContext("launcher");
+  if (!context) return nullptr;
+  for (int i = 0; i < context->GetNumDocuments(); ++i) {
+    Rml::ElementDocument* doc = context->GetDocument(i);
+    if (doc->IsVisible()) return doc;
+  }
+  return nullptr;
+}
+
+std::string shown_title() {
+  Rml::ElementDocument* doc = shown_document();
+  return doc ? doc->GetTitle() : std::string();
+}
+
+std::string shown_rml() {
+  Rml::ElementDocument* doc = shown_document();
+  return doc ? doc->GetInnerRML() : std::string();
+}
+
+std::string focused_rml() {
+  Rml::Context* context = Rml::GetContext("launcher");
+  Rml::Element* focus = context ? context->GetFocusElement() : nullptr;
+  return focus ? focus->GetInnerRML() : std::string();
+}
+
+// True if a visible heading or paragraph of the shown document contains `needle`.
+bool shows(const std::string& needle) {
+  Rml::ElementDocument* doc = shown_document();
+  if (!doc) return false;
+  for (const char* selector : {"h1", "p"}) {
+    Rml::ElementList elements;
+    doc->QuerySelectorAll(elements, selector);
+    for (Rml::Element* el : elements) {
+      if (el->IsVisible(true) && el->GetInnerRML().find(needle) != std::string::npos) return true;
+    }
+  }
+  return false;
+}
+
+// A few more launcher updates after the session loop, as the shell's main loop keeps
+// doing between sessions.
+void settle(Harness& ui, std::uint64_t from_tick) {
+  for (std::uint64_t t = 0; t < 3; ++t) {
+    ui.overlay->update((from_tick + t) * kTickNs);
+    ui.draw(/*read_back=*/false);
+  }
+}
+
+std::pair<const std::uint64_t, std::vector<SDL_Event>> press(std::uint64_t tick, SDL_GamepadButton button) {
+  return {tick, {pad_button(SDL_EVENT_GAMEPAD_BUTTON_DOWN, button)}};
+}
+std::pair<const std::uint64_t, std::vector<SDL_Event>> release(std::uint64_t tick, SDL_GamepadButton button) {
+  return {tick, {pad_button(SDL_EVENT_GAMEPAD_BUTTON_UP, button)}};
 }
 
 }  // namespace
@@ -381,5 +464,106 @@ TEST_CASE("bring-up gate: the launcher renders, is gamepad-navigable and leaves 
     };
     play(replay, &ui, script);
     CHECK(ui.shell.quit);
+  }
+}
+
+// M4-09: a FakeRuntime party walked through the launcher's E1 path by controller:
+// "Turn x/y" on the pause screen, then the post-session screen after Quit to library.
+// FakeRuntime has 3 turns: setup at frame 10, board turn 1 at 60, turn 2 at 160, results
+// at 360 and finished at 410 (tests/support/fake_party_script.h).
+TEST_CASE("walkthrough: Turn x/y while paused, then the post-session screen") {
+  SdlVideo video;
+  const Replay replay = record_party();
+
+  SUBCASE("a finished party shows Party finished and the replay path") {
+    Harness ui(video);
+    const std::map<std::uint64_t, std::vector<SDL_Event>> script = {
+        press(180, SDL_GAMEPAD_BUTTON_GUIDE), release(181, SDL_GAMEPAD_BUTTON_GUIDE),
+        press(190, SDL_GAMEPAD_BUTTON_EAST),  release(191, SDL_GAMEPAD_BUTTON_EAST),  // resume
+        // After the party has finished: pause, down to "Quit to library", south.
+        press(450, SDL_GAMEPAD_BUTTON_GUIDE), release(451, SDL_GAMEPAD_BUTTON_GUIDE),
+        press(460, SDL_GAMEPAD_BUTTON_DPAD_DOWN), release(461, SDL_GAMEPAD_BUTTON_DPAD_DOWN),
+        press(470, SDL_GAMEPAD_BUTTON_SOUTH), release(471, SDL_GAMEPAD_BUTTON_SOUTH),
+    };
+    std::string paused_title;
+    bool turn_shown = false;
+    std::string ending_title;
+    play(replay, &ui, script, nullptr, [&](std::uint64_t tick) {
+      if (tick == 185) {
+        paused_title = shown_title();
+        turn_shown = shows("Turn 2/3");
+      }
+      // Quit chosen; the shell applies the stop on its next iteration.
+      if (ui.shell.pending_stop && ending_title.empty()) ending_title = shown_title();
+    });
+    CHECK(paused_title == "Paused");
+    CHECK(turn_shown);
+    CHECK(ending_title == "Party over");
+    CHECK(ui.shell.pauses == 2);
+    CHECK(ui.shell.resumes == 1);
+    CHECK(ui.shell.stops == 1);
+    CHECK(ui.shell.phase == PartyPhase::finished);
+
+    settle(ui, 20 * kFrames);
+    CHECK(shown_title() == "Party over");
+    CHECK(shows("Party finished"));
+    CHECK(shows("Turns played: 3 of 3."));
+    CHECK(shows("Replay saved in your user folder: replays/fake-42-0.mptr"));
+    // Relative to the user dir, and no other path.
+    const std::string rml = shown_rml();
+    CHECK(rml.find("mpt_ui_overlay_tests") == std::string::npos);
+    CHECK(rml.find(ui.user_dir.string()) == std::string::npos);
+    CHECK(focused_rml().find("Back to library") != std::string::npos);
+
+    // East goes back to the library.
+    const SDL_Event east = pad_button(SDL_EVENT_GAMEPAD_BUTTON_DOWN, SDL_GAMEPAD_BUTTON_EAST);
+    CHECK(ui.overlay->handleEvent(east));
+    settle(ui, 20 * kFrames + 3);
+    CHECK(shown_title() == "Library");
+  }
+
+  SUBCASE("a party quit mid-board shows the phase it ended in") {
+    Harness ui(video);
+    const std::map<std::uint64_t, std::vector<SDL_Event>> script = {
+        press(180, SDL_GAMEPAD_BUTTON_GUIDE), release(181, SDL_GAMEPAD_BUTTON_GUIDE),
+        press(190, SDL_GAMEPAD_BUTTON_DPAD_DOWN), release(191, SDL_GAMEPAD_BUTTON_DPAD_DOWN),
+        press(200, SDL_GAMEPAD_BUTTON_SOUTH), release(201, SDL_GAMEPAD_BUTTON_SOUTH),  // Quit to library
+    };
+    play(replay, &ui, script);
+    CHECK(ui.shell.stops == 1);
+    CHECK(ui.shell.phase == PartyPhase::board);
+    CHECK(ui.shell.turn == 2);
+    settle(ui, 20 * kFrames);
+    CHECK(shown_title() == "Party over");
+    CHECK(shows("The game session ended"));
+    CHECK(shows("It ended in this phase: board (turn 2 of 3)."));
+    CHECK(shows("replays/fake-42-0.mptr"));
+    CHECK_FALSE(shows("Party finished"));
+    // Back with the confirm button on "Back to library".
+    const SDL_Event south = pad_button(SDL_EVENT_GAMEPAD_BUTTON_DOWN, SDL_GAMEPAD_BUTTON_SOUTH);
+    const SDL_Event south_up = pad_button(SDL_EVENT_GAMEPAD_BUTTON_UP, SDL_GAMEPAD_BUTTON_SOUTH);
+    ui.overlay->handleEvent(south);
+    ui.overlay->handleEvent(south_up);
+    settle(ui, 20 * kFrames + 3);
+    CHECK(shown_title() == "Library");
+  }
+
+  SUBCASE("the pause screen leaves the turn out when the title reports no max_turns") {
+    Harness ui(video);
+    const std::map<std::uint64_t, std::vector<SDL_Event>> script = {
+        press(180, SDL_GAMEPAD_BUTTON_GUIDE), release(181, SDL_GAMEPAD_BUTTON_GUIDE),
+        press(190, SDL_GAMEPAD_BUTTON_EAST), release(191, SDL_GAMEPAD_BUTTON_EAST),
+    };
+    bool any_turn = true;
+    std::string title;
+    play(replay, &ui, script, nullptr, [&](std::uint64_t tick) {
+      ui.shell.max_turns = 0;  // as a title that does not report it (read while paused: no step resets it)
+      if (tick == 185) {
+        title = shown_title();
+        any_turn = shows("Turn ");
+      }
+    });
+    CHECK(title == "Paused");
+    CHECK_FALSE(any_turn);
   }
 }
