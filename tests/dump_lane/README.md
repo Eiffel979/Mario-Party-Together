@@ -34,11 +34,18 @@ Run both before changing MP4's hash manifest, `runtimes/gc_wii/mp4/src/abi.cpp`'
 
 1. **Coverage, with the deep hash as the oracle.** `mpt_dump_lane --boot mp4 --frames 10000 --every 1000
    --perturb --perturb-samples 64`. Every check must print `ok`.
-2. **Layout independence (the layout probe).** Run `mpt_dump_lane --boot mp4 --frames 3000 --every 100
-   --hash-items <file>` on a normal host build. Reconfigure the host build with
-   `-DMPT_MP4_RECIPE_LAYOUT_PROBE=ON`, rebuild, and run the same command again. That build's module
-   moves every function and every game global. The two `frame N hash` trails must be identical, and the
-   `frame N deep` trails must differ. Reconfigure with `=OFF` afterwards.
+2. **Layout independence (the layout probe).** Configure a second host build with
+   `-DMPT_MP4_RECIPE_LAYOUT_PROBE=ON` (or `rodata`) and
+   `-DMPT_DUMP_LANE_LAYOUT_REFERENCE=<the normal build's mpt_dump_lane>`, then run
+   `ctest -L dump -R layout_perturbation` there (`dump_lane/layout_perturbation.cmake`). It plays the
+   same autopilot party (`--party --every 10`) on both lanes in separate processes and requires the two
+   `frame N hash` trails and exit codes to be identical. `-DSEEDS=1;2;3` and `-DFRAMES=N` on a direct
+   `cmake -P` run widen it. ON moves every function, every game global and the game core's read-only
+   data; `rodata` moves only the read-only data. The option is test only: it needs `MPT_BUILD_TESTS`
+   and is refused in CI presets, and it changes the module's build ID. If a trail differs, run both
+   lanes with `--boot mp4 --hash-items FILE` at the first differing checkpoint and diff the files; the
+   `note misaligned` and `note code_interior` lines name words the canonical rules leave
+   layout-dependent.
 
 `--hash-items` files and captures name or show game content: keep them outside the repository.
 
