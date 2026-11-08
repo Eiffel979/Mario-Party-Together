@@ -402,10 +402,13 @@ So the proposal alone does not fix this hit. On Windows the word would hash raw,
    - Synthetic unit tests on both the COFF and the ELF reader, with no game material:
      - an exact function start canonicalizes to its ID;
      - an interior code address, padding between functions and a header address hash raw;
+     - a C++ function start gives the `cxx` value, and a word inside a C++ function hashes raw;
      - a data or label symbol in a code section is not a start;
      - a probe symbol is not a start.
+   - **Real linkers keep the function type.** The synthetic stub module in `tests/mp4_loader`, linked by the real lld-link and ld.lld, reports a static C function, an extern C function and a function written in assembly as function starts. This shows that `IMAGE_SYM_DTYPE_FUNCTION` and `STT_FUNC` survive both linkers. Hand-written assembly needs explicit type directives (`.type sym,@function`, `.def`/`.scl`/`.type 32`), and the test covers that.
    - The host rejects a module loaded at the old base, and a module that crosses the 4 GiB boundary.
-   - On the dump lane, the layout-probe run (ON against OFF) gives identical `state_hash` trails for the full-party replay, with `count module_code_interior` and `count module_unknown` both 0.
+   - On the dump lane, the layout-probe run (ON against OFF) gives identical `state_hash` trails. **The gate is the full party played to `finished`, with exit 0 on both lanes.** The layout test's default (`--party --frames 6000`, where both lanes exit 1) is a quick check, not this gate.
+   - In that run, `count module_code_interior` is 0, and `count module_unknown` is 0 or each hit is explained, with a typed entry per point 5.
    - One dump-lane run writes a note for **every** module hit, not only C++, unknown and code-interior hits. runtime-gc-wii checks that each one is a real pointer and records the counts in `mp4.md` §20.
    - E3c, the Windows and Linux replay, is the test that decides it.
 
