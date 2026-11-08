@@ -307,6 +307,11 @@ struct Sdk::Impl {
   // DMA'd PCM (s16 stereo, AI rate) waiting for the host. Presentation only:
   // not in the arena, never hashed, empty with null audio output.
   std::vector<std::int16_t> pcm;
+  // Host-side I/O counts since boot: DVD reads and ARAM transfers (ARStartDMA, ARQ), completed
+  // synchronously inside the call. They let a harness tell load frames from steady-state ones by
+  // game-visible events (ADR 0008, "Stale heap bytes", point 5). Never saved, never hashed.
+  std::uint64_t io_dvd_reads = 0;
+  std::uint64_t io_aram_transfers = 0;
 
   std::byte* mainRam() const { return arena + main_offset; }
   std::byte* aramBase() const { return arena + aram_offset; }

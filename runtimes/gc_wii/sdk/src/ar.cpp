@@ -11,6 +11,7 @@ namespace {
 void copy(u32 type, uintptr_t mainmem, u32 aram_addr, u32 length, const char* what) {
   if (std::uint64_t{aram_addr} + length > kAramBytes) fatal(std::string(what) + ": ARAM address out of range");
   if (length == 0) return;
+  ++impl().io_aram_transfers;
   auto* ram = reinterpret_cast<std::byte*>(mainmem);
   std::byte* ar = impl().aramBase() + aram_addr;
   if (type == ARAM_DIR_MRAM_TO_ARAM) {

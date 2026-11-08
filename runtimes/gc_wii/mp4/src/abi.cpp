@@ -1127,8 +1127,11 @@ MptMp4StepResult statusOf(const MptMp4Game* game) { return game ? result(*game) 
 // data (each block's header and data); the HuMem heaps are among them.
 std::int32_t memoryUse(const MptMp4Game* game, MptMp4MemoryUse* out) {
   if (game == nullptr || out == nullptr || out->struct_size < MPT_MP4_MEMORY_USE_SIZE_V1_4) return MPT_MP4_ERR_ARGUMENT;
-  const std::uint32_t size = out->struct_size;
-  *out = MptMp4MemoryUse{};
+  // A caller built against the v1.4 struct passes 160 bytes: fill only what it has room for.
+  const std::uint32_t size = std::min<std::uint32_t>(out->struct_size, sizeof(MptMp4MemoryUse));
+  MptMp4MemoryUse use{};
+  MptMp4MemoryUse* const caller = out;
+  out = &use;
   out->struct_size = size;
   out->main_ram = game->sdk->mainRam().size();
   std::uint64_t used = 0;
@@ -1145,6 +1148,10 @@ std::int32_t memoryUse(const MptMp4Game* game, MptMp4MemoryUse* out) {
     out->heap_used[i] = heap_used;
   }
   out->aram_used = game->sdk->aramInUse().size();
+  const mpt::gc::Sdk::IoCounts io = game->sdk->ioCounts();
+  out->dvd_reads = io.dvd_reads;
+  out->aram_transfers = io.aram_transfers;
+  std::memcpy(caller, &use, size);
   return MPT_MP4_OK;
 }
 

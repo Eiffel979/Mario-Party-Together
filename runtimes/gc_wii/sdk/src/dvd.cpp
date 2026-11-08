@@ -80,6 +80,7 @@ void doRead(DVDFileInfo* fi, void* addr, s32 length, s32 offset) {
   }
   // Past the end of the file: the disc would return the next file's bytes; we return zeros.
   if (len > avail) std::memset(dst + avail, 0, static_cast<std::size_t>(len - avail));
+  ++impl().io_dvd_reads;
   fi->cb.state = DVD_STATE_END;
   fi->cb.transferredSize = static_cast<u32>(length);
   fi->cb.length = static_cast<u32>(length);
