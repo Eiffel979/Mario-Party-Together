@@ -36,7 +36,7 @@ namespace {
 // Distinct tags keep the classes of canonical values apart.
 constexpr std::uint64_t kTagSymbol = 0x5359'4D42'0000'0001ull;   // "SYMB"
 constexpr std::uint64_t kTagText = 0x5445'5854'0000'0001ull;     // "TEXT": a string literal
-constexpr std::uint64_t kTagUnknown = 0x554E'4B4E'0000'0001ull;  // "UNKN": no symbol at or below
+constexpr std::uint64_t kTagUnknown = 0x554E'4B4E'0000'0001ull;  // "UNKN": data, no symbol at or below
 constexpr std::uint64_t kTagCxx = 0x4358'5850'0000'0001ull;      // "CXXP": any C++ symbol
 
 std::uint64_t mix(std::uint64_t x) {  // splitmix64's finalizer
@@ -48,8 +48,10 @@ std::uint64_t mix(std::uint64_t x) {  // splitmix64's finalizer
   return x;
 }
 
+using Bytes = std::span<const unsigned char>;
+
 template <typename T>
-bool readAt(const std::vector<unsigned char>& f, std::uint64_t off, T& out) {
+bool readAt(Bytes f, std::uint64_t off, T& out) {
   if (off > f.size() || f.size() - off < sizeof(T)) return false;
   std::memcpy(&out, f.data() + off, sizeof(T));
   return true;
@@ -94,6 +96,7 @@ struct RawSymbol {
   std::uintptr_t addr;
   std::uint64_t size;
   std::uint32_t section;
+  bool is_function;
   std::string name;
 };
 
@@ -109,7 +112,7 @@ bool skipName(std::string_view n) { return n.empty() || n[0] == '.' || n[0] == '
 // symbol before them, but are never hashed.
 bool isProbe(std::string_view plain) { return plain.rfind("mpt_layout_probe", 0) == 0; }
 
-[[maybe_unused]] bool parsePe(const std::vector<unsigned char>& f, std::uintptr_t base, std::vector<RawSection>& sections,
+bool parsePe(Bytes f, std::uintptr_t base, std::vector<RawSection>& sections,
              std::vector<RawSymbol>& syms, std::uintptr_t& end, std::string& error) {
   std::uint32_t pe = 0, sig = 0;
   if (!readAt(f, 0x3C, pe) || !readAt(f, pe, sig) || sig != 0x00004550u) return error = "not a PE image", false;
@@ -145,8 +148,10 @@ bool isProbe(std::string_view plain) { return plain.rfind("mpt_layout_probe", 0)
     const std::uint64_t s = symtab + std::uint64_t{i} * 18u;
     std::uint32_t value = 0;
     std::int16_t secnum = 0;
+    std::uint16_t type = 0;
     std::uint8_t cls = 0, aux = 0;
-    if (!readAt(f, s + 8, value) || !readAt(f, s + 12, secnum) || !readAt(f, s + 16, cls) || !readAt(f, s + 17, aux))
+    if (!readAt(f, s + 8, value) || !readAt(f, s + 12, secnum) || !readAt(f, s + 14, type) || !readAt(f, s + 16, cls) ||
+        !readAt(f, s + 17, aux))
       return error = "truncated COFF symbol table", false;
     const std::uint32_t this_aux = aux;
     if (secnum >= 1 && secnum <= nsect && (cls == 2 || cls == 3)) {  // EXTERNAL, STATIC
@@ -156,7 +161,10 @@ bool isProbe(std::string_view plain) { return plain.rfind("mpt_layout_probe", 0)
       if (zeros == 0) {
         readAt(f, s + 4, off);
         const std::uint64_t at = strtab + off;
-        if (at < f.size()) name = reinterpret_cast<const char*>(f.data() + at);  // NUL-terminated in the file
+        if (at < f.size()) {
+          const char* c = reinterpret_cast<const char*>(f.data() + at);
+          name.assign(c, strnlen(c, static_cast<std::size_t>(f.size() - at)));
+        }
       } else {
         char shortname[9] = {};
         std::memcpy(shortname, f.data() + s, 8);
@@ -164,7 +172,9 @@ bool isProbe(std::string_view plain) { return plain.rfind("mpt_layout_probe", 0)
       }
       if (!skipName(name)) {
         const RawSection& sec = sections[static_cast<std::size_t>(secnum - 1)];
-        syms.push_back({sec.lo + value, 0, static_cast<std::uint32_t>(secnum - 1), std::move(name)});
+        // The complex type (bits 4-5) IMAGE_SYM_DTYPE_FUNCTION (2): a function.
+        const bool is_function = (type & 0x30u) == 0x20u;
+        syms.push_back({sec.lo + value, 0, static_cast<std::uint32_t>(secnum - 1), is_function, std::move(name)});
       }
     }
     i += this_aux;
@@ -172,7 +182,7 @@ bool isProbe(std::string_view plain) { return plain.rfind("mpt_layout_probe", 0)
   return true;
 }
 
-[[maybe_unused]] bool parseElf(const std::vector<unsigned char>& f, std::uintptr_t base, std::vector<RawSection>& sections,
+bool parseElf(Bytes f, std::uintptr_t base, std::vector<RawSection>& sections,
               std::vector<RawSymbol>& syms, std::uintptr_t& end, std::string& error) {
   if (f.size() < 64 || std::memcmp(f.data(), "\x7f" "ELF", 4) != 0 || f[4] != 2) return error = "not an ELF64 image", false;
   std::uint64_t phoff = 0, shoff = 0;
@@ -247,9 +257,11 @@ bool isProbe(std::string_view plain) { return plain.rfind("mpt_layout_probe", 0)
     const unsigned type = info & 0xF;
     if (shndx == 0 || shndx >= 0xFF00 || shndx >= shnum || (type != 0 && type != 1 && type != 2)) continue;
     if (sections[shndx].hi == 0 || name_off >= strsize) continue;
-    std::string name = reinterpret_cast<const char*>(f.data() + stroff + name_off);
+    if (stroff + name_off >= f.size()) continue;
+    const char* c = reinterpret_cast<const char*>(f.data() + stroff + name_off);
+    std::string name(c, strnlen(c, static_cast<std::size_t>(f.size() - stroff - name_off)));
     if (skipName(name)) continue;
-    syms.push_back({bias + value, size, shndx, std::move(name)});
+    syms.push_back({bias + value, size, shndx, type == 2 /* STT_FUNC */, std::move(name)});
   }
   return true;
 }
@@ -269,23 +281,33 @@ const ModuleSymbols::Section* ModuleSymbols::sectionOf(std::uintptr_t p) const {
 
 bool ModuleSymbols::load(const std::vector<GameRange>& game_ranges, std::string& error) {
   std::filesystem::path path;
-  if (!ownImage(path, base_)) return error = "cannot find the module's own image", false;
+  std::uintptr_t base = 0;
+  if (!ownImage(path, base)) return error = "cannot find the module's own image", false;
   std::vector<unsigned char> file;
   if (!readFile(path, file)) return error = "cannot read the module image", false;
+  return loadImage(file, base, game_ranges, error);
+}
+
+bool ModuleSymbols::loadImage(std::span<const unsigned char> file, std::uintptr_t base,
+                              const std::vector<GameRange>& game_ranges, std::string& error) {
   std::vector<RawSection> raw_sections;
   std::vector<RawSymbol> raw;
-#if defined(_WIN32)
-  const bool ok = parsePe(file, base_, raw_sections, raw, end_, error);
-#else
-  const bool ok = parseElf(file, base_, raw_sections, raw, end_, error);
-#endif
-  if (!ok) return false;
-  elf_ =
-#if defined(_WIN32)
-      false;
-#else
-      true;
-#endif
+  base_ = base;
+  end_ = base;
+  bool ok = false;
+  if (file.size() >= 4 && std::memcmp(file.data(), "\x7f" "ELF", 4) == 0) {
+    elf_ = true;
+    ok = parseElf(file, base_, raw_sections, raw, end_, error);
+  } else if (file.size() >= 2 && file[0] == 'M' && file[1] == 'Z') {
+    elf_ = false;
+    ok = parsePe(file, base_, raw_sections, raw, end_, error);
+  } else {
+    error = "the module image is neither PE nor ELF";
+  }
+  if (!ok) {
+    end_ = base_;
+    return false;
+  }
   sections_.clear();
   for (const RawSection& s : raw_sections) sections_.push_back({s.lo, s.hi, s.kind});
 
@@ -302,6 +324,8 @@ bool ModuleSymbols::load(const std::vector<GameRange>& game_ranges, std::string&
     s.addr = r.addr;
     s.size = r.size;
     s.section = r.section;
+    // A layout probe symbol exists only in a probe build, so it is never a function start.
+    s.is_function = r.is_function && !isProbe(r.name);
     const GameRange* range = rangeOf(r.addr);
     s.name = range != nullptr ? range->name + ":" + r.name : std::move(r.name);
     s.id = fnv1a64(s.name);
@@ -363,9 +387,28 @@ bool ModuleSymbols::load(const std::vector<GameRange>& game_ranges, std::string&
 std::uint64_t ModuleSymbols::canonical(std::uintptr_t p, PointerClass* cls) const {
   PointerClass ignored;
   PointerClass& out = cls != nullptr ? *cls : ignored;
-  out = PointerClass::unknown;
+  out = PointerClass::raw;
   const Section* sec = sectionOf(p);
-  if (sec == nullptr) return mix(kTagUnknown);
+  // No section: the PE or ELF headers or a gap between sections, where no game state points. Raw.
+  if (sec == nullptr) return p;
+  if (sec->kind == SectionKind::code) {
+    // Only an exact function start (the first function symbol there by name). Any other code word is
+    // raw: inside a function, padding, or below the section's first function.
+    auto it = std::lower_bound(syms_.begin(), syms_.end(), p,
+                               [](const ModuleSymbol& s, std::uintptr_t a) { return s.addr < a; });
+    for (; it != syms_.end() && it->addr == p; ++it) {
+      if (!it->is_function) continue;
+      if (isCxxName(it->name)) {
+        out = PointerClass::cxx;
+        return mix(kTagCxx ^ static_cast<std::uint64_t>(sec->kind));
+      }
+      out = PointerClass::symbol;
+      return mix(kTagSymbol ^ mix(it->id));
+    }
+    out = PointerClass::code_interior;
+    return p;
+  }
+  out = PointerClass::unknown;
   // The greatest symbol at or below p (the first of its aliases by name).
   auto it = std::upper_bound(syms_.begin(), syms_.end(), p,
                              [](std::uintptr_t a, const ModuleSymbol& s) { return a < s.addr; });
@@ -399,7 +442,8 @@ std::uint64_t ModuleSymbols::canonical(std::uintptr_t p, PointerClass* cls) cons
     out = PointerClass::cxx;
     return mix(kTagCxx ^ static_cast<std::uint64_t>(sec->kind));
   }
-  out = sec->kind == SectionKind::code && p != sym->addr ? PointerClass::code_interior : PointerClass::symbol;
+  out = PointerClass::symbol;
+  // At offset 0 this is the code rule's value above, so a symbol has one value whatever its section.
   return mix(kTagSymbol ^ mix(sym->id + 0x9E3779B97F4A7C15ull * (p - sym->addr)));
 }
 
