@@ -442,6 +442,8 @@ runtime-gc-wii implemented "Module words" (branch `mp4-code-word-canonicalizatio
 There is a common cause. `HuMem`, `OSAlloc` and the sub-allocators that run inside their blocks return blocks holding whatever the previous occupant left. On a 64-bit host that is often half of an 8-byte pointer. The console used 4-byte pointers, so the PC layout already differs there. Stale bytes are history, not state: they are deterministic on one build and platform, but their content depends on what earlier allocations stored, and that includes host pointers and layout. This also matters for game behaviour, not just the hash: a field read before it is written reads those same bytes, so it can **behave** differently on Windows and Linux, which D5 forbids.
 
 ### Decision: zero every block on allocation, in every game heap
+**Scope.** The rule applies to every GameCube/Wii title on this runtime, not only MP4. `OSAllocFromHeap` is in the shared SDK (`runtimes/gc_wii/sdk`), so its zeroing covers MP5–MP8 as soon as they boot on it. Each title's own heap and sub-allocators (its `HuMem` successor, its sound heap, its ARAM allocator) get the same patches when the title is ported, and its `docs/titles/<id>.md` §11 lists them. MP4 is the first title, and the evidence below is MP4's.
+
 1. **Every byte of a block's user area is zero when the allocator returns it**, for every allocator whose memory the hash reads. That is each level of allocation, not only the outermost:
    - `HuMem`: the static `HuMemMemoryAlloc2`, which both `HuMemMemoryAlloc` and `HuMemMemoryAllocNum` go through, so `HuMemDirectMalloc`, `HuMemDirectMallocNum` and every heap built on them are covered. This is a Party Board patch in our series.
    - The SDK's `OSAllocFromHeap`.
@@ -464,7 +466,7 @@ There is a common cause. `HuMem`, `OSAlloc` and the sub-allocators that run insi
    - The decomp's intent, and the console's, is that a field is written before it is read. Where that holds, zeroing changes only bytes no code reads.
    - Where a field is read before it is written, the console read undefined stale data, and the PC port already reads different stale data (different layout, 8-byte pointers). Zero is one fixed, cross-platform value in place of an arbitrary one, and the value a heap held early in its life.
    - Game code that depends on a non-zero stale value would be a port bug. It is found and fixed with a patch, as with any port bug.
-   - `docs/titles/mp4.md` records "PC game heaps return zeroed blocks" as a deliberate divergence from the console, next to the constant heap-header caller (§7).
+   - Each title's `docs/titles/<id>.md`, starting with `mp4.md`, records "PC game heaps return zeroed blocks" as a deliberate divergence from the console, next to the constant heap-header caller (§7).
 5. **Cost.**
    - Zeroing costs memory bandwidth for the bytes allocated, not for the arena size: the 112 MiB is never cleared in one go. Steady-state frames allocate kilobytes. Overlay and file loads allocate megabytes, a few milliseconds at most on a load frame, and the load overwrites most of it anyway.
    - **Boot clears nearly the whole arena once.** `HuMemInitAll` takes every `HuMem` heap from `OSAlloc` at boot, so the SDK's zeroing clears almost all of main RAM in the boot frames. The arena is already zero then (§7), so this changes no bytes. It costs a one-time `memset` of about 112 MiB, tens of milliseconds, and boot frames are exempt from the budget below.
@@ -476,6 +478,8 @@ There is a common cause. `HuMem`, `OSAlloc` and the sub-allocators that run insi
 6. **What is left over gets fixed at the source.** Zeroing removes bytes left by an earlier **allocation**. It cannot remove bytes left inside one block when the game reuses its own pool slots, or when a struct reuses a field as a different type.
    - **A field the game reads**: a Party Board patch initialises it at the allocation or pool-reuse site (option (ii)). A typed entry that skips such a field would hide divergence in a value that changes behaviour.
    - **A field nothing reads** (padding, a union's dead arm): a typed manifest entry for the allocation site (option (iii); "Module words", point 5).
+     - **How the entry finds its block.** Heap headers carry a constant caller (§7), so they cannot name the site. The entry identifies its block by the `HuMem` `num` tag the site passes to `HuMemDirectMallocNum`, where that tag is unique to the site, or else by an owning pointer read from a hashed global or from a block that is itself typed. Allocation order alone is never used, because it shifts whenever any earlier allocation changes.
+     - **"Nothing reads it" is recorded, not assumed.** `mp4.md` §20 lists, for each skipped field, every read of it in the pinned source (or that there is none), and why none of them can see the stale bytes. qa-reviewer checks that list at merge.
    - The untyped rules are never widened, and no hit is waived.
 7. **C++ runtime pointers in heap blocks.** The one `module_cxx` hit, a pointer to `std::exception`'s RTTI in a `HuMem` block, is a host C++ runtime pointer in game memory. That goes against §11 ("nothing in the arena points into host memory") and the "game state only" rule of the amendment after P1-16 hash coverage, even though it points into the module and the `cxx` class hashes it as one value on both platforms.
    - If the run after point 1 no longer shows it, it was stale, and `mp4.md` §20 records what put it there if that can be found.
@@ -490,12 +494,12 @@ The rest of "Module words" point 6 stands: the synthetic reader tests, the real-
 - **Notes:** one run writes a note for every module hit, and runtime-gc-wii checks that each is a real pointer, as before.
 - **Regression:** rodata against OFF, seeds 1–5 at 20,000 frames, stays identical. Conformance and E4 perturbation pass, including the deep-hash coverage self-test.
 - **Cost:** the point 5 numbers are within budget and recorded in `mp4.md` §20.
-- **Re-recording.** Zeroing changes heap contents, and so `state_hash`, from the first reused block onward. Every same-platform MP4 trail and fixture hash (M1, E3a/E3b, perturbation baselines) is re-recorded deliberately in the same change. No cross-platform golden exists yet (amendment after P1-16 hash coverage, point 3), so none needs re-recording.
+- **Re-recording.** Zeroing changes heap contents, and so `state_hash`, from the first reused block onward. The same-platform MP4 hashes are re-recorded deliberately in the same change: the M1 hashes in `mp4.md`, the M4-01 final hash in `mp4.md`, and the local full-party replay's trail, which stays uncommitted. The fake-runtime golden is unaffected. No cross-platform golden exists yet (amendment after P1-16 hash coverage, point 3), so none needs re-recording.
 - E3c, the Windows and Linux replay, still decides.
 
 ### Alternatives
 - **(ii) Per-site patches alone.** Rejected as the primary fix. There are already at least five sites (the particle records and the four block types above), and every board and minigame not yet played to the end can add more. Each miss is a cross-platform behaviour risk, not only a hash one. Kept for leftovers (point 6).
-- **(iii) Typed entries per allocation site alone.** Rejected as the primary fix. No allocation site has a registered type yet, and heap headers carry a constant caller (§7), so they cannot name the site. A typed entry that skips a stale field also hides it without making behaviour cross-platform. Kept for dead fields (point 6).
+- **(iii) Typed entries per allocation site alone.** Rejected as the primary fix. No allocation site has a registered type yet, and heap headers carry a constant caller (§7), so each entry needs its own way to find its block (point 6). A typed entry that skips a stale field also hides it without making behaviour cross-platform. Kept for dead fields (point 6).
 - **Zero-on-free.** Rejected (point 2).
 - **Hash only the bytes the game has written** (write tracking). Rejected: instrumenting every store in game code is far more expensive and invasive than a `memset` at allocation, and a read-before-write would still behave differently across platforms.
 
