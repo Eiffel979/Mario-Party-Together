@@ -181,6 +181,20 @@ set_tests_properties(shell_fake_title_profile PROPERTIES
   FIXTURES_REQUIRED shell_fake_party
   PASS_REGULAR_EXPRESSION "input: .*profiles.mp4.default\\.json profile.*input: mp4\\.minigame\\.fake_[a-z]+ override.*replay OK")
 
+# M4-06 (ADR 0006 amendment for M4-06): live sessions auto-record a replay and a
+# .summary.txt. mpt_shell_fake_party's title plays the whole-party script by itself, so a
+# headless live session reaches `finished`. The script also checks that playback and a
+# failed start write nothing, and that --record still overrides the path.
+add_executable(mpt_shell_fake_party shell/fake_shell_main.cpp)
+target_compile_definitions(mpt_shell_fake_party PRIVATE MPT_SHELL_FAKE_PARTY)
+target_link_libraries(mpt_shell_fake_party PRIVATE mpt::shell_app)
+mpt_set_warnings(mpt_shell_fake_party)
+add_test(NAME shell_fake_auto_record
+  COMMAND ${CMAKE_COMMAND}
+    "-DSHELL=$<TARGET_FILE:mpt_shell_fake_party>"
+    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/shell_auto_record"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/shell/auto_record.cmake")
+
 # The shell must boot, run frames and exit cleanly without a display.
 add_test(NAME shell_headless_smoke COMMAND mpt_shell --headless --frames 120)
 set_tests_properties(shell_headless_smoke PROPERTIES PASS_REGULAR_EXPRESSION "exited after 120 frame")
