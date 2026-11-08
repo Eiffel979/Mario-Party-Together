@@ -100,6 +100,15 @@ endif()
 mpt_set_warnings(mpt_dump_lane)
 add_test(NAME dump_lane_replays COMMAND mpt_dump_lane)
 set_tests_properties(dump_lane_replays PROPERTIES LABELS dump SKIP_RETURN_CODE 77)
+# MP4 layout perturbation (dump lane): only in a host build with MPT_MP4_RECIPE_LAYOUT_PROBE set, against a
+# normal build's lane named by MPT_DUMP_LANE_LAYOUT_REFERENCE. See dump_lane/layout_perturbation.cmake.
+if(TARGET mpt_mp4_runtime AND DEFINED MPT_MP4_RECIPE_LAYOUT_PROBE AND NOT MPT_MP4_RECIPE_LAYOUT_PROBE STREQUAL "OFF")
+  set(MPT_DUMP_LANE_LAYOUT_REFERENCE "" CACHE FILEPATH "Test only: a normal (no layout probe) build's mpt_dump_lane")
+  add_test(NAME dump_lane_layout_perturbation
+    COMMAND ${CMAKE_COMMAND} "-DPROBE_LANE=$<TARGET_FILE:mpt_dump_lane>" "-DREFERENCE_LANE=${MPT_DUMP_LANE_LAYOUT_REFERENCE}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/dump_lane/layout_perturbation.cmake")
+  set_tests_properties(dump_lane_layout_perturbation PROPERTIES LABELS dump SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 7200)
+endif()
 
 # Cross-process determinism (ADR 0002 rule 10 follow-up, P1-20b1): the same FakeRuntime run
 # in separate processes must give byte-identical hash trails.
