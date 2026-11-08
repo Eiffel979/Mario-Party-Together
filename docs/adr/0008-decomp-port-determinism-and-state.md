@@ -294,7 +294,7 @@ That conflicts with the user's decision D5 and exit criterion E3c: identical Win
      - an aligned word holding the x86 default NaN with either sign becomes the canonical NaN *(narrowed after #55: see "Untyped words: only the default NaN's sign is merged")*.
 
      Canonicalization can only merge values, never split them. The cost is that an integer that happens to look like a NaN or a module pointer hides a difference.
-   - **Choosing the image base.** *(Replaced on 2026-11-07: the base is now `0x5B97_9E3C_0000`. See "Module words: a safe rule must not depend on layout", point 1.)* The module base (`0x500000000000`) puts pointers in a range that a pair of game `s32` fields almost never forms. That keeps false-positive pointer matches rare, and E3c is the test that shows it.
+   - **Choosing the image base.** *(Replaced on 2026-11-07: the base is now `0x5B97_9E3C_0000`. See "Module words: a safe rule must not depend on layout", point 1.)* History: this point chose `0x500000000000` on the assumption that a pair of game `s32` fields would rarely form a module address. The layout probe disproved that for `(small value, 0x5000)` pairs.
    - **Fixing failures.** Any area where Windows and Linux still differ after this (garbage padding, MS versus Itanium bitfield layout, `wchar_t`) gets a typed manifest entry. A byte-wise exception is never acceptable.
 2. **The raw-memory hash becomes the deep hash (§9).**
    - It stays exactly as P1-16 built it, valid for the same build on the same platform.
@@ -420,10 +420,14 @@ So the proposal alone does not fix this hit. On Windows the word would hash raw,
 
 ### Consequences
 - runtime-gc-wii changes:
-  - `layout.cmake`: the base, and the 4 GiB check in the host's base check;
-  - the code-section rule in `ModuleSymbols::canonical()`, and a function-symbol flag in both symbol readers;
-  - the ICF link flags.
-- `docs/titles/mp4.md` §20 records the new base and closes its open item.
+  - `layout.cmake`: the base, and the link flags (`/OPT:NOICF`, `/INCREMENTAL:NO`, `--icf=none`);
+  - the end-of-image check: it lives in the **host's base check** in `mp4/host`, at `boot()`, next to the existing base check, using the image size from the loaded module's headers. It does not live in `ModuleSymbols::load`, which is a hash helper and must not decide whether a module may run;
+  - in `ModuleSymbols::canonical()`: the code-section rule, the C++ rule in code, and raw words outside every section; plus a function-symbol flag in both symbol readers;
+  - the comment on `special()`'s window in `abi.cpp` (line 515 on main), which names `0x5000'0000'0000`.
+- `docs/titles/mp4.md`, kept by runtime-gc-wii:
+  - §20 records the new base and closes its open item;
+  - the fixed-address table (line 783) gets the new image base;
+  - the cost note on the check (line 869) names the new base.
 - In the amendment after P1-16 hash coverage, point 1, "a word inside the module becomes its symbol ID and offset" now holds *in a code section, only at an exact function start*. "Choosing the image base" is replaced by point 1 above.
 - `module_code_interior` stays as a diagnostic count, although those words now hash raw. It is expected to be 0 at the new base.
 - The layout-probe standing check (amendment of 2026-11-06) stays, with the acceptance checks of point 6 added.
