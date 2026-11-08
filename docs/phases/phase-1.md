@@ -209,6 +209,27 @@ Wave B starts now. The hash manifest, the E1 checklist and the E2 table remain P
 
 **Critical path:** P1-13a (SDK core) → P1-13b (MusyX audio and THP) ∥ P1-14 (after S1) ∥ P1-15 → P1-16 (fixed bases by M1) → M4 → M5. Everything in `core/`, `input/`, `asset-import/`, `ui/` and `tests/` runs in parallel with it, against `FakeRuntime`.
 
+### M4 work items (architect, 2026-11-07)
+
+M4 closes E1 and E2. Rulings M4-A to M4-U2 are in §10. Items that share a file land one after the other from `main`, never as stacked PRs: M4-04 → M4-01 → M4-07 (`tests/dump_lane/main.cpp`), the shell part of M4-05 → M4-06 (`core/shell/app.cpp`), and M4-07 / M4-08 (different columns of `docs/titles/mp4.md` §18).
+
+| ID | Item | Owner | Area | Depends on | Closed by |
+|---|---|---|---|---|---|
+| M4-01 | Scripted CPU-party autopilot: dump-lane `--party` mode with a menu script, a deterministic input policy (a pure function of frame and Director state), a soft-lock watchdog, an `.mptr` replay, exit 0 only on `phase == finished`, and peak arena use and save/load times | runtime-gc-wii (qa reviews, M4-H) | `tests/dump_lane/` | M4-04 | A 20-turn seed-1 party on Toad's Midway Madness reaches `finished`, and its replay passes `--verify-replay` in 2 processes. Frames recorded in `docs/titles/mp4.md` §21. |
+| M4-02 | Confirm or fix the end flags (`TURNS_OVER`, `RESULTS_FINAL`): board → results → finished, never back to board, derived from game memory only (M4-G) | runtime-gc-wii | `runtimes/gc_wii/mp4/src/game_reads.c`, `adapters/mp4/` | M4-01 | `snapshot_of` unit tests on the observed sequences (synthetic structs), and the P1-17 event-sequence test on the M4-01 replay |
+| M4-03 | Sweep all 6 boards × at least 3 seeds × 20 turns, fixes as Party Board patches, and an audit of fixed-array callers (the patch 0022 pattern) | runtime-gc-wii | `runtimes/gc_wii/mp4/patches/`, `docs/titles/mp4.md` | M4-01, M4-04 | Sweep table with no halt, fault, fail-fast or soft-lock, and the audit list recorded |
+| M4-04 | Crash reports for /GS fail-fasts (`--supervise` on Windows, `__stack_chk_fail` on Linux) | runtime-gc-wii (qa reviews) | `tests/dump_lane/`, `tests/mp4_loader/` | — | A synthetic stub module with a deliberate overrun gets a report |
+| M4-05 | Per-title input profiles in the shell: `load_title_profile` with a fallback to the built-in default, then one call at session start | input-mapping, then architect | `input/`, `core/shell/app.cpp` | — | Loader unit tests on synthetic directories, and a FakeTitle shell test that applies a minigame override |
+| M4-06 | E1 evidence in the shell: live sessions auto-record a replay with a `.summary.txt` (final phase, turn, events), `--verify-replay` prints the final phase, and `SessionStatus` carries phase, turn and replay path | architect | `core/shell/`; `tests/shell/` (qa) | M4-05 | A FakeTitle party test whose summary says `finished`, and whose replay verifies |
+| M4-07 | E2 game-side proof (M4-E): each §18 row played on the dump lane with idle input and with each control injected on each port | runtime-gc-wii | `tests/dump_lane/`, possibly `runtimes/gc_wii/mp4/src/abi.cpp` | M4-01, M4-03 | Game-side column of `docs/titles/mp4.md` §18 filled for every row |
+| M4-08 | E2 device-side proof (M4-E): keyboard and gamepad sources produce every listed input, including thresholds | input-mapping | `input/tests/` | M4-05 | Input columns of §18 filled; joint sign-off closes E2 |
+| M4-09 | Launcher readiness: the device on each seat, "Turn x/y" in the pause overlay, a "Party finished" screen with the replay path, and the boot-screen hint | frontend-ui | `ui/` | M4-06 | Headless model tests and a FakeRuntime walkthrough |
+| M4-10 | E1 sign-off checklist in `docs/titles/mp4.md` (fresh user dir, launcher import, seats and devices, board, turns, `finished`, replay kept and verified, build ID, pins, OS and hardware) | runtime-gc-wii (qa reviews) | `docs/titles/mp4.md` | M4-06 | qa approval |
+| M4-11 | E1 on Windows (M4-U1 seats) | user; agents prepare and re-verify | — | M4-02, M4-03, M4-05, M4-06, M4-09, M4-10 | Checklist filled; an agent re-verifies the replay headless in 2 processes |
+| M4-12 | Linux compile-only CI job for the module (ADR 0009): root option `MPT_BUILD_MP4_GAME_MODULE`, then a `ci.yml` job that fetches the pins, builds the module and runs its dump-free tests except `mp4_game_abi`, which loads the module | architect, then qa-reviewer | root `CMakeLists.txt`, `.github/workflows/ci.yml` | — | A green Linux job. No dump, no artifacts. |
+| M4-13 | Linux run with the dump: build under WSL2 (M4-U2), diff the M1 trail with `--hash-items` against Windows, then the M4-01 party | user (WSL2), then runtime-gc-wii | `runtimes/gc_wii/mp4/` | M4-12, M4-01; **on hold** until the user reports WSL2 ready (M4-U2) | Matching trails documented (early E3c) |
+| M4-14 | E1 on Linux under WSL2 (WSLg for video and audio; the gamepad forwarded, e.g. with usbipd-win) | user | — | M4-13, M4-10; **on hold** (M4-U2) | Checklist filled for Linux |
+
 **Rule for every handoff:** the receiving agent gets the item ID, its files, its contract (the ADRs listed) and its test. Work that would cross an ownership boundary goes back to the owner, or to architect if it touches an interface.
 
 ## 7. Phase 1 ADRs
