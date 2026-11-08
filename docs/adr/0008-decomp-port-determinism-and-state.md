@@ -431,3 +431,63 @@ So the proposal alone does not fix this hit. On Windows the word would hash raw,
 - In the amendment after P1-16 hash coverage, point 1, "a word inside the module becomes its symbol ID and offset" now holds *in a code section, only at an exact function start*. "Choosing the image base" is replaced by point 1 above.
 - `module_code_interior` stays as a diagnostic count, although those words now hash raw. It is expected to be 0 at the new base.
 - The layout-probe standing check (amendment of 2026-11-06) stays, with the acceptance checks of point 6 added.
+
+## Stale heap bytes: game heaps return zeroed blocks on PC (architect, 2026-11-08)
+### Context
+runtime-gc-wii implemented "Module words" (branch `mp4-code-word-canonicalization`). With the new base, `module_unknown`, `module_raw` and `module_misaligned` are 0 over the full party, and rodata against OFF is identical for seeds 1–5 at 20,000 frames. Two findings remain that no untyped rule can handle (`docs/titles/mp4.md` §20):
+1. **The full-party layout gate fails at frame 82,000** (Candlelight Flight, `m416Dll`). One canonical heap word differs, `0x00000001_9E41D410`: the low half of `UpdateEffect`'s address with `0x00000001` above it, in a particle record's `animTime`/`blendMode` slot. An earlier record 0x40 lower had its `hook` at exactly that address. The bytes are stale: the new record wrote the upper half and never wrote the lower half.
+2. **`module_code_interior` = 3,315 hits, 16 distinct words**, such as `0x5B97_9E6F_0000` and `0x5B97_9E74_50EC`, in `HuMem` blocks of `m417Dll`, `m430Dll`, the item pick and the multi-view camera. They are module addresses whose low 16 bits have been overwritten: stale pointers partly overwritten by a 16-bit field. They do not split the probe trail, but their value is whatever the earlier occupant left, so they would differ on Linux.
+
+There is a common cause. `HuMem` and `OSAlloc` return blocks holding whatever the previous occupant left. On a 64-bit host that is often half of an 8-byte pointer. The console used 4-byte pointers, so the PC layout already differs there. Stale bytes are history, not state: they are deterministic on one build and platform, but their content depends on what earlier allocations stored, and that includes host pointers and layout. This also matters for game behaviour, not just the hash: a field read before it is written reads those same bytes, so it can **behave** differently on Windows and Linux, which D5 forbids.
+
+### Decision: zero every block on allocation, in every game heap
+1. **Every byte of a block's user area is zero when the allocator returns it**, in every game heap in the arena:
+   - `HuMem` (`HuMemMemoryAlloc`, so `HuMemDirectMalloc`, `HuMemDirectMallocNum` and every heap built on them, including `msm`'s), through a Party Board patch in our series;
+   - the SDK's `OSAllocFromHeap`;
+   - any realloc-style growth, for the bytes past the old size.
+
+   This is part of the PC build, the same on every platform. It is never a runtime option or a boot flag, and it goes into `build_id` through the patch set and the SDK sources, as any patch does.
+2. **On allocation, not on free.**
+   - Zero-on-alloc gives one invariant that holds whatever the block's history was: a fresh block is all zero. That includes bytes that held the allocator's own free-list headers before blocks were split or merged, which zero-on-free never reaches.
+   - Zero-on-free would also change what a use-after-free reads. That is a separate class of bug, and hiding it is not this ADR's job.
+   - The arena is already zeroed at `boot()` (§7), so zeroing a block that was never used before changes nothing.
+3. **"Only blocks reused after free" is rejected for now.** Tracking it needs a per-heap high-water mark in game-visible state (saved, restored and covered by perturbation), and that is only worth it if point 5's cost measurement says so. If it is ever added, it must give exactly the same bytes as zeroing every block, and the mark must live in the arena or a registered global.
+4. **Why this does not change game behaviour that matters.**
+   - The decomp's intent, and the console's, is that a field is written before it is read. Where that holds, zeroing changes only bytes no code reads.
+   - Where a field is read before it is written, the console read undefined stale data, and the PC port already reads different stale data (different layout, 8-byte pointers). Zero is one fixed, cross-platform value in place of an arbitrary one, and the value a heap held early in its life.
+   - Game code that depends on a non-zero stale value would be a port bug. It is found and fixed with a patch, as with any port bug.
+   - `docs/titles/mp4.md` records "PC game heaps return zeroed blocks" as a deliberate divergence from the console, next to the constant heap-header caller (§7).
+5. **Cost.**
+   - Zeroing costs memory bandwidth for the bytes allocated, not for the arena size: the 112 MiB is never cleared in one go. Steady-state frames allocate kilobytes. Overlay and file loads allocate megabytes, a few milliseconds at most on a load frame, and the load overwrites most of it anyway.
+   - The budget: **under 2% more wall time** over the full-party replay, and **no steady-state frame worse by more than 0.25 ms** at the 99th percentile. Load frames (overlay changes, file reads into fresh blocks) are exempt. runtime-gc-wii measures zero-on-alloc against the current build and records both numbers in `mp4.md` §20.
+   - Over budget, the remedy is point 3's high-water mark, not per-site exemptions. A site that skips zeroing because its data is read from disc would need an amendment here, backed by a measurement.
+6. **What is left over gets fixed at the source.** Zeroing removes bytes left by an earlier **allocation**. It cannot remove bytes left inside one block when the game reuses its own pool slots, or when a struct reuses a field as a different type.
+   - **A field the game reads**: a Party Board patch initialises it at the allocation or pool-reuse site (option (ii)). A typed entry that skips such a field would hide divergence in a value that changes behaviour.
+   - **A field nothing reads** (padding, a union's dead arm): a typed manifest entry for the allocation site (option (iii); "Module words", point 5).
+   - The untyped rules are never widened, and no hit is waived.
+7. **C++ runtime pointers in heap blocks.** The one `module_cxx` hit, a pointer to `std::exception`'s RTTI in a `HuMem` block, is a host C++ runtime pointer in game memory. That goes against §11 ("nothing in the arena points into host memory") and the "game state only" rule of the amendment after P1-16 hash coverage, even though it points into the module and the `cxx` class hashes it as one value on both platforms.
+   - If the run after point 1 no longer shows it, it was stale, and `mp4.md` §20 records what put it there if that can be found.
+   - If it is still there, the block holds a **live** host object. runtime-gc-wii finds the allocation (site, size, allocation index) and the code that placed it, and moves that object out of game heaps. A C++ exception thrown in game code is a defect in any case (amendment after P1-13: no exception crosses a switch).
+   - In data and read-only data symbols, `cxx` hits stay as "Module words" has them.
+
+### Acceptance (replaces the dump-lane counts in "Module words", point 6)
+The rest of "Module words" point 6 stands: the synthetic reader tests, the real-linker stub test and the base checks. The dump-lane part now reads:
+- **Unit:** a synthetic `OSAlloc` test in the SDK tests, and a synthetic `HuMem` test if the allocator can be built without game material (otherwise a dump-lane check of the same thing). A block is filled with a pattern, freed and reallocated (whole, split, and merged with a neighbour) and reads back as all zero. Realloc growth zeroes the new tail and keeps the old contents.
+- **Layout gate:** the layout probe (ON against OFF) over the **full party played to `finished`**, exit 0 on both lanes, gives identical `state_hash` trails.
+- **Counts over that run, in heap blocks:** `module_code_interior`, `module_unknown`, `module_raw`, `module_misaligned` and `module_cxx` are all 0. A non-zero count is fixed by point 6 or 7 before the gate counts as met. "Explained" is no longer enough in heap blocks.
+- **Notes:** one run writes a note for every module hit, and runtime-gc-wii checks that each is a real pointer, as before.
+- **Regression:** rodata against OFF, seeds 1–5 at 20,000 frames, stays identical. Conformance and E4 perturbation pass, including the deep-hash coverage self-test.
+- **Cost:** the point 5 numbers are within budget and recorded in `mp4.md` §20.
+- **Re-recording.** Zeroing changes heap contents, and so `state_hash`, from the first reused block onward. Every same-platform MP4 trail and fixture hash (M1, E3a/E3b, perturbation baselines) is re-recorded deliberately in the same change. No cross-platform golden exists yet (amendment after P1-16 hash coverage, point 3), so none needs re-recording.
+- E3c, the Windows and Linux replay, still decides.
+
+### Alternatives
+- **(ii) Per-site patches alone.** Rejected as the primary fix. There are already at least five sites (the particle records and the four block types above), and every board and minigame not yet played to the end can add more. Each miss is a cross-platform behaviour risk, not only a hash one. Kept for leftovers (point 6).
+- **(iii) Typed entries per allocation site alone.** Rejected as the primary fix. No allocation site has a registered type yet, and heap headers carry a constant caller (§7), so they cannot name the site. A typed entry that skips a stale field also hides it without making behaviour cross-platform. Kept for dead fields (point 6).
+- **Zero-on-free.** Rejected (point 2).
+- **Hash only the bytes the game has written** (write tracking). Rejected: instrumenting every store in game code is far more expensive and invasive than a `memset` at allocation, and a read-before-write would still behave differently across platforms.
+
+### Consequences
+- runtime-gc-wii: a new Party Board patch (next in the series) for `HuMemMemoryAlloc`; zeroing in the SDK's `OSAllocFromHeap`; the unit tests; the cost measurement; the re-recorded same-platform trails; and `mp4.md` §11 (the divergence note) and §20 (the results, closing the open item on layout-dependent words).
+- qa-reviewer checks at merge that the zeroing is unconditional in the PC build, that the trails were re-recorded in the same change, and that the counts come from the full-party run.
+- No core contract changes. `kCoreContractVersion`, the module ABI version and the save-state layout stay as they are. The build fingerprint (§10) already keeps states from before and after apart.
