@@ -77,9 +77,23 @@ set_property(CACHE MPT_GX_BACKEND PROPERTY STRINGS null dawn)
 set(MPT_DAWN_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/external/dawn" CACHE PATH
   "Dawn install prefix made by runtimes/gc_wii/gx/tools/build_dawn.cmake")
 option(MPT_REQUIRE_GX "Fail the configure if the GX layer cannot be built (always on for MPT_GX_BACKEND=dawn)" OFF)
+# The MP4 game module (ADR 0009). OFF: only the module's dump-free machinery tests are built
+# (mp4/tests/standalone). ON: mp4_game and all of its tests are built from the pins in
+# runtimes/gc_wii/mp4/decomp.lock, found under MPT_SOURCE_CACHE. No dump is read and nothing from
+# the game is produced. Public CI may build it but not run it (ADR 0009, Consequences), so a CI
+# job leaves out mp4_game_abi, the one test that loads the module. runtimes/gc_wii
+# declares the same option for its stand-alone and Clang sub-builds, and owns the gate itself.
+option(MPT_BUILD_MP4_GAME_MODULE "Build the MP4 game module from the pinned sources in mp4/decomp.lock (compile-only without a dump)" OFF)
 
 # GameCube/Wii SDK layer: built with Clang as its own project (ADR 0008 §4).
 add_subdirectory(runtimes/gc_wii)
+# ON must not be skipped silently: without Clang (and MPT_REQUIRE_GC_WII OFF), runtimes/gc_wii
+# builds nothing. With Clang, a missing pin already fails the configure (Clang root) or the
+# mpt_gc_wii_clang sub-build's configure (other roots).
+if(MPT_BUILD_MP4_GAME_MODULE AND NOT TARGET mp4_game AND NOT TARGET mpt_gc_wii_clang)
+  message(FATAL_ERROR "MPT_BUILD_MP4_GAME_MODULE is ON, but runtimes/gc_wii was not built (no Clang toolchain; ADR 0008 §4). "
+                      "Install Clang, or set MPT_GC_WII_CLANG_CXX / MPT_GC_WII_CLANG_C.")
+endif()
 
 # Every runtime is added above, so the shell's title list is complete.
 mpt_generate_title_registration(mpt_shell)
