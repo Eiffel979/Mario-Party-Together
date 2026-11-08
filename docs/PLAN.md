@@ -115,6 +115,7 @@ The sketch above is simplified. The real headers are in `core/include/mpt/core/`
 | `runtimes/gc_wii/<title>/` | Per-title game-module glue: build recipe, shims, patches against pinned CC0/MIT/ISC sources, `decomp.lock` (ADR 0009). Game source itself (decomp or upstream port) is never in the repo. | `runtime-gc-wii` |
 | `input/profiles/<title>/` | Per-title input profiles | `input-mapping` |
 | `tests/`, `.github/`, `.githooks/`, `.gitignore` | Test harnesses, CI, determinism checks, compliance config | `qa-reviewer` |
+| `tests/dump_lane/`, title-specific modes | `mpt_dump_lane` modes that only make sense for one title (ruling M4-H, `docs/phases/phase-1.md` §10). They stay dump-gated, write nothing from the dump into the repo and keep title logic out of `core/`. | The title's runtime owner, under `qa-reviewer` review |
 | Root build files (`CMakeLists.txt`, `CMakePresets.json`, `vcpkg*.json`) | Top-level build and dependency pins | `architect` (owners request changes) |
 | `docs/adr/`, `docs/titles/` | Decisions, per-title notes | everyone; ADRs approved by `architect` |
 | `docs/PLAN.md` | This plan, including the ownership table and roadmap | `architect` |
