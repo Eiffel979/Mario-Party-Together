@@ -5,6 +5,7 @@
 // plain DeviceSnapshots to the pure mapper. Host-side only; it reads no clock.
 
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <vector>
 
@@ -12,11 +13,13 @@
 #include <SDL3/SDL_gamepad.h>
 
 #include "mpt/core/input.h"
+#include "mpt/core/title_id.h"
 #include "mpt/input/device.h"
 #include "mpt/input/held_mask.h"
 #include "mpt/input/mapper.h"
 #include "mpt/input/ports.h"
 #include "mpt/input/reserved.h"
+#include "mpt/input/title_profile.h"
 
 namespace mpt::input {
 
@@ -53,6 +56,18 @@ class SdlInput {
 
   // Snapshot of every connected device (used by sample(); exposed for the UI).
   std::vector<DeviceSnapshot> snapshot() const;
+
+  // Where installed title profiles are looked up: "<executable dir>/profiles"
+  // (SDL_GetBasePath), which the build fills from input/profiles/. Empty if SDL
+  // cannot report the executable directory.
+  static std::vector<std::filesystem::path> profile_search_dirs();
+
+  // Loads `title`'s profile and its per-minigame overrides into mapper() from
+  // profile_search_dirs() (title_profile.h). Missing or invalid files fall back
+  // to the built-in default with an SDL_LogWarn; this never fails or blocks a
+  // session. The shell calls it when a session starts, before the first sample().
+  // Replays carry mapped InputFrames, so the profile does not affect determinism.
+  TitleProfileLoad load_title_profile(TitleId title);
 
   PortAssigner& ports() { return ports_; }
   const PortAssigner& ports() const { return ports_; }

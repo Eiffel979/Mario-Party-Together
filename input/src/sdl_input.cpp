@@ -2,8 +2,11 @@
 
 #include <algorithm>
 #include <string>
+#include <string_view>
 
+#include <SDL3/SDL_filesystem.h>
 #include <SDL3/SDL_keyboard.h>
+#include <SDL3/SDL_log.h>
 #include <SDL3/SDL_scancode.h>
 #include <SDL3/SDL_stdinc.h>
 
@@ -138,5 +141,19 @@ InputFrame SdlInput::sample(std::uint64_t frame) {
 }
 
 void SdlInput::mask_held_until_release() { held_.capture(snapshot()); }
+
+std::vector<std::filesystem::path> SdlInput::profile_search_dirs() {
+  const char* base = SDL_GetBasePath();  // UTF-8, owned by SDL
+  if (!base || !*base) return {};
+  const std::u8string utf8(reinterpret_cast<const char8_t*>(base));
+  return {std::filesystem::path(utf8) / "profiles"};
+}
+
+TitleProfileLoad SdlInput::load_title_profile(TitleId title) {
+  const std::vector<std::filesystem::path> dirs = profile_search_dirs();
+  return input::load_title_profile(mapper_, title, dirs, [](std::string_view message) {
+    SDL_LogWarn(SDL_LOG_CATEGORY_INPUT, "input: %.*s", static_cast<int>(message.size()), message.data());
+  });
+}
 
 }  // namespace mpt::input

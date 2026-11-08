@@ -132,6 +132,26 @@ one, the built-in GameCube-style default (`builtin_default_profile()`) is used.
   and options are inherited. The shell selects the override from the Director's
   current minigame (`Mapper::set_minigame`).
 
+### Installed title profiles (`title_profile.h`)
+The build copies `input/profiles/` to `<bin>/profiles/` next to the shell
+executable (target `mpt_input_profiles`; ctest `input_profiles_installed` checks
+the copy). When a session starts, the shell calls
+`SdlInput::load_title_profile(title)`, which reads
+`<executable dir>/profiles/<title>/default.json` and installs it, with its
+minigame overrides, on every port. The pure core form is
+`load_title_profile(mapper, title, search_dirs, warn)`: directories are tried in
+order and the first usable file wins.
+
+Loading never fails a session. A missing file, or one that is unreadable, larger
+than 1 MiB, invalid, made for another title, or carrying another title's
+minigame override, gives a warning (`SDL_LogWarn` from `SdlInput`) and the
+built-in default. A broken file in an early directory does not hide a good one
+in a later directory.
+
+The profile is not part of a replay. Replays record, and netplay sends, the
+mapped `InputFrame`s, so which profile was loaded (or whether the default was
+used) cannot change what a runtime computes from a recorded run.
+
 ### Controls
 `a b x y l r z zl start select home dpad_up dpad_down dpad_left dpad_right
 c_up c_down c_left c_right` (one per canonical `mpt::Button`; `c_*` are the N64
