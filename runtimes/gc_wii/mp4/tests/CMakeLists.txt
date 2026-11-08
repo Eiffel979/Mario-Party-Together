@@ -19,3 +19,12 @@ add_executable(mpt_mp4_msm_swap_tests test_msm_swap.c ../src/msm_swap.c)
 target_link_libraries(mpt_mp4_msm_swap_tests PRIVATE mpt_mp4_game_flags)
 target_compile_options(mpt_mp4_msm_swap_tests PRIVATE ${MPT_MP4_WARN_FLAGS})
 add_test(NAME mp4_msm_swap COMMAND mpt_mp4_msm_swap_tests)
+
+# Game heaps return zeroed blocks (ADR 0008, "Stale heap bytes", patch 0026): Party Board's HuMem
+# allocator and msm's heap from the patched pin, on the test's own buffers (no dump).
+add_executable(mpt_mp4_heap_zero_tests test_heap_zero.c "${MPT_MP4_PB}/src/game/memory.c" "${MPT_MP4_PB}/src/msm/msmmem.c")
+target_link_libraries(mpt_mp4_heap_zero_tests PRIVATE mpt_mp4_game_flags)
+set_source_files_properties("${MPT_MP4_PB}/src/game/memory.c" "${MPT_MP4_PB}/src/msm/msmmem.c"
+                            TARGET_DIRECTORY mpt_mp4_heap_zero_tests PROPERTIES COMPILE_OPTIONS "${MPT_MP4_NOWARN}")
+target_compile_options(mpt_mp4_heap_zero_tests PRIVATE ${MPT_MP4_WARN_FLAGS})
+add_test(NAME mp4_heap_zero COMMAND mpt_mp4_heap_zero_tests)

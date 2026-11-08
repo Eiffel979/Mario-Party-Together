@@ -1,0 +1,39 @@
+Apply order 0028 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+armem: HuARMalloc returns zeroed ARAM blocks, on MPT_PC
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+ADR 0008, "Stale heap bytes: game heaps return zeroed blocks on PC". HuARMalloc sub-allocates
+emulated ARAM with its own first-fit list (ARInfo). ARAM in use is hashed, and its contents are DMA'd
+from main RAM as well as read from disc, so a reused ARAM block can carry host-layout bytes too.
+HuARMalloc now clears the whole block it returns (curr->size, after the split) through the SDK's
+PC-only mpt_gc_ARClear (runtimes/gc_wii/sdk/include/mpt_gc/ar.h): emulated ARAM lives in the arena,
+so it is a plain memset, with no DMA and no callback. Zero-on-alloc, never on free. Unconditional on
+PC.
+
+diff --git a/src/game/armem.c b/src/game/armem.c
+index 0d6f3d7..1ff6386 100644
+--- a/src/game/armem.c
++++ b/src/game/armem.c
+@@ -7,6 +7,10 @@
+ 
+ #define ARMEM_BLOCK_MAX 64
+ 
++#ifdef MPT_PC
++void mpt_gc_ARClear(u32 aram_addr, u32 length); /* the SDK's PC-only ARAM clear (mpt_gc/ar.h) */
++#endif
++
+ typedef struct ARMemBlock_s ARMEM_BLOCK;
+ 
+ struct ARMemBlock_s {
+@@ -109,6 +113,11 @@ AMEM_PTR HuARMalloc(u32 size) {
+         curr->dir = next->dir = 0xFFFF;
+         next->flag = 0;
+     }
++#ifdef MPT_PC
++    /* ADR 0008, "Stale heap bytes": the whole ARAM block is zero when it is returned. ARAM in use is
++     * hashed, and its contents come from main RAM by DMA as well as from disc. */
++    mpt_gc_ARClear(curr->aMemP, curr->size);
++#endif
+     return curr->aMemP;
+ }
+ 
