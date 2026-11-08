@@ -399,7 +399,7 @@ std::uint64_t ModuleSymbols::canonical(std::uintptr_t p, PointerClass* cls) cons
     out = PointerClass::cxx;
     return mix(kTagCxx ^ static_cast<std::uint64_t>(sec->kind));
   }
-  out = PointerClass::symbol;
+  out = sec->kind == SectionKind::code && p != sym->addr ? PointerClass::code_interior : PointerClass::symbol;
   return mix(kTagSymbol ^ mix(sym->id + 0x9E3779B97F4A7C15ull * (p - sym->addr)));
 }
 

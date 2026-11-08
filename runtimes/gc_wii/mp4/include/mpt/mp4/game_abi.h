@@ -268,7 +268,9 @@ typedef struct MptMp4Api {
    * the hash). Parts: "fields", "sdk", one "sym <range>:<symbol>" per game data symbol name,
    * "symbols", one "<kind> <arena offset>" per RAM range, "aram", "memory". Then, outside the hash,
    * "count <rule>" with the number of words each canonicalization rule changed in its size field
-   * (arena, module_symbol, module_text, module_cxx, module_unknown, nan32, nan64). Diffing two lists
+   * (arena, module_symbol, module_text, module_cxx, module_unknown, nan32, nan64), and two layout
+   * hazards it leaves as they are (module_code_interior, module_misaligned), each also with a "note"
+   * line. Diffing two lists
    * finds the symbol or range where two platforms differ (E3c). Same flag and refusal as
    * debug_deep_hash. Names are valid only during the call. */
   int32_t (*debug_hash_items)(const MptMp4Game* game, MptMp4HashItemFn fn, void* user);

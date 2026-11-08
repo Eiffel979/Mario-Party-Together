@@ -29,6 +29,10 @@ enum class PointerClass : std::uint8_t {
   text,     // a string literal, by its text
   cxx,      // a C++ symbol: one value for all of them (MSVC and Itanium mangle differently)
   unknown,  // no symbol at or below it in its section, or no section
+  // A C symbol in code at a nonzero offset: hashed like `symbol`, but no function pointer the game
+  // stores looks like this (coroutine stacks are hashed by record), so it is most likely an integer
+  // pair that happens to fall inside the module (diagnostics only, debug_hash_items).
+  code_interior,
 };
 
 struct ModuleSymbol {
