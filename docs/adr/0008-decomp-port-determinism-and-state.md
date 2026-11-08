@@ -443,11 +443,13 @@ There is a common cause. `HuMem`, `OSAlloc` and the sub-allocators that run insi
 
 ### Decision: zero every block on allocation, in every game heap
 1. **Every byte of a block's user area is zero when the allocator returns it**, for every allocator whose memory the hash reads. That is each level of allocation, not only the outermost:
-   - `HuMem`: `HuMemMemoryAlloc`, so `HuMemDirectMalloc`, `HuMemDirectMallocNum` and every heap built on them. This is a Party Board patch in our series.
+   - `HuMem`: the static `HuMemMemoryAlloc2`, which both `HuMemMemoryAlloc` and `HuMemMemoryAllocNum` go through, so `HuMemDirectMalloc`, `HuMemDirectMallocNum` and every heap built on them are covered. This is a Party Board patch in our series.
    - The SDK's `OSAllocFromHeap`.
+   - **To the block's end, not the requested size.** The hash reads the whole block, so the zeroed range is everything after the header up to the block's end: `block->size - header` in `HuMem` (a block can be larger than the request when the remainder is too small to split), and `need - kHeader` in the SDK's `OSAllocFromHeap`. Every sub-allocator below follows the same rule.
    - **msm's sub-allocator.** msm takes one `HuMemDirectMalloc(HEAP_MUSIC, …)` block at boot, hands it to `msmMemInit`, and from then on sub-allocates inside it with its own first-fit allocator, `msmMemAlloc`. MusyX's `salMalloc` reaches that allocator through `sndSetHooks`. The hash reads the whole msm block, freed sub-blocks included, so zeroing the outer `HuMem` block once at boot does not help. `msmMemAlloc`, and `msmSndMalloc` if it is a separate path, zero on allocation, in a Party Board patch of their own.
    - **ARAM: `HuARMalloc`.** ARAM in use is hashed, so `HuARMalloc` blocks zero on allocation as well. Emulated ARAM lives in the arena (§7), so this is a plain `memset`. ARAM is not exempt: its contents are DMA'd from main RAM as well as from disc, so a stale ARAM block can carry host-layout bytes too.
    - **The general rule:** any sub-allocator that hands out pieces of a game-heap block, or of emulated ARAM, zeroes on allocation by the same rules. runtime-gc-wii lists every such allocator in `docs/titles/<id>.md` §11 (for MP4: `HuMem`, `msmMemAlloc`/`msmSndMalloc`, `HuARMalloc` and the SDK's `OSAlloc`), and a newly found one is added there and patched before its title's gate counts as met. A game pool that reuses fixed slots without an allocation call is not an allocator in this sense; point 6 covers it.
+   - **No realloc exists today.** `HuMem` has none, MSL's `realloc` is a stub and the SDK has none. If a realloc-style path is ever added, it keeps the old contents and zeroes the grown tail to the block's end.
 
    This is part of the PC build, the same on every platform. It is never a runtime option or a boot flag, and it goes into `build_id` through the patch set and the SDK sources, as any patch does.
 2. **On allocation, not on free.**
@@ -475,7 +477,7 @@ There is a common cause. `HuMem`, `OSAlloc` and the sub-allocators that run insi
 
 ### Acceptance (replaces the dump-lane counts in "Module words", point 6)
 The rest of "Module words" point 6 stands: the synthetic reader tests, the real-linker stub test and the base checks. The dump-lane part now reads:
-- **Unit:** a synthetic `OSAlloc` test in the SDK tests, and synthetic `HuMem`, `msmMemAlloc` and `HuARMalloc` tests where those allocators can be built without game material (otherwise a dump-lane check of the same thing). A block is filled with a pattern, freed and reallocated (whole, split, and merged with a neighbour) and reads back as all zero. Realloc growth zeroes the new tail and keeps the old contents.
+- **Unit:** a synthetic `OSAlloc` test in the SDK tests, and synthetic `HuMem`, `msmMemAlloc` and `HuARMalloc` tests where those allocators can be built without game material (otherwise a dump-lane check of the same thing). A block is filled with a pattern, freed and reallocated (whole, split, and merged with a neighbour) and reads back as all zero to the block's end, including a block larger than its request. If a realloc-style path is ever added, its test checks that the old contents are kept and the grown tail is zero.
 - **Layout gate:** the layout probe (ON against OFF) over the **full party played to `finished`**, exit 0 on both lanes, gives identical `state_hash` trails.
 - **Counts over that run, in heap blocks:** `module_code_interior`, `module_unknown`, `module_raw`, `module_misaligned` and `module_cxx` are all 0. A non-zero count is fixed by point 6 or 7 before the gate counts as met. "Explained" is no longer enough in heap blocks.
 - **Notes:** one run writes a note for every module hit, and runtime-gc-wii checks that each is a real pointer, as before.
@@ -491,6 +493,6 @@ The rest of "Module words" point 6 stands: the synthetic reader tests, the real-
 - **Hash only the bytes the game has written** (write tracking). Rejected: instrumenting every store in game code is far more expensive and invasive than a `memset` at allocation, and a read-before-write would still behave differently across platforms.
 
 ### Consequences
-- runtime-gc-wii: new Party Board patches (next in the series) for `HuMemMemoryAlloc`, for msm's `msmMemAlloc`/`msmSndMalloc`, and for `HuARMalloc`; zeroing in the SDK's `OSAllocFromHeap`; the allocator list in `mp4.md` §11; the unit tests; the cost measurement; the re-recorded same-platform trails; and `mp4.md` §11 (the divergence note) and §20 (the results, closing the open item on layout-dependent words).
+- runtime-gc-wii: new Party Board patches (next in the series) for `HuMemMemoryAlloc2`, for msm's `msmMemAlloc`/`msmSndMalloc`, and for `HuARMalloc`; zeroing in the SDK's `OSAllocFromHeap`; the allocator list in `mp4.md` §11; the unit tests; the cost measurement; the re-recorded same-platform trails; and `mp4.md` §11 (the divergence note) and §20 (the results, closing the open item on layout-dependent words).
 - qa-reviewer checks at merge that the zeroing is unconditional in the PC build, that the trails were re-recorded in the same change, and that the counts come from the full-party run.
 - No core contract changes. `kCoreContractVersion`, the module ABI version and the save-state layout stay as they are. The build fingerprint (§10) already keeps states from before and after apart.
