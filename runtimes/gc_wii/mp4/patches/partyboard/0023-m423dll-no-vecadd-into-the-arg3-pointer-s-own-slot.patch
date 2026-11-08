@@ -1,0 +1,88 @@
+Apply order 0023 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+m423Dll: no VECAdd into the arg3 pointer's own stack slot, on MPT_PC
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+In Goooooooal (m423), fn_1_137C4 ends each of its six hit cases with
+VECAdd((Vec *)&arg3, &sp10, (Vec *)&arg3): it adds to the bytes of the pointer arg3, not to the
+vector it points at. On the console that writes 12 bytes over a 4-byte stack slot and neighbours the
+function never reads again, so the game is unaffected. The module is built for 64 bits with /GS:
+the slot is 8 bytes, the write runs into the stack cookie and the function fails fast on return
+(0xC0000409). Seed 1's party autopilot stopped there in turn 19 (M4-01, docs/titles/mp4.md
+section 21). On MPT_PC the call is left out, which keeps the console's behaviour: the call never
+changed *arg3.
+
+diff --git a/src/REL/m423Dll/main.c b/src/REL/m423Dll/main.c
+index 79b2d54..9c032d8 100644
+--- a/src/REL/m423Dll/main.c
++++ b/src/REL/m423Dll/main.c
+@@ -5675,6 +5675,16 @@ float fn_1_1367C(Vec *arg0, Vec *arg1, Vec *arg2, Vec *arg3, f32 *arg4)
+     return VECMag(&sp8);
+ }
+ 
++#ifdef MPT_PC
++/* Each hit below adds sp10 to the bytes of the pointer arg3 itself ((Vec *)&arg3), not to *arg3. On the
++ * console that writes 12 bytes over a 4-byte stack slot and neighbours the function no longer reads,
++ * so it has no effect on the game. Here the slot is 8 bytes, and with /GS the overrun fails the stack
++ * cookie (0xC0000409) in Goooooooal (M4-01). Leaving it out keeps the console's behaviour. */
++#define M423_ARG3_SLOT_ADD() ((void)0)
++#else
++#define M423_ARG3_SLOT_ADD() VECAdd((Vec *)&arg3, &sp10, (Vec *)&arg3)
++#endif
++
+ s32 fn_1_137C4(Vec *arg0, Vec *arg1, Vec *arg2, Vec *arg3, float arg4, s32 arg5)
+ {
+     Vec sp40;
+@@ -5710,7 +5720,7 @@ s32 fn_1_137C4(Vec *arg0, Vec *arg1, Vec *arg2, Vec *arg3, float arg4, s32 arg5)
+                     arg3->x = temp_f30;
+                     arg3->y = arg0[0].y + arg4 + 1.0f;
+                     arg3->z = temp_f28;
+-                    VECAdd((Vec *)&arg3, &sp10, (Vec *)&arg3);
++                    M423_ARG3_SLOT_ADD();
+                     return 1;
+                 }
+             }
+@@ -5729,7 +5739,7 @@ s32 fn_1_137C4(Vec *arg0, Vec *arg1, Vec *arg2, Vec *arg3, float arg4, s32 arg5)
+                     arg3->x = temp_f30;
+                     arg3->y = arg0[0].y - arg4 - 1.0f;
+                     arg3->z = temp_f28;
+-                    VECAdd((Vec *)&arg3, &sp10, (Vec *)&arg3);
++                    M423_ARG3_SLOT_ADD();
+                     return 1;
+                 }
+             }
+@@ -5748,7 +5758,7 @@ s32 fn_1_137C4(Vec *arg0, Vec *arg1, Vec *arg2, Vec *arg3, float arg4, s32 arg5)
+                     arg3->x = arg0[0].x - arg4 - 1.0f;
+                     arg3->y = temp_f29;
+                     arg3->z = temp_f28;
+-                    VECAdd((Vec *)&arg3, &sp10, (Vec *)&arg3);
++                    M423_ARG3_SLOT_ADD();
+                     return 1;
+                 }
+             }
+@@ -5767,7 +5777,7 @@ s32 fn_1_137C4(Vec *arg0, Vec *arg1, Vec *arg2, Vec *arg3, float arg4, s32 arg5)
+                     arg3->x = arg0[0].x + arg4 + 1.0f;
+                     arg3->y = temp_f29;
+                     arg3->z = temp_f28;
+-                    VECAdd((Vec *)&arg3, &sp10, (Vec *)&arg3);
++                    M423_ARG3_SLOT_ADD();
+                     return 1;
+                 }
+             }
+@@ -5786,7 +5796,7 @@ s32 fn_1_137C4(Vec *arg0, Vec *arg1, Vec *arg2, Vec *arg3, float arg4, s32 arg5)
+                     arg3->x = temp_f30;
+                     arg3->y = temp_f29;
+                     arg3->z = arg0[0].z + arg4 + 1.0f;
+-                    VECAdd((Vec *)&arg3, &sp10, (Vec *)&arg3);
++                    M423_ARG3_SLOT_ADD();
+                     return 1;
+                 }
+             }
+@@ -5805,7 +5815,7 @@ s32 fn_1_137C4(Vec *arg0, Vec *arg1, Vec *arg2, Vec *arg3, float arg4, s32 arg5)
+                     arg3->x = temp_f30;
+                     arg3->y = temp_f29;
+                     arg3->z = arg0[0].z - arg4 - 1.0f;
+-                    VECAdd((Vec *)&arg3, &sp10, (Vec *)&arg3);
++                    M423_ARG3_SLOT_ADD();
+                     return 1;
+                 }
+             }

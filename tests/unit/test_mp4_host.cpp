@@ -14,6 +14,7 @@
 #include "mpt/mp4/adapter.h"
 #include "mpt/mp4/game_abi.h"
 #include "mpt/mp4/runtime.h"
+#include "mpt_mp4_party_flags.h"
 #include "../support/adapter_checks.h"
 
 namespace {
@@ -127,11 +128,12 @@ TEST_CASE("mpt_mp4_api_has_v1_1 accepts only a v1.1 table with status") {
   CHECK_FALSE(mpt_mp4_api_has_v1_1(&api));
   CHECK_FALSE(mpt_mp4_api_has_v1_1(nullptr));
 
-  // The appends sit where the size constants say (ABI v1.1, v1.2 and v1.3).
+  // The appends sit where the size constants say (ABI v1.1 to v1.4).
   CHECK(offsetof(MptMp4Api, status) == MPT_MP4_API_SIZE_V1_0);
   CHECK(offsetof(MptMp4Api, debug_perturb) == MPT_MP4_API_SIZE_V1_1);
   CHECK(offsetof(MptMp4Api, debug_deep_hash) == MPT_MP4_API_SIZE_V1_2);
-  CHECK(sizeof(MptMp4Api) == MPT_MP4_API_SIZE_V1_3);
+  CHECK(offsetof(MptMp4Api, memory_use) == MPT_MP4_API_SIZE_V1_3);
+  CHECK(sizeof(MptMp4Api) == MPT_MP4_API_SIZE_V1_4);
 }
 
 // P1-17: content IDs for the game's values, and readParty's whole snapshot from a raw read.
@@ -203,4 +205,79 @@ TEST_CASE("Mp4Adapter snapshot_of pairs the minigame phase with current_minigame
 
   // No party: an empty snapshot.
   CHECK(snapshot_of(with(party(0))) == mpt::PartySnapshot{});
+}
+
+// M4-01: the end of a 20-turn party as the dump lane saw it (seed 1, Toad's Midway Madness; frames in
+// docs/titles/mp4.md section 21). The game never moves GWSystem.turn past max_turn on a party board:
+// the board comes back from the last minigame, kills itself and returns to mstory3Dll.
+TEST_CASE("mpt_mp4_party_flags: the end of a party board's last turn") {
+  auto facts = [](std::int32_t turn, bool board, MptMp4Heading heading, bool setup = false) {
+    MptMp4PartyFacts f{};
+    f.party = 1;
+    f.turn = turn;
+    f.max_turn = 20;
+    f.setup_running = setup;
+    f.board_in_history = board;
+    f.heading = heading;
+    return f;
+  };
+  auto flags = [](const MptMp4PartyFacts& f) { return mpt_mp4_party_flags(&f); };
+  // Setup, after BoardSaveInit: turn 1/20 in mentDll.
+  CHECK(flags(facts(1, false, MPT_MP4_HEADING_SETUP, true)) == (kMode | kSetup));
+  // The last turn on the board and in its minigame: the board is in the history.
+  CHECK(flags(facts(20, true, MPT_MP4_HEADING_OTHER)) == (kMode | kInProgress));
+  // The board has returned (omcurovl is DLL_NONE, heading to mstory3Dll event 0): turns over.
+  CHECK(flags(facts(20, false, MPT_MP4_HEADING_BONUS_STARS)) == (kMode | kTurnsOver));
+  // The final ranking (mstory3Dll event 1), and whatever follows it: results final.
+  CHECK(flags(facts(20, false, MPT_MP4_HEADING_FINAL_RESULTS)) == (kMode | kTurnsOver | kFinal));
+  CHECK(flags(facts(20, false, MPT_MP4_HEADING_OTHER)) == (kMode | kTurnsOver | kFinal));
+  // A new party's setup in mentDll, before BoardSaveInit resets the turn: setup, not finished.
+  CHECK(flags(facts(20, false, MPT_MP4_HEADING_SETUP, true)) == (kMode | kSetup));
+  // Turns 1 to 19 off the board (minigame results, the instruction screen) are never over.
+  CHECK(flags(facts(19, false, MPT_MP4_HEADING_OTHER)) == kMode);
+  // The Extra Room boards move the turn past max_turn on the board (BoardTurnNext).
+  CHECK(flags(facts(21, true, MPT_MP4_HEADING_OTHER)) == (kMode | kInProgress | kTurnsOver));
+  CHECK(flags(facts(21, false, MPT_MP4_HEADING_OTHER)) == (kMode | kTurnsOver | kFinal));
+  // Not a party (story mode) or no turn count yet: no end flags.
+  MptMp4PartyFacts story = facts(20, false, MPT_MP4_HEADING_FINAL_RESULTS);
+  story.party = 0;
+  CHECK(flags(story) == 0u);
+  MptMp4PartyFacts unset = facts(0, false, MPT_MP4_HEADING_OTHER);
+  unset.max_turn = 0;
+  CHECK(flags(unset) == kMode);
+}
+
+TEST_CASE("Mp4Adapter snapshot_of on the raw end-of-party sequence") {
+  using namespace mpt::mp4;
+  const mpt::Catalog catalog = mpt::mp4::Mp4Adapter(dummy_runtime()).catalog();
+  // The raw reads in frame order: (flags, overlay), all at turn 20/20 on board 0.
+  struct Step {
+    std::uint32_t flags;
+    const char* overlay;
+    mpt::PartyPhase phase;
+  };
+  const Step steps[] = {
+      {kMode | kInProgress, "m428Dll", mpt::PartyPhase::minigame},  // the last minigame
+      {kMode | kInProgress, "resultDll", mpt::PartyPhase::board},   // its results
+      {kMode | kInProgress, "w01Dll", mpt::PartyPhase::board},      // the board, three frames
+      {kMode | kTurnsOver, "", mpt::PartyPhase::results},           // between overlays
+      {kMode | kTurnsOver, "mstory3Dll", mpt::PartyPhase::results}, // bonus stars
+      {kMode | kTurnsOver | kFinal, "", mpt::PartyPhase::finished}, // heading to event 1
+      {kMode | kTurnsOver | kFinal, "mstory3Dll", mpt::PartyPhase::finished},  // the final ranking
+  };
+  for (const Step& s : steps) {
+    MptMp4Party raw = party(s.flags, s.overlay);
+    raw.board = 0;
+    raw.turn = 20;
+    raw.max_turns = 20;
+    for (int i = 0; i < 4; ++i) raw.players[i] = {i, i > 0, 10 + i, i, 3 * i};
+    const mpt::PartySnapshot snap = snapshot_of(raw);
+    INFO(s.overlay);
+    CHECK(snap.phase == s.phase);
+    CHECK(snap.turn == 20);
+    CHECK(snap.max_turns == 20);
+    CHECK(snap.board->str() == "mp4.board.toads_midway_madness");
+    CHECK(snap.current_minigame.has_value() == (s.phase == mpt::PartyPhase::minigame));
+    CHECK(mpt::test::check_snapshot(snap, catalog).empty());
+  }
 }

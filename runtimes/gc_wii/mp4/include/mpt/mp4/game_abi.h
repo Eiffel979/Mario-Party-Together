@@ -185,6 +185,19 @@ typedef struct MptMp4Party {
   MptMp4PartyPlayer players[4];
 } MptMp4Party;
 
+/* v1.4: how much of the arena the game uses (memory_use). Sizes in bytes. */
+#define MPT_MP4_MEMORY_HEAPS 8u
+typedef struct MptMp4MemoryUse {
+  uint32_t struct_size;
+  uint32_t heap_count;       /* HuMem heaps listed below, in HeapID order (at most MPT_MP4_MEMORY_HEAPS) */
+  uint64_t main_ram;         /* emulated main RAM (the build constant) */
+  uint64_t osalloc_used;     /* main RAM in allocated OSAlloc blocks, headers included: the HuMem heaps
+                                and the SDK's own allocations */
+  uint64_t heap_size[MPT_MP4_MEMORY_HEAPS]; /* each HuMem heap's size */
+  uint64_t heap_used[MPT_MP4_MEMORY_HEAPS]; /* allocated in it, block headers included */
+  uint64_t aram_used;        /* ARAM below the ARAlloc top */
+} MptMp4MemoryUse;
+
 typedef void (*MptMp4ReportFn)(void* user, const char* text);
 
 typedef void (*MptMp4HashItemFn)(void* user, const char* name, uint64_t size, uint64_t digest);
@@ -259,6 +272,12 @@ typedef struct MptMp4Api {
    * finds the symbol or range where two platforms differ (E3c). Same flag and refusal as
    * debug_deep_hash. Names are valid only during the call. */
   int32_t (*debug_hash_items)(const MptMp4Game* game, MptMp4HashItemFn fn, void* user);
+
+  /* v1.4: the arena use right now (MptMp4MemoryUse), for sizing main RAM (ADR 0008 amendment, PRs #44
+   * and #46). Cheap and pure, like party: it walks the heap lists and changes nothing. Between steps
+   * only. Returns MPT_MP4_ERR_ARGUMENT for a null game, a null `out` or a struct_size below the v1.4
+   * size. NULL before v1.4. */
+  int32_t (*memory_use)(const MptMp4Game* game, MptMp4MemoryUse* out);
 } MptMp4Api;
 
 typedef enum MptMp4PerturbTarget {
@@ -284,6 +303,8 @@ typedef enum MptMp4PerturbTarget {
 #define MPT_MP4_API_SIZE_V1_1 168u /* adds status */
 #define MPT_MP4_API_SIZE_V1_2 176u /* adds debug_perturb */
 #define MPT_MP4_API_SIZE_V1_3 192u /* adds debug_deep_hash and debug_hash_items */
+#define MPT_MP4_API_SIZE_V1_4 200u /* adds memory_use */
+#define MPT_MP4_MEMORY_USE_SIZE_V1_4 160u
 
 MPT_MP4_STATIC_ASSERT(sizeof(void*) == 8, "the MP4 game module ABI is defined for 64-bit hosts");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Error) == MPT_MP4_ERROR_SIZE_V1_0, "MptMp4Error v1.0");
@@ -291,7 +312,9 @@ MPT_MP4_STATIC_ASSERT(sizeof(MptMp4BootConfig) == MPT_MP4_BOOT_CONFIG_SIZE_V1_0,
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Video) == MPT_MP4_VIDEO_SIZE_V1_0, "MptMp4Video v1.0");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Audio) == MPT_MP4_AUDIO_SIZE_V1_0, "MptMp4Audio v1.0");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Party) == MPT_MP4_PARTY_SIZE_V1_0, "MptMp4Party v1.0");
-MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Api) == MPT_MP4_API_SIZE_V1_3, "MptMp4Api v1.3");
+MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Api) == MPT_MP4_API_SIZE_V1_4, "MptMp4Api v1.4");
+MPT_MP4_STATIC_ASSERT(offsetof(MptMp4Api, memory_use) == MPT_MP4_API_SIZE_V1_3, "memory_use is the v1.4 append");
+MPT_MP4_STATIC_ASSERT(sizeof(MptMp4MemoryUse) == MPT_MP4_MEMORY_USE_SIZE_V1_4, "MptMp4MemoryUse v1.4");
 MPT_MP4_STATIC_ASSERT(offsetof(MptMp4Api, status) == MPT_MP4_API_SIZE_V1_0, "status is the v1.1 append");
 MPT_MP4_STATIC_ASSERT(offsetof(MptMp4Api, debug_perturb) == MPT_MP4_API_SIZE_V1_1, "debug_perturb is the v1.2 append");
 MPT_MP4_STATIC_ASSERT(offsetof(MptMp4Api, debug_deep_hash) == MPT_MP4_API_SIZE_V1_2, "debug_deep_hash is the v1.3 append");
