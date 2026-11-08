@@ -135,11 +135,24 @@ list(TRANSFORM GAME_FILES PREPEND "${MPT_MP4_PB}/")
 list(TRANSFORM MPT_MP4_MSM_FILES PREPEND "${MPT_MP4_PB}/")
 # Our replacements for Party Board's port layer (include/mpt_mp4_port.h) and its coroutines.
 set(MPT_MP4_PORT_FILES src/port.c src/sdk_bridge.c src/libco.c src/layout_check.c src/game_reads.c src/msm_swap.c src/msm_diag.c)
-# Test only: src/layout_probe.c, first in the link, moves the module's code and the game core's data so
-# a Windows run can check that state_hash does not depend on the module layout (docs/titles/mp4.md 20).
-option(MPT_MP4_LAYOUT_PROBE "Test only: shift the module's code and game data to check state_hash's layout independence" OFF)
+# Test only: src/layout_probe.c, first in the link, moves parts of the module so a Windows run can check
+# that state_hash does not depend on the module layout (docs/titles/mp4.md 20). OFF in every normal build;
+# the recipe passes it only from a test build (host/CMakeLists.txt), and the mode is part of the build ID.
+#  - ON:     8 KiB of code, 4 KiB + 24 bytes at the start of the game core's data and of its rodata;
+#  - rodata: the rodata padding only, which moves only the game core's read-only data (and the sections
+#            after .rdata by whole pages).
+set(MPT_MP4_LAYOUT_PROBE OFF CACHE STRING "Test only: OFF, ON or rodata; shift parts of the module to check state_hash's layout independence")
+set_property(CACHE MPT_MP4_LAYOUT_PROBE PROPERTY STRINGS OFF ON rodata)
 set(_mp4_probe "")
-if(MPT_MP4_LAYOUT_PROBE)
+set(_mp4_probe_defs "")
+if(MPT_MP4_LAYOUT_PROBE STREQUAL "ON")
+  set(_mp4_probe_defs MPT_MP4_LAYOUT_PROBE_TU MPT_MP4_LAYOUT_PROBE_CODE MPT_MP4_LAYOUT_PROBE_DATA MPT_MP4_LAYOUT_PROBE_RODATA)
+elseif(MPT_MP4_LAYOUT_PROBE STREQUAL "rodata")
+  set(_mp4_probe_defs MPT_MP4_LAYOUT_PROBE_TU MPT_MP4_LAYOUT_PROBE_RODATA)
+elseif(NOT MPT_MP4_LAYOUT_PROBE STREQUAL "OFF")
+  message(FATAL_ERROR "MPT_MP4_LAYOUT_PROBE must be OFF, ON or rodata, not '${MPT_MP4_LAYOUT_PROBE}'")
+endif()
+if(_mp4_probe_defs)
   set(_mp4_probe src/layout_probe.c)
   list(APPEND MPT_MP4_PORT_FILES src/layout_probe.c)
 endif()
@@ -149,9 +162,9 @@ set_source_files_properties(${GAME_FILES} ${MPT_MP4_MSM_FILES} TARGET_DIRECTORY 
                             PROPERTIES COMPILE_OPTIONS "${MPT_MP4_NOWARN}")
 set_source_files_properties(${MPT_MP4_PORT_FILES} TARGET_DIRECTORY mpt_mp4_dol
                             PROPERTIES COMPILE_OPTIONS "${MPT_MP4_WARN_FLAGS}")
-if(MPT_MP4_LAYOUT_PROBE)
+if(_mp4_probe_defs)
   set_source_files_properties(src/layout_probe.c TARGET_DIRECTORY mpt_mp4_dol
-                              PROPERTIES COMPILE_DEFINITIONS MPT_MP4_LAYOUT_PROBE_TU)
+                              PROPERTIES COMPILE_DEFINITIONS "${_mp4_probe_defs}")
 endif()
 
 # Party Board port code we reuse unchanged: the 64-bit HSF model-format conversion (P1-15 piece 4).

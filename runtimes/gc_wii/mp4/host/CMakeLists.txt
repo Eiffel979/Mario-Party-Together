@@ -51,11 +51,19 @@ set(_args "-DMPT_GX_BACKEND=${MPT_GX_BACKEND}" "-DMPT_DAWN_PREFIX=${MPT_DAWN_PRE
 if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
   list(APPEND _args "-DCMAKE_PREFIX_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
 endif()
-# Test only: build the module with the layout probe (mp4/src/layout_probe.c). Its trail must equal a
-# normal module's; it has its own build ID through the arguments' hash.
-option(MPT_MP4_RECIPE_LAYOUT_PROBE "Test only: the recipe builds the MP4 module with its layout probe" OFF)
-if(MPT_MP4_RECIPE_LAYOUT_PROBE)
-  list(APPEND _args "-DMPT_MP4_LAYOUT_PROBE=ON")
+# Test only: build the module with the layout probe (mp4/src/layout_probe.c): OFF, ON or rodata (see
+# MPT_MP4_LAYOUT_PROBE there). Its trail must equal a normal module's; it has its own build ID through the
+# arguments' hash, so its replays and save states never match a normal module's. Only a test build
+# (MPT_BUILD_TESTS) may set it, and never a CI preset (MPT_WARNINGS_AS_ERRORS).
+set(MPT_MP4_RECIPE_LAYOUT_PROBE OFF CACHE STRING "Test only: OFF, ON or rodata; the recipe builds the MP4 module with its layout probe")
+set_property(CACHE MPT_MP4_RECIPE_LAYOUT_PROBE PROPERTY STRINGS OFF ON rodata)
+if(NOT MPT_MP4_RECIPE_LAYOUT_PROBE STREQUAL "OFF" AND (NOT MPT_BUILD_TESTS OR MPT_WARNINGS_AS_ERRORS))
+  message(FATAL_ERROR "MPT_MP4_RECIPE_LAYOUT_PROBE is test only: it needs MPT_BUILD_TESTS=ON and no CI preset")
+endif()
+if(MPT_MP4_RECIPE_LAYOUT_PROBE STREQUAL "ON" OR MPT_MP4_RECIPE_LAYOUT_PROBE STREQUAL "rodata")
+  list(APPEND _args "-DMPT_MP4_LAYOUT_PROBE=${MPT_MP4_RECIPE_LAYOUT_PROBE}")
+elseif(NOT MPT_MP4_RECIPE_LAYOUT_PROBE STREQUAL "OFF")
+  message(FATAL_ERROR "MPT_MP4_RECIPE_LAYOUT_PROBE must be OFF, ON or rodata, not '${MPT_MP4_RECIPE_LAYOUT_PROBE}'")
 endif()
 # The arguments select a different module from the same tree, so they go into the build ID, but by a
 # path-independent identity: two developers building the same commit get the same id (#55 review).
