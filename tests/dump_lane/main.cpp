@@ -109,6 +109,7 @@ struct BootOptions {
   std::uint32_t perturb_samples = 32;  // sampled bytes per checkpoint with --perturb
   std::filesystem::path hash_items;    // --hash-items FILE: state_hash's parts at the last checkpoint
   bool note_module_hits = false;       // --note-module-hits: with --hash-items, a note per module hit
+  bool frame_times = false;            // --frame-times: with --party, steady-state frame times
   bool conformance = false;            // --conformance: the runtime conformance suite instead of a boot run
   std::uint64_t save_load_diff = 0;    // --save-load-diff N: where a resumed run first differs, by hash item
   // M2: scripted input on player 1 and frame captures.
@@ -496,6 +497,61 @@ struct HashItemTally {
   }
 };
 
+// `--party --frame-times` (ADR 0008, "Stale heap bytes", point 5): how long each step takes, for the
+// cost of a change measured against another build. Exempt frames are chosen by game-visible events
+// only, so two builds exempt exactly the same frames: the boot frames until the first frame of
+// bootDll, any frame in which the overlay changes, and any frame in which the SDK completes a DVD
+// read or an ARAM transfer (ABI v1.4 memory_use's I/O counts, read after the step). Prints the total
+// step time over every frame and the p99 over the rest.
+struct FrameClock {
+  std::vector<double> steady_ms;
+  double total_ms = 0;
+  std::uint64_t frames = 0, exempt = 0;
+  bool booted = false;
+  std::string overlay;
+  std::uint64_t dvd = 0, aram = 0;
+
+  void step(std::chrono::steady_clock::duration d, mpt::mp4::Mp4Runtime* mp4) {
+    const double ms = std::chrono::duration<double, std::milli>(d).count();
+    total_ms += ms;
+    ++frames;
+    MptMp4Party raw{};
+    raw.struct_size = sizeof raw;
+    std::uint64_t dvd_now = dvd, aram_now = aram;
+    if (mp4 != nullptr) {
+      mp4->readParty(raw);
+      if (const std::optional<MptMp4MemoryUse> use = mp4->memoryUse()) {
+        dvd_now = use->dvd_reads;
+        aram_now = use->aram_transfers;
+      }
+    }
+    const std::string now = raw.overlay_name;
+    if (now == "bootDll") booted = true;
+    const bool is_exempt = !booted || now != overlay || dvd_now != dvd || aram_now != aram;
+    overlay = now;
+    dvd = dvd_now;
+    aram = aram_now;
+    if (is_exempt) {
+      ++exempt;
+    } else {
+      steady_ms.push_back(ms);
+    }
+  }
+
+  void print() {
+    double p99 = 0;
+    if (!steady_ms.empty()) {
+      const std::size_t k = (steady_ms.size() * 99) / 100;
+      std::nth_element(steady_ms.begin(), steady_ms.begin() + static_cast<std::ptrdiff_t>(k), steady_ms.end());
+      p99 = steady_ms[k];
+    }
+    std::printf("dump lane: frame times: %llu frames, total step time %.1f s, p99 %.3f ms over %zu steady frames "
+                "(%llu exempt)\n",
+                static_cast<unsigned long long>(frames), total_ms / 1000.0, p99, steady_ms.size(),
+                static_cast<unsigned long long>(exempt));
+  }
+};
+
 // `--party` (M4-01): a whole party on the autopilot, through a Session, recorded as an .mptr with blank
 // media. The oracle is Session::director(): the run passes once its phase is `finished`. It fails on
 // a halt or fault, on a soft lock (no change of phase, overlay or turn for --watchdog frames) or when
@@ -541,6 +597,7 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
   auto* mp4 = dynamic_cast<mpt::mp4::Mp4Runtime*>(&session->runtime());
   if (mp4 != nullptr) mp4->setReportSink(&print_report, nullptr);
   HashItemTally tally;
+  FrameClock frame_clock;
   std::printf("dump lane: party autopilot, seed %llu, board %d, watchdog %llu frames\n",
               static_cast<unsigned long long>(options.seed), options.script.board,
               static_cast<unsigned long long>(options.watchdog));
@@ -608,7 +665,9 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
     mpt::InputFrame in;
     in.frame = f;
     in.pads[0] = mpt::dump_lane::party_autopilot(options.script, f, tracker.key(), tracker.sinceChange());
+    const auto step_t0 = std::chrono::steady_clock::now();
     const mpt::Result stepped = session->step(in);
+    if (options.frame_times) frame_clock.step(std::chrono::steady_clock::now() - step_t0, mp4);
     if (!resumed && session->frame() == f + 1) {
       if (mpt::Result r = recorder.record(in, *session); !r) {
         failure = "record: " + r.error();
@@ -678,6 +737,7 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
                 std::chrono::duration<double, std::micro>(hash_time).count() / static_cast<double>(hash_calls),
                 static_cast<unsigned long long>(hash_calls));
   if (items_wanted && !tally.finish(options.hash_items) && failure.empty()) failure = "could not write the hash notes";
+  if (options.frame_times) frame_clock.print();
 
   if (last_use) {
     const auto mib = [](std::uint64_t b) { return static_cast<double>(b) / (1024.0 * 1024.0); };
@@ -997,6 +1057,8 @@ int main(int argc, char** argv) {
       // for layout_perturbation.cmake to check its two lanes. Needs no dump.
       std::printf("dump lane: layout probe %s\n", MPT_DUMP_LANE_LAYOUT_PROBE);
       return 0;
+    } else if (arg == "--frame-times") {
+      boot_options.frame_times = true;
     } else if (arg == "--note-module-hits") {
       boot_options.note_module_hits = true;
     } else if (arg == "--perturb-samples" && has_value) {
@@ -1046,7 +1108,7 @@ int main(int argc, char** argv) {
                   "                     [--hash-items FILE [--note-module-hits]] [--conformance] [--save-load-diff N]\n"
                   "                     [--press button@frame[+frames][,...]]... [--capture DIR [--capture-every N]]\n"
                   "                     [--party [--party-board N] [--party-wheel FROM:TO] [--watchdog N] [--replay FILE]\n"
-                  "                              [--hash-items FILE [--note-module-hits]]\n"
+                  "                              [--hash-items FILE [--note-module-hits]] [--frame-times]\n"
                   "                              [--party-save-at N FILE] [--party-resume FILE]]\n"
                   "                     [--verify-replay FILE]]\n"
                   "       mpt_dump_lane --layout-probe\n");
