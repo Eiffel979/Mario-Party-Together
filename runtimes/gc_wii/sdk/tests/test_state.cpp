@@ -232,6 +232,53 @@ TEST_CASE("OSAlloc heaps live in the arena and coalesce") {
   CHECK(ok);
 }
 
+// ADR 0008, "Stale heap bytes: game heaps return zeroed blocks on PC": whatever a block's earlier
+// occupants (or the free list's own headers) left, OSAllocFromHeap returns it all zero. Reused whole,
+// split from a larger free block, and merged from two freed neighbours. (This heap has no realloc.)
+TEST_CASE("OSAllocFromHeap returns zeroed blocks whatever was there before") {
+  bool ok = true;
+  Game g{[&] {
+    void* lo = OSInitAlloc(OSGetArenaLo(), OSGetArenaHi(), 1);
+    const OSHeapHandle h = OSCreateHeap(lo, static_cast<std::byte*>(lo) + 0x10000);
+    const auto fill = [](void* p, std::size_t n, unsigned char v) { std::memset(p, v, n); };
+    const auto zero = [](const void* p, std::size_t n) {
+      const auto* b = static_cast<const unsigned char*>(p);
+      for (std::size_t i = 0; i < n; ++i)
+        if (b[i] != 0) return false;
+      return true;
+    };
+    // Whole: the same size again lands in the same block.
+    void* a = OSAllocFromHeap(h, 256);
+    void* guard = OSAllocFromHeap(h, 64);  // keeps a's block from merging into the tail
+    fill(a, 256, 0xA5);
+    OSFreeToHeap(h, a);
+    void* a2 = OSAllocFromHeap(h, 256);
+    ok = ok && a2 == a && zero(a2, 256);
+    // Split: a smaller block from the freed one, and the remainder after it.
+    fill(a2, 256, 0x5A);
+    OSFreeToHeap(h, a2);
+    void* s1 = OSAllocFromHeap(h, 64);
+    void* s2 = OSAllocFromHeap(h, 128);  // starts inside the old block, where a free header sat
+    ok = ok && s1 == a && s2 == static_cast<std::byte*>(a) + 64 + 32;
+    // s2's block keeps the 32 bytes too small to split off, so it is larger than its request: zero to
+    // the block's end, which the state hash reads.
+    ok = ok && zero(s1, 64) && zero(s2, 128 + 32);
+    // Merged: two freed neighbours coalesce, and one block spanning both (and the header between
+    // them) comes back zero.
+    fill(s1, 64, 0xC3);
+    fill(s2, 128, 0x3C);
+    OSFreeToHeap(h, s1);
+    OSFreeToHeap(h, s2);
+    void* m = OSAllocFromHeap(h, 256);
+    ok = ok && m == a && zero(m, 256);
+    OSFreeToHeap(h, m);
+    OSFreeToHeap(h, guard);
+  }};
+  auto sdk = boot(g);
+  CHECK(step(*sdk) == StepStatus::halted);
+  CHECK(ok);
+}
+
 // P1-16: the memory a title's state hash covers. Free heap space never appears; allocated blocks
 // and main RAM outside every heap do, in address order.
 TEST_CASE("hashed RAM ranges cover allocated blocks and RAM outside heaps, never free space") {

@@ -273,7 +273,12 @@ void* OSAllocFromHeap(OSHeapHandle heap, u32 size) {
       unlink(h.free_head, off);
     }
     pushFront(h.alloc_head, off);
-    return impl().arena + off + kHeader;
+    // ADR 0008, "Stale heap bytes: game heaps return zeroed blocks on PC": the whole user area is zero
+    // when it is returned, whatever earlier blocks (or free-list headers of split and merged blocks)
+    // left there. Always, on every platform. There is no realloc in this heap.
+    std::byte* user = impl().arena + off + kHeader;
+    std::memset(user, 0, b->size - kHeader);
+    return user;
   }
   if (impl().config.fault_on_alloc_failure)
     fatal("OSAllocFromHeap: heap " + std::to_string(heap) + " has no free block for " + std::to_string(size) + " bytes");

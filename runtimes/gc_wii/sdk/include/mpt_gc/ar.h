@@ -28,6 +28,10 @@ ARCallback ARRegisterDMACallback(ARCallback callback);
 /* `mainmem_addr` is a host pointer into main RAM, passed as an integer like the SDK. */
 void ARStartDMA(u32 type, uintptr_t mainmem_addr, u32 aram_addr, u32 length);
 u32 ARGetDMAStatus(void);
+/* PC only, not a console SDK call (ADR 0008, "Stale heap bytes: game heaps return zeroed blocks on
+ * PC"): zeroes [aram_addr, aram_addr + length) of emulated ARAM, for a title's own ARAM allocator
+ * (MP4's HuARMalloc) to return zeroed blocks. ARAlloc does the same itself. No DMA, no callback. */
+void mpt_gc_ARClear(u32 aram_addr, u32 length);
 
 #define ARQ_TYPE_MRAM_TO_ARAM ARAM_DIR_MRAM_TO_ARAM
 #define ARQ_TYPE_ARAM_TO_MRAM ARAM_DIR_ARAM_TO_MRAM
