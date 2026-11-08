@@ -167,6 +167,19 @@ There is no GBA link, no microphone, no keyboard and no Wii hardware. Input is t
 
 - Game heaps (`game/malloc.c`): `HEAP_HEAP` 2.25 MB, `HEAP_SOUND` 1.25 MB, `HEAP_MODEL` 10.5 MB, `HEAP_DVD` 5.5 MB, plus `HEAP_SPACE`. They are carved from the OS arena after a 1 MB GX FIFO and the framebuffers. ARAM (16 MB) holds cached data dirs and MusyX samples. The ADR 0008 §7 single arena of main RAM plus ARAM fits.
 - Heap block headers contain raw pointers and (on console) return addresses, so hashes must never cover raw arena bytes (ADR 0008 §8 already says this).
+- **PC game heaps return zeroed blocks** (ADR 0008, "Stale heap bytes: game heaps return zeroed blocks on PC"; a deliberate divergence from the console, like the constant heap-header caller in §7). On the console a fresh block holds whatever its earlier occupants left. On a 64-bit host that is often half of an 8-byte pointer, so it depends on the module layout and differs between Windows and Linux, in the hash and in any field read before it is written. Every allocator below clears the whole block it returns, to the block's end, not just the request: on allocation, never on free, unconditionally in the PC build. The arena itself is zero at boot (ADR 0008 §7).
+- **Every allocator that hands out game-heap or emulated-ARAM memory, and what zeroes it:**
+
+  | Allocator | Where it allocates | Zeroing |
+  |---|---|---|
+  | SDK `OSAllocFromHeap` (`OSAlloc`) | the OS arena's heaps: the HuMem heaps at boot (`HuMemInitAll`), the GX FIFO and the SDK's own blocks | `sdk/src/heap.cpp`, to the block's end |
+  | SDK `ARAlloc` | emulated ARAM, a stack from `AR_RESERVED_BYTES` | `sdk/src/ar.cpp` |
+  | `HuMemMemoryAlloc2` (`HuMemMemoryAlloc`, `…AllocNum`, so `HuMemDirectMalloc`, `HuMemDirectMallocNum` and `HuPrcMemAlloc`) | each HuMem heap, and each process's own heap (`process.c` runs `HuMemHeapInit` on a HuMem block for the process, its stack and its `HuPrcMemAlloc` memory) | Party Board patch 0026 |
+  | `msmMemAlloc` (and patch 0001's `msmSndMalloc`, MusyX's `salMalloc` hook, which only forwards to it) | one `HEAP_MUSIC` block taken by `audio.c`, handed to `msmMemInit`; first fit inside it | patch 0027, up to the next block header, clamped to msm's heap end |
+  | `HuARMalloc` (`armem.c`) | emulated ARAM from `0x20` to `ARGetSize()`, first fit over `ARInfo` | patch 0028, through the SDK's PC-only `mpt_gc_ARClear` |
+
+  `OSAllocFixed` is not zeroed: MP4 calls it only at boot (`init.c`), on an arena that is still zero, and it claims a fixed range rather than handing out a fresh block. A game pool that reuses its own fixed slots without an allocation call is not an allocator here (ADR 0008, same ruling, point 6).
+- **msm's PC block header is larger than its layout assumes.** On a 64-bit host `MSMBLOCK` is 48 bytes, but `msmMemAlloc` still sizes and places blocks for a 32-byte header. Each block therefore takes 16 bytes more than msm accounts for, and a heap allocated close to full would run past its end into the next HuMem block. Patch 0027 clamps its zeroing to msm's heap end, so it never writes outside msm's heap; the overrun itself predates it and is open (it needs msm's sizing fixed for the PC header).
 - **Save states into a fresh process (E5)** need: the arena reserved at a fixed virtual address; HuPrc coroutine stacks inside the arena; and the game module loaded at a fixed base (ADR 0008 §11. Windows: fixed image base, no dynamic base. Linux: no fixed-address `dlopen`, so either a non-PIE module mapped at its fixed address by our own loader, or relocation on load). Without a fixed base, every function pointer saved in the arena (process entry points, object callbacks, overlay hooks) is wrong in a new process. **Flagged as a risk to E5.**
 
 ## 12. Catalog: content IDs
