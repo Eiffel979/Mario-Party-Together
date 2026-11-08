@@ -215,3 +215,108 @@ jobs:
 
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
+
+  # MP4 game module, compile-only (ADR 0009, Consequences; M4-12). Builds mp4_game from the pins
+  # in runtimes/gc_wii/mp4/decomp.lock with no dump: no artifacts are kept or uploaded, and no test
+  # that loads or runs the module is executed (mp4_game_abi is excluded below). A separate job, so
+  # a module compile failure does not hide the main build's result.
+  # Every cache step here is restore-only: this job never saves a cache, so nothing it fetches
+  # (Party Board in particular) or builds is ever cached.
+  # continue-on-error until the first Linux build of mp4_game is green; then remove it so the job
+  # becomes required.
+  mp4-module:
+    name: MP4 game module, compile-only (ubuntu-24.04)
+    needs: compliance
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: 45
+    env:
+      MPT_VCPKG_DIR: ${{ github.workspace }}/../vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/../vcpkg-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          # Same set as the build job: clang for runtimes/gc_wii (ADR 0008 rule 4), llvm for the
+          # MP4 REL tools and link checks, lld for the module's fixed image base.
+          sudo apt-get install -y clang llvm lld ninja-build pkg-config autoconf automake libtool \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev \
+            libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols \
+            libegl1-mesa-dev libgl1-mesa-dev libdrm-dev libgbm-dev \
+            libasound2-dev libpulse-dev libpipewire-0.3-dev libudev-dev libdbus-1-dev libibus-1.0-dev
+
+      - name: Show the Clang toolchain
+        run: |
+          clang --version
+          clang++ --version
+          llvm-nm --version
+          ld.lld --version
+
+      # Restore-only: the build job owns saving this cache.
+      - name: Restore vcpkg binary cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-ubuntu-24.04-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: vcpkg-ubuntu-24.04-${{ env.VCPKG_COMMIT }}-
+
+      - name: Bootstrap vcpkg
+        run: |
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+          git clone https://github.com/microsoft/vcpkg "$MPT_VCPKG_DIR"
+          git -C "$MPT_VCPKG_DIR" checkout "$VCPKG_COMMIT"
+          "$MPT_VCPKG_DIR/bootstrap-vcpkg.sh" -disableMetrics
+          echo "VCPKG_ROOT=$MPT_VCPKG_DIR" >> "$GITHUB_ENV"
+
+      - name: Set the GX source and Dawn paths
+        run: |
+          root="$GITHUB_WORKSPACE/../mpt-gx"
+          mkdir -p "$root"
+          echo "MPT_GX_SOURCES=$root/s" >> "$GITHUB_ENV"
+          echo "MPT_GX_DAWN=$root/dawn" >> "$GITHUB_ENV"
+
+      - name: Configure (to build the source fetcher)
+        run: cmake --preset ci-linux
+
+      - name: Build the source fetcher
+        run: cmake --build --preset ci-linux --target mpt_fetch_sources
+
+      # Fetched fresh every run (no cache): aurora, then the full decomp.lock (Party Board, MusyX
+      # and aurora). The fetcher verifies each commit and tree.
+      - name: Fetch and verify aurora (aurora.lock)
+        run: build/ci-linux/runtimes/gc_wii/gx/tools/mpt_fetch_sources --lock runtimes/gc_wii/gx/aurora.lock --cache "$MPT_GX_SOURCES"
+
+      - name: Fetch and verify Party Board, MusyX and aurora (decomp.lock)
+        run: build/ci-linux/runtimes/gc_wii/gx/tools/mpt_fetch_sources --lock runtimes/gc_wii/mp4/decomp.lock --cache "$MPT_GX_SOURCES"
+
+      # Restore-only: the build job owns saving this cache. It holds only generated WebGPU headers.
+      - name: Restore the headers-only Dawn prefix
+        id: dawn-headers
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.MPT_GX_DAWN }}
+          key: gx-dawn-headers-ubuntu-24.04-${{ hashFiles('runtimes/gc_wii/gx/dawn.lock', 'runtimes/gc_wii/gx/tools/build_dawn.cmake') }}
+
+      - name: Make the headers-only Dawn prefix (dawn.lock)
+        if: ${{ steps.dawn-headers.outputs.cache-hit != 'true' }}
+        run: |
+          tool="$PWD/build/ci-linux/runtimes/gc_wii/gx/tools/mpt_fetch_sources"
+          cmake "-DMPT_FETCH_TOOL=$tool" "-DMPT_SOURCE_CACHE=$MPT_GX_SOURCES" "-DMPT_DAWN_PREFIX=$MPT_GX_DAWN" \
+                -DMPT_DAWN_HEADERS_ONLY=ON -P runtimes/gc_wii/gx/tools/build_dawn.cmake
+
+      - name: Configure (MP4 game module ON)
+        run: >-
+          cmake --preset ci-linux -DMPT_REQUIRE_GX=ON -DMPT_REQUIRE_MUSYX=ON -DMPT_BUILD_MP4_GAME_MODULE=ON
+          "-DMPT_SOURCE_CACHE=${{ env.MPT_GX_SOURCES }}" "-DMPT_DAWN_PREFIX=${{ env.MPT_GX_DAWN }}"
+
+      # Only the Clang sub-build (runtimes/gc_wii), which holds mp4_game and its tests.
+      - name: Build the GC/Wii layer and the MP4 game module
+        run: cmake --build --preset ci-linux --target mpt_gc_wii_clang
+
+      # The Clang sub-build's tests only, without mp4_game_abi: it loads and calls the module,
+      # which ADR 0009 does not allow in public CI. Not the root ctest: its gc_wii_sdk test runs
+      # this whole suite unfiltered, mp4_game_abi included.
+      - name: Test (module not loaded)
+        run: ctest --test-dir build/ci-linux/runtimes/gc_wii/clang -E '^mp4_game_abi$' --output-on-failure --no-tests=error

@@ -260,7 +260,13 @@ mpt_mp4_link_symtab(mp4_game)      # tools/MptMp4ModuleSymbols.cmake
 if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
   target_link_options(mp4_game PRIVATE /errorlimit:0 /OPT:NOICF)
 else()
-  target_link_options(mp4_game PRIVATE -Wl,--error-limit=0)
+  # Export only mpt_mp4_get_api, as the dllexport does on Windows. The objects are PIE (the distro
+  # Clang default), not PIC: they reach the module's own globals PC-relative. In a -shared link lld
+  # rejects that against a symbol that could be interposed, which every default-visibility symbol is.
+  # Made local here, none can be, so the code stays as on Windows (no GOT) and nothing else is exported.
+  set(_mp4_ver "${CMAKE_CURRENT_SOURCE_DIR}/src/mp4_game.ver")
+  target_link_options(mp4_game PRIVATE -Wl,--error-limit=0 "-Wl,--version-script=${_mp4_ver}")
+  set_property(TARGET mp4_game APPEND PROPERTY LINK_DEPENDS "${_mp4_ver}")
 endif()
 
 # Unit checks (synthetic data only).
