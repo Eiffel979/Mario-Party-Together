@@ -17,6 +17,7 @@
 #include <SDL3/SDL_video.h>
 
 #include "mpt/asset_import/build.h"
+#include "mpt/core/party.h"
 #include "mpt/core/title_id.h"
 #include "mpt/input/ports.h"
 #include "overlay.h"
@@ -29,6 +30,17 @@ struct SessionStatus {
   bool paused = false;           // the shell's pause flag
   std::uint64_t start_failures = 0;  // counts requestStart calls that failed
   std::string last_error;        // why the last start failed, for the user
+
+  // M4-06 (ADR 0006 amendment for M4-06). The Director's party during a session, and as
+  // it ended once the session has stopped (running == false). none, 0 and 0 before the
+  // first session and while a new one starts.
+  PartyPhase phase = PartyPhase::none;
+  std::int32_t turn = 0;       // 1-based current turn, 0 before the party starts
+  std::int32_t max_turns = 0;  // 0 if the title does not report it
+  // A live session's replay: where it is being recorded while running, and where it was
+  // written once stopped. Empty for playback sessions, before any session, and when
+  // writing the replay or its summary failed. The .summary.txt sits next to it.
+  std::filesystem::path replay_path;
 };
 
 struct UiHost {
