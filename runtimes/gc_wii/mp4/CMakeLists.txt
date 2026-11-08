@@ -238,6 +238,13 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/layout.cmake")
 # sources as unverified. Every input is a configure dependency, so a content change re-runs this.
 set(MPT_MP4_SOURCE_STATES "" CACHE STRING "Set by the asset-import recipe: <pin>=pinned|unpinned:<fingerprint>, ...")
 set(MPT_MP4_RECIPE_ARGS_HASH "none" CACHE STRING "Set by the asset-import recipe: a hash of its module-build arguments")
+# The layout probe's mode reaches the build ID only through the recipe's arguments hash (host/CMakeLists.txt
+# passes MPT_MP4_LAYOUT_PROBE among them). A standalone module build has no such hash, so its probe
+# build would share a normal build's ID (#66 review): it is refused.
+if(_mp4_probe_defs AND MPT_MP4_RECIPE_ARGS_HASH STREQUAL "none")
+  message(FATAL_ERROR "MPT_MP4_LAYOUT_PROBE=${MPT_MP4_LAYOUT_PROBE} needs the asset-import recipe, whose arguments "
+                      "hash puts the mode in the build ID; set MPT_MP4_RECIPE_LAYOUT_PROBE on a host build instead")
+endif()
 include("${CMAKE_CURRENT_SOURCE_DIR}/build_id.cmake")
 if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
   set(_mp4_msvc_frontend TRUE)

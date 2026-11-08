@@ -127,6 +127,12 @@ if(TARGET mpt_mp4_runtime AND DEFINED MPT_MP4_RECIPE_LAYOUT_PROBE AND NOT MPT_MP
     COMMAND ${CMAKE_COMMAND} "-DPROBE_LANE=$<TARGET_FILE:mpt_dump_lane>" "-DREFERENCE_LANE=${MPT_DUMP_LANE_LAYOUT_REFERENCE}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/dump_lane/layout_perturbation.cmake")
   set_tests_properties(dump_lane_layout_perturbation PROPERTIES LABELS dump SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 7200)
+  # The gate (ADR 0008, "Module words: a safe rule must not depend on layout", point 6): the whole party
+  # to `finished` on both lanes, exit 0. Hours, not minutes: ctest -L dump -R layout_perturbation_full.
+  add_test(NAME dump_lane_layout_perturbation_full
+    COMMAND ${CMAKE_COMMAND} "-DPROBE_LANE=$<TARGET_FILE:mpt_dump_lane>" "-DREFERENCE_LANE=${MPT_DUMP_LANE_LAYOUT_REFERENCE}"
+            -DFULL=ON -P "${CMAKE_CURRENT_SOURCE_DIR}/dump_lane/layout_perturbation.cmake")
+  set_tests_properties(dump_lane_layout_perturbation_full PROPERTIES LABELS dump SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 21600)
 endif()
 
 # Cross-process determinism (ADR 0002 rule 10 follow-up, P1-20b1): the same FakeRuntime run
