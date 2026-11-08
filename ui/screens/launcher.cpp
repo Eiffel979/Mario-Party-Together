@@ -84,10 +84,18 @@ struct View {
   std::vector<PortRow> ports;
   bool seat_ready = false;
   bool seat_starting = false;
+  bool seat_quick = false;  // "Keyboard + controller" is offered
   Rml::String seat_note;
   Rml::String seat_status;
 
   Rml::String pause_title;
+  Rml::String pause_turn;  // "Turn 3/20", or empty
+  bool has_turn = false;
+
+  bool end_pending = false;  // the stop has not been applied yet
+  Rml::String end_heading;
+  Rml::String end_detail;
+  Rml::String end_replay;
 };
 
 // ---- The native file dialog's answer arrives on another thread --------------------
@@ -108,7 +116,7 @@ void SDLCALL on_dialog_result(void*, const char* const* files, int) {
   inbox.path = files[0];
 }
 
-const char* const kDocuments[] = {"library", "add_dump", "files", "import", "seating", "pause"};
+const char* const kDocuments[] = {"library", "add_dump", "files", "import", "seating", "pause", "session_end"};
 
 const char* document_for(Screen screen) {
   switch (screen) {
@@ -118,6 +126,7 @@ const char* document_for(Screen screen) {
     case Screen::import: return "import";
     case Screen::seating: return "seating";
     case Screen::pause: return "pause";
+    case Screen::session_end: return "session_end";
     case Screen::playing: return nullptr;
   }
   return nullptr;
@@ -264,7 +273,15 @@ class Launcher final : public shell::IOverlay {
     system_.set_host_time(now_ns);
 
     const shell::SessionStatus status = host_.status();
-    flow_.sync(SessionView{status.running, status.paused, status.start_failures, status.last_error});
+    status_ = SessionView{.running = status.running,
+                          .paused = status.paused,
+                          .start_failures = status.start_failures,
+                          .last_error = status.last_error,
+                          .phase = status.phase,
+                          .turn = status.turn,
+                          .max_turns = status.max_turns,
+                          .replay_path = status.replay_path};
+    flow_.sync(status_);
     // Phase 1: seats change only while no session runs (the shell also turns input/'s
     // auto-assign off for the session).
     seating_.set_locked(status.running);
@@ -343,6 +360,7 @@ class Launcher final : public shell::IOverlay {
     // "Press any button to join" (ADR 0010 §5): a controller that is not seated takes
     // a seat, and that press does nothing else.
     const input::DeviceId pad{input::DeviceKind::gamepad, static_cast<std::uint32_t>(b.which)};
+    last_pad_ = pad;  // "Keyboard + controller" seats the controller that chose it
     if (flow_.screen() == Screen::seating && seating_.join(pad)) return;
     switch (b.button) {
       case SDL_GAMEPAD_BUTTON_SOUTH: context_->ProcessKeyDown(Rml::Input::KI_RETURN, 0); break;  // confirm, by position
@@ -374,6 +392,9 @@ class Launcher final : public shell::IOverlay {
         break;
       case Screen::pause:
         resume();  // back on the pause screen resumes
+        return;
+      case Screen::session_end:
+        flow_.back();  // to the library
         return;
       default: break;
     }
@@ -523,7 +544,14 @@ class Launcher final : public shell::IOverlay {
     c.Bind("seat_starting", &view_.seat_starting);
     c.Bind("seat_note", &view_.seat_note);
     c.Bind("seat_status", &view_.seat_status);
+    c.Bind("seat_quick", &view_.seat_quick);
     c.Bind("pause_title", &view_.pause_title);
+    c.Bind("pause_turn", &view_.pause_turn);
+    c.Bind("has_turn", &view_.has_turn);
+    c.Bind("end_pending", &view_.end_pending);
+    c.Bind("end_heading", &view_.end_heading);
+    c.Bind("end_detail", &view_.end_detail);
+    c.Bind("end_replay", &view_.end_replay);
 
     const auto on = [&c](const char* name, std::function<void(const Rml::VariantList&)> fn) {
       c.BindEventCallback(name, [fn = std::move(fn)](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& args) {
@@ -574,7 +602,9 @@ class Launcher final : public shell::IOverlay {
       if (i < 0 || static_cast<std::size_t>(i) >= devices.size()) return;
       seating_.cycle(devices[static_cast<std::size_t>(i)].id, index_arg(a, 1) < 0 ? -1 : 1);
     });
+    on("seat_quick", [this](const Rml::VariantList&) { seating_.seat_keyboard_and_controller(last_pad_); });
     on("start_party", [this](const Rml::VariantList&) { start_party(); });
+    on("end_library", [this](const Rml::VariantList&) { flow_.to_library(); });
     on("resume", [this](const Rml::VariantList&) { resume(); });
     on("quit_library", [this](const Rml::VariantList&) {
       flow_.quit_to_library();
@@ -657,6 +687,7 @@ class Launcher final : public shell::IOverlay {
     set("seat_ready", view_.seat_ready,
         seating_.ready() && !seating_.locked() && entry && entry->verified.has_value());
     set("seat_starting", view_.seat_starting, flow_.starting());
+    set("seat_quick", view_.seat_quick, seating_.can_seat_keyboard_and_controller());
     set("seat_note", view_.seat_note,
         seating_.locked() ? std::string("Seats are locked while a game is running.") : seating_.cpu_note());
     set("seat_status", view_.seat_status,
@@ -664,6 +695,21 @@ class Launcher final : public shell::IOverlay {
 
     // Pause
     set("pause_title", view_.pause_title, entry ? entry->display_name() : std::string());
+    const std::string turn = turn_text(status_);
+    set("has_turn", view_.has_turn, !turn.empty());
+    set("pause_turn", view_.pause_turn, turn);
+
+    // After the session (ruling M4-C: the replay path relative to the user dir only)
+    set("end_pending", view_.end_pending, flow_.ending());
+    SessionEnd end;
+    if (flow_.ending()) {
+      end.heading = "Ending the game...";
+    } else if (flow_.ended()) {
+      end = describe_session_end(*flow_.ended(), host_.user_dir);
+    }
+    set("end_heading", view_.end_heading, end.heading);
+    set("end_detail", view_.end_detail, end.detail);
+    set("end_replay", view_.end_replay, end.replay);
   }
 
   // ---- Documents and focus ----
@@ -718,6 +764,8 @@ class Launcher final : public shell::IOverlay {
 
   std::optional<std::size_t> selected_;   // the library entry being played
   std::optional<std::size_t> verifying_;  // re-checking this entry
+  SessionView status_;                     // the shell's status from the last update
+  std::optional<input::DeviceId> last_pad_;  // the controller pressed last
   fs::path last_folder_;
   std::string message_;
   std::uint64_t now_ns_ = 0;
