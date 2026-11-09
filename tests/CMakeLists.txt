@@ -100,7 +100,8 @@ set_tests_properties(replay_check_rejects_non_replay PROPERTIES PASS_REGULAR_EXP
 # The dump lane (P1-20d, ADR 0006): manual and local only. Skipped (exit 77) unless
 # MPT_DUMP_DIR is set; see tests/dump_lane/README.md. Run it with: ctest -L dump
 # It plays every real title the shell registers (P1-16), building each from the dump with asset-import.
-add_executable(mpt_dump_lane dump_lane/main.cpp dump_lane/crash_report.h dump_lane/path_guard.h dump_lane/real_titles.h dump_lane/png.h)
+add_executable(mpt_dump_lane dump_lane/main.cpp dump_lane/crash_report.h dump_lane/path_guard.h dump_lane/real_titles.h dump_lane/png.h
+  dump_lane/supervise.h dump_lane/stack_chk_fail.cpp)
 target_link_libraries(mpt_dump_lane PRIVATE mpt::core mpt::asset_import mpt::shell_core)
 target_compile_definitions(mpt_dump_lane PRIVATE
   MPT_REPLAYS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/replays"
@@ -119,6 +120,30 @@ endif()
 mpt_set_warnings(mpt_dump_lane)
 add_test(NAME dump_lane_replays COMMAND mpt_dump_lane)
 set_tests_properties(dump_lane_replays PROPERTIES LABELS dump SKIP_RETURN_CODE 77)
+# Crash reports (M4-04, dump_lane/supervise.h): --supervise debugs the lane to report /GS fail-fasts
+# (DbgHelp walks the stack); on Linux the lane's own __stack_chk_fail reports, exported so the game
+# module binds to it. The self-test crashes a synthetic stub module (mp4_loader/overrun_stub.cpp) and
+# needs no dump. Linux builds the stub and the path, but runs nothing yet (phase-1.md M4-U2).
+add_library(mpt_overrun_stub MODULE mp4_loader/overrun_stub.cpp)
+set_target_properties(mpt_overrun_stub PROPERTIES PREFIX "")
+mpt_set_warnings(mpt_overrun_stub)
+if(WIN32)
+  target_compile_options(mpt_overrun_stub PRIVATE /GS)
+  target_link_libraries(mpt_dump_lane PRIVATE dbghelp)
+else()
+  target_compile_options(mpt_overrun_stub PRIVATE -fstack-protector-all)
+  target_link_options(mpt_dump_lane PRIVATE "LINKER:--export-dynamic-symbol=__stack_chk_fail")
+  target_link_libraries(mpt_dump_lane PRIVATE ${CMAKE_DL_LIBS})
+endif()
+add_dependencies(mpt_dump_lane mpt_overrun_stub)
+if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+  foreach(_kind gs av abort)
+    add_test(NAME dump_lane_crash_report_${_kind}
+      COMMAND ${CMAKE_COMMAND} "-DLANE=$<TARGET_FILE:mpt_dump_lane>" "-DSTUB=$<TARGET_FILE:mpt_overrun_stub>"
+              -DKIND=${_kind} -P "${CMAKE_CURRENT_SOURCE_DIR}/dump_lane/crash_report_check.cmake")
+    set_tests_properties(dump_lane_crash_report_${_kind} PROPERTIES TIMEOUT 120)
+  endforeach()
+endif()
 # MP4 layout perturbation (dump lane): only in a host build with MPT_MP4_RECIPE_LAYOUT_PROBE set, against a
 # normal build's lane named by MPT_DUMP_LANE_LAYOUT_REFERENCE. See dump_lane/layout_perturbation.cmake.
 if(TARGET mpt_mp4_runtime AND DEFINED MPT_MP4_RECIPE_LAYOUT_PROBE AND NOT MPT_MP4_RECIPE_LAYOUT_PROBE STREQUAL "OFF")
