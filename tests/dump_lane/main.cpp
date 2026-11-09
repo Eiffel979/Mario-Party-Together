@@ -47,6 +47,7 @@
 #include "png.h"
 #include "mpt/core/title_id.h"
 #include "real_titles.h"
+#include "watch.h"
 #include "user_dirs.h"
 #if defined(MPT_DUMP_LANE_MP4)
 #include "../conformance/conformance.h"
@@ -131,6 +132,8 @@ struct BootOptions {
   std::uint64_t party_save_at = 0;
   std::filesystem::path party_save;
   std::filesystem::path party_resume;
+  // Diagnosis (watch.h): --watch-word, --find-word and --watch-write read arena words in place.
+  mpt::dump_lane::watch::Options watch;
 };
 
 // "start@600", "a@900+10": a button, the first frame it is held, and for how many frames (default 6).
@@ -217,6 +220,7 @@ int perturb_checks(mpt::mp4::Mp4Runtime& mp4, std::uint64_t frame, std::uint64_t
       {MPT_MP4_PERTURB_GAME_DATA, "game data", true},   {MPT_MP4_PERTURB_HEAP_BLOCK, "heap block", true},
       {MPT_MP4_PERTURB_ARAM, "aram in use", true},      {MPT_MP4_PERTURB_GLOBAL, "registered global", true},
       {MPT_MP4_PERTURB_FREE_HEAP, "free heap", false},  {MPT_MP4_PERTURB_STACK, "process stack", false},
+      {MPT_MP4_PERTURB_ARMEM, "armem block", true},     {MPT_MP4_PERTURB_FREE_ARAM, "free aram", false},
   };
   int failed = 0;
   const Hashes original = hashes(mp4);
@@ -308,7 +312,8 @@ int conformance_run(const BootOptions& options, const mpt::VerifiedDump& dump, m
   probe.perturb = [mp4](std::uint32_t target) { return mp4->debugPerturb(target); };
   probe.targets = {{MPT_MP4_PERTURB_GAME_DATA, "game data"},   {MPT_MP4_PERTURB_HEAP_BLOCK, "heap block"},
                    {MPT_MP4_PERTURB_ARAM, "aram in use"},      {MPT_MP4_PERTURB_GLOBAL, "registered global"},
-                   {MPT_MP4_PERTURB_FREE_HEAP, "free heap"},   {MPT_MP4_PERTURB_STACK, "process stack"}};
+                   {MPT_MP4_PERTURB_FREE_HEAP, "free heap"},   {MPT_MP4_PERTURB_STACK, "process stack"},
+                   {MPT_MP4_PERTURB_ARMEM, "armem block"},     {MPT_MP4_PERTURB_FREE_ARAM, "free aram"}};
   for (std::uint32_t k = 0; k < 64; ++k)
     probe.targets.push_back({MPT_MP4_PERTURB_SAMPLE | (k << 8), "sample " + std::to_string(k)});
   const HashCoverageResult coverage = check_hash_coverage(probe);
@@ -652,7 +657,9 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
   Peak peak_osalloc, peak_aram;
   std::array<Peak, MPT_MP4_MEMORY_HEAPS> peak_heap{};
   std::optional<MptMp4MemoryUse> last_use;
+  mpt::dump_lane::watch::Watcher watcher(options.watch);
   for (std::uint64_t f = session->frame(); f < options.frames; ++f) {
+    if (watcher.active()) watcher.before(f);
     if (options.party_save_at != 0 && f == options.party_save_at && !options.party_save.empty()) {
       const mpt::SaveState state = session->runtime().saveState();
       const std::uint64_t head[3] = {state.frame, state.format_version, tracker.changedAt()};
@@ -674,6 +681,7 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
         break;
       }
     }
+    if (watcher.active()) watcher.after(f + 1);
     if (!stepped) {
       failure = stepped.error();
       break;
@@ -1008,6 +1016,26 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir, cons
     std::puts("dump lane: the module perturbed a game booted without debug hooks");
     return 1;
   }
+#if defined(MPT_DUMP_LANE_MP4)
+  // ABI v1.4 memory_use on the real game (qa, #72): a caller with the 160-byte v1.4 struct gets at most
+  // 160 bytes written and its struct_size echoed, and the I/O counts have counted the boot's reads.
+  if (mp4 != nullptr && stopped.empty()) {
+    std::array<unsigned char, 256> buf;
+    buf.fill(0xCD);
+    const std::int32_t rc = mp4->memoryUseInto(buf.data(), MPT_MP4_MEMORY_USE_SIZE_V1_4);
+    std::uint32_t echoed = 0;
+    std::memcpy(&echoed, buf.data(), sizeof echoed);
+    bool guard_ok = true;
+    for (std::size_t i = MPT_MP4_MEMORY_USE_SIZE_V1_4; i < buf.size(); ++i) guard_ok = guard_ok && buf[i] == 0xCD;
+    const std::optional<MptMp4MemoryUse> use = mp4->memoryUse();
+    const bool io_ok = use && use->struct_size == sizeof(MptMp4MemoryUse) && use->dvd_reads > 0;
+    std::printf("dump lane: memory_use: v1.4 caller %s, I/O counts %s (%llu DVD reads, %llu ARAM transfers)\n",
+                rc == MPT_MP4_OK && echoed == MPT_MP4_MEMORY_USE_SIZE_V1_4 && guard_ok ? "ok" : "FAILED",
+                io_ok ? "ok" : "FAILED", use ? static_cast<unsigned long long>(use->dvd_reads) : 0ull,
+                use ? static_cast<unsigned long long>(use->aram_transfers) : 0ull);
+    if (rc != MPT_MP4_OK || echoed != MPT_MP4_MEMORY_USE_SIZE_V1_4 || !guard_ok || !io_ok) return 1;
+  }
+#endif
   if (options.perturb) {
 #if defined(MPT_DUMP_LANE_MP4)
     if (mp4 == nullptr) std::puts("dump lane: --perturb needs the MP4 runtime");
@@ -1093,6 +1121,18 @@ int main(int argc, char** argv) {
       boot_options.party_save = argv[++i];
     } else if (arg == "--party-resume" && has_value) {
       boot_options.party_resume = argv[++i];
+    } else if (arg == "--watch-word" && has_value) {
+      boot_options.watch.words = mpt::dump_lane::watch::parse_list(argv[++i]);
+    } else if (arg == "--find-word" && has_value) {
+      const std::string w = argv[++i];  // VALUE@FRAME, VALUE in hex
+      const std::size_t at = w.find('@');
+      boot_options.watch.find_value = std::strtoull(w.substr(0, at).c_str(), nullptr, 16);
+      boot_options.watch.find_frame = at == std::string::npos ? 0 : std::strtoull(w.substr(at + 1).c_str(), nullptr, 10);
+    } else if (arg == "--watch-write" && has_value) {
+      const std::string w = argv[++i];  // OFF[,OFF...]@FRAME, offsets in hex
+      const std::size_t at = w.find('@');
+      boot_options.watch.writes = mpt::dump_lane::watch::parse_list(w.substr(0, at));
+      boot_options.watch.write_frame = at == std::string::npos ? 0 : std::strtoull(w.substr(at + 1).c_str(), nullptr, 10);
     } else if (arg == "--watchdog" && has_value) {
       boot_options.watchdog = std::strtoull(argv[++i], nullptr, 10);
     } else if (arg == "--replay" && has_value) {

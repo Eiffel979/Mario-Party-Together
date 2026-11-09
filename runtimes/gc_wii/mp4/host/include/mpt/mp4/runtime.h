@@ -72,6 +72,9 @@ class Mp4Runtime final : public ITitleRuntime {
   // ABI v1.4 memory_use: the arena use right now (main RAM, OSAlloc, each HuMem heap, ARAM). Reads
   // only. nullopt before boot or for a module older than v1.4.
   std::optional<MptMp4MemoryUse> memoryUse() const;
+  // Test only: memory_use into a caller's own buffer of `struct_size` bytes (at least the v1.4 size),
+  // for the dump lane's check that the module writes no more than that. The module's status.
+  std::int32_t memoryUseInto(void* buffer, std::uint32_t struct_size) const;
 
   // The OSReport text sink (presentation only). Called from inside stepFrame.
   void setReportSink(void (*sink)(void* user, const char* text), void* user);
