@@ -273,18 +273,19 @@ TEST_CASE("conformance self-test: FakeRuntime never leaves running") {
 
 namespace {
 
-// Three memory classes, like a title's: 0 is game state both hashes cover, 1 is game state only
-// the raw deep hash covers unless the manifest includes it, 2 is space neither hash may cover
-// (free heap). `manifest` says which classes stateHash() covers.
+// Five memory classes, like a title's: 0 is game state both hashes cover, 1 and 3 are game state
+// only the raw deep hash covers unless the manifest includes them (a heap block, an allocated ARAM
+// block: ADR 0008, "Gate status after the implementation", finding 2), 2 and 4 are space neither hash
+// may cover (free heap, free ARAM). `manifest` says which classes stateHash() covers.
 struct SyntheticMemory {
-  std::array<std::uint8_t, 3> bytes{0x11, 0x22, 0x33};
-  std::array<bool, 3> manifest{true, true, false};
+  std::array<std::uint8_t, 5> bytes{0x11, 0x22, 0x33, 0x44, 0x55};
+  std::array<bool, 5> manifest{true, true, false, true, false};
   bool sticky = false;  // perturb() changes the byte but the second call does not undo it
 
   std::uint64_t hashOf(bool deep) const {
     std::uint64_t h = 0xCBF29CE484222325ull;
     for (std::size_t i = 0; i < bytes.size(); ++i) {
-      const bool covered = deep ? i != 2 : manifest[i];
+      const bool covered = deep ? (i != 2 && i != 4) : manifest[i];
       h = (h ^ (covered ? bytes[i] : 0u) ^ (i << 8)) * 0x100000001B3ull;
     }
     return h;
@@ -299,7 +300,8 @@ struct SyntheticMemory {
       bytes[target] = static_cast<std::uint8_t>(sticky ? bytes[target] + 1 : bytes[target] ^ 0xFF);
       return true;
     };
-    p.targets = {{0, "game data"}, {1, "heap block"}, {2, "free heap"}, {7, "nothing to flip"}};
+    p.targets = {{0, "game data"}, {1, "heap block"}, {2, "free heap"},
+                 {3, "aram block"}, {4, "free aram"}, {7, "nothing to flip"}};
     return p;
   }
 };
@@ -310,8 +312,8 @@ TEST_CASE("conformance self-test: E4 coverage passes when the manifest covers wh
   SyntheticMemory memory;
   const mpt::conformance::HashCoverageResult r = mpt::conformance::check_hash_coverage(memory.probe());
   CHECK(r.problems.empty());
-  CHECK(r.checked == 3);  // the target with nothing to flip is skipped
-  CHECK(memory.bytes == std::array<std::uint8_t, 3>{0x11, 0x22, 0x33});
+  CHECK(r.checked == 5);  // the target with nothing to flip is skipped
+  CHECK(memory.bytes == std::array<std::uint8_t, 5>{0x11, 0x22, 0x33, 0x44, 0x55});
 }
 
 TEST_CASE("conformance self-test: E4 coverage fails when only the deep hash sees a perturbation") {
@@ -323,14 +325,24 @@ TEST_CASE("conformance self-test: E4 coverage fails when only the deep hash sees
   CHECK(r.problems[0].find("manifest misses it") != std::string::npos);
 }
 
+TEST_CASE("conformance self-test: E4 coverage fails when the manifest misses allocated ARAM") {
+  SyntheticMemory memory;
+  memory.manifest[3] = false;  // the manifest leaves out an allocated ARAM block (HuARMalloc's, for MP4)
+  const mpt::conformance::HashCoverageResult r = mpt::conformance::check_hash_coverage(memory.probe());
+  REQUIRE(r.problems.size() == 1);
+  CHECK(r.problems[0].find("aram block") == 0);
+  CHECK(r.problems[0].find("manifest misses it") != std::string::npos);
+}
+
 TEST_CASE("conformance self-test: E4 coverage fails when a perturbation is not undone") {
   SyntheticMemory memory;
   memory.sticky = true;
   const mpt::conformance::HashCoverageResult r = mpt::conformance::check_hash_coverage(memory.probe());
   // The covered classes are caught; a stuck free-heap byte is invisible to both hashes by design.
-  REQUIRE(r.problems.size() == 2);
+  REQUIRE(r.problems.size() == 3);
   CHECK(r.problems[0].find("game data: flipping the byte back does not restore") == 0);
   CHECK(r.problems[1].find("heap block: flipping the byte back does not restore") == 0);
+  CHECK(r.problems[2].find("aram block: flipping the byte back does not restore") == 0);
 }
 
 TEST_CASE("conformance self-test: E4 coverage fails when the hashes are not stable") {
