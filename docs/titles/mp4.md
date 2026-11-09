@@ -1140,7 +1140,7 @@ E1 is the full local party (Phase 1 plan §4). The user plays it and fills in th
 
 ### A. Setup before you play
 
-1. Build the shell with the GX backend that draws to the screen (`MPT_GX_BACKEND=dawn`) and the MP4 title registered. `docs/BUILDING.md` has the presets.
+1. Build the shell with the GX backend that draws to the screen and the MP4 title registered. Follow "Building it" in `runtimes/gc_wii/gx/README.md`: fetch aurora, build Dawn with `runtimes/gc_wii/gx/tools/build_dawn.cmake`, then configure with a `windows-clang-*` preset and `-DMPT_GX_BACKEND=dawn`.
 2. Make a new, empty folder for this run. This is `<user_dir>` below. Do not reuse an old user folder: a fresh one means no old save, no old input profile and no old build cache.
 3. Start the launcher with that folder. Use the executable you built (`<exe>`):
 
@@ -1170,9 +1170,9 @@ E1 is the full local party (Phase 1 plan §4). The user plays it and fills in th
 | 12 | The build finished in the launcher, and the library lists the game | | on hold |
 | 13 | Build ID: `runtime_build_version` in `<user_dir>/cache/builds/mp4/<key>/manifest.json` (it starts with `mp4-`) | | on hold |
 | 14 | `unpinned` is `false` in that manifest. An unpinned build cannot sign off E1. | | on hold |
-| 15 | The manifest's sources match the pins in section C | | on hold |
+| 15 | The manifest's sources match the `decomp.lock` rows of section C (Party Board, musyx, aurora). Dawn is covered by the build ID only. | | on hold |
 | **Seats and devices (ruling M4-U1)** | | | |
-| 16 | Players screen: "Keyboard + controller, 2 computer players" chosen | | on hold |
+| 16 | Players screen: "Keyboard + controller, 2 computer players" chosen, then "Start the party" pressed | | on hold |
 | 17 | Seat 1 is the keyboard and seat 2 is the gamepad. Both are set to human in the game's own party setup (only the first player starts as human there). | | on hold |
 | 18 | Seats 3 and 4 are computer players, set in the game's own party setup | | on hold |
 | **The party** | | | |
@@ -1183,20 +1183,20 @@ E1 is the full local party (Phase 1 plan §4). The user plays it and fills in th
 | 23 | Audio played through the whole party | | on hold |
 | 24 | No crash, hang, freeze or soft-lock. If you had to stop, write where in the Notes. | | on hold |
 | 25 | You did **not** quit the party before the final ranking ended, neither from the game's own pause menu nor with the launcher's "Quit to library" (see the caveat in section E) | | on hold |
-| 26 | After the final ranking, the game went back to its own mode select. You then opened the launcher's pause overlay (Escape, or the gamepad's Guide/Home button) and chose "Quit to library", without starting a new party. | | on hold |
-| 27 | The launcher then showed the "Party over" screen with the heading "Party finished" and "Turns played: N of N." | | on hold |
-| 28 | That screen named a replay under `replays/` in your user folder | | on hold |
+| 26 | After the final ranking, the game went back to its own mode select. You then opened the launcher's pause overlay (Escape, or the gamepad's Guide/Home button) and chose "Quit to library", without starting a new party. Not "Exit Mario Party Together". | | on hold |
+| 27 | The launcher then showed the end-of-party screen: the heading "Party finished" and the line "Turns played: N of N." | | on hold |
+| 28 | That screen also showed "Replay saved in your user folder: replays/…" | | on hold |
 | **The replay and summary (ruling M4-C)** | | | |
 | 29 | `<user_dir>/replays/` holds `mp4-<seed>-<n>.mptr` and `mp4-<seed>-<n>.summary.txt`. Keep both. Do not move, rename or delete them, and keep `<user_dir>` as it is. | | on hold |
 | 30 | Summary `end` is `ok` | | on hold |
 | 31 | Summary `phase` is `finished` | | on hold |
-| 32 | Summary `turn` (for example `10/10`); the first number must be at least 10 | | on hold |
+| 32 | Summary `turn` is N/N (both numbers equal, N at least 10, same as row 20) | | on hold |
 | 33 | Summary `board` (same content ID as row 19) | | on hold |
 | 34 | Summary `runtime_build` (same as row 13), `runtime_unpinned` (`false`), `seed`, `frames` and `events` | | on hold |
 | **Agent re-verification (section D)** | | | |
 | 35 | Process 1: exit code 0, `party: phase finished`, `replay OK` with the frame and checkpoint counts | | on hold |
 | 36 | Process 2: the same | | on hold |
-| 37 | The two outputs are identical, and the last trail line (frame and hash) | | on hold |
+| 37 | The two outputs are identical (yes/no). Write the last trail line (frame and hash). | | on hold |
 | 38 | Agent and commit that ran the check | | on hold |
 | **Sign-off** | | | |
 | 39 | Tester sign-off (yes/no) | | on hold |
@@ -1218,6 +1218,8 @@ These are the pins on `main` when this checklist was written. If the lock files 
 | Dawn | `13abc3bc8ea2d3c2050f9e77a12d012108ceee24` | `runtimes/gc_wii/gx/dawn.lock` |
 | Party Board patch set | 0001 to 0028 (`runtimes/gc_wii/mp4/patches/partyboard/`) | covered by the build ID |
 
+The build manifest's `sources` list comes from `decomp.lock` only (Party Board, musyx, aurora). Dawn (`dawn.lock`) and aurora's GX pin (`runtimes/gc_wii/gx/aurora.lock`, the same aurora commit) are not in that list, but both are hashed into the build ID.
+
 The build ID (row 13) already covers the pins, the patch sets, the toolchain and the module's own sources (`runtimes/gc_wii/mp4/build_id.cmake`). Rows 13 and 34 must agree.
 
 ### D. Agent re-verification: the replay headless in 2 separate processes
@@ -1237,22 +1239,24 @@ $exe  = "<exe>"
 $user = "<user_dir>"
 $dump = "<path to the dump>"
 $rep  = "$user\replays\mp4-<seed>-<n>.mptr"
+$out  = "<scratch folder outside the repository>"
 
-& $exe --verify-replay $rep --dump $dump --user-dir $user > verify-1.txt; "exit $LASTEXITCODE"
-& $exe --verify-replay $rep --dump $dump --user-dir $user > verify-2.txt; "exit $LASTEXITCODE"
-Compare-Object (Get-Content verify-1.txt) (Get-Content verify-2.txt)
-Get-Content verify-1.txt -Tail 3
+& $exe --verify-replay $rep --dump $dump --user-dir $user > "$out\verify-1.txt"; "exit $LASTEXITCODE"
+& $exe --verify-replay $rep --dump $dump --user-dir $user > "$out\verify-2.txt"; "exit $LASTEXITCODE"
+Compare-Object (Get-Content "$out\verify-1.txt") (Get-Content "$out\verify-2.txt")
+Get-Content "$out\verify-1.txt" -Tail 3
 ```
 
 Linux (when M4-14 is no longer on hold):
 
 ```sh
-"$exe" --verify-replay "$rep" --dump "$dump" --user-dir "$user" > verify-1.txt; echo "exit $?"
-"$exe" --verify-replay "$rep" --dump "$dump" --user-dir "$user" > verify-2.txt; echo "exit $?"
-cmp verify-1.txt verify-2.txt && tail -n 3 verify-1.txt
+out="<scratch folder outside the repository>"
+"$exe" --verify-replay "$rep" --dump "$dump" --user-dir "$user" > "$out/verify-1.txt"; echo "exit $?"
+"$exe" --verify-replay "$rep" --dump "$dump" --user-dir "$user" > "$out/verify-2.txt"; echo "exit $?"
+cmp "$out/verify-1.txt" "$out/verify-2.txt" && tail -n 3 "$out/verify-1.txt"
 ```
 
-Write `verify-*.txt` to a scratch folder outside the repository. What passes:
+`$out` is a scratch folder outside the repository, so the outputs never land in the tree. What passes:
 - Both runs exit 0. Any checkpoint mismatch exits 1 and prints the error on stderr.
 - Each output ends with the hash trail (one `<frame> <state_hash>` line per checkpoint), then `party: phase finished, turn N/N, E events`, then `replay OK: F frames, C checkpoints`.
 - `Compare-Object` prints nothing (`cmp` is silent): the two processes give the same output.
@@ -1265,11 +1269,13 @@ Record rows 35 to 38. Do not commit the replay, the summary or the outputs.
 
 Quitting a party from the game's own pause menu during its **last** turn also reads as `finished` (§21, M4-01, "Known limit"). No game state tells it apart from a finished party once the board has left the overlay history. So a `finished` phase alone does not prove that the party was played to the end. The tester must play through the last minigame, the bonus stars and the final ranking (rows 21 and 25).
 
-The session does not stop by itself when the party is over. The game goes back to its mode select and the phase stays `finished`. "Quit to library" from the launcher's pause overlay then stops the session, writes the replay and the summary, and shows the "Party over" screen (row 26). Do not start a new party first: its setup reads as `setup`, and the run then ends in the wrong phase.
+The session does not stop by itself when the party is over. The game goes back to its mode select and the phase stays `finished`. "Quit to library" from the launcher's pause overlay then stops the session, writes the replay and the summary, and shows the end-of-party screen with the "Party finished" heading (rows 26 and 27). Do not start a new party first: its setup reads as `setup`, and the run then ends in the wrong phase.
 
 "Quit to library" during the party stops the session at once. The summary then keeps the phase the party was in, and the launcher shows "The game session ended" instead of "Party finished". That run cannot sign off E1.
+
+"Exit Mario Party Together" in the pause overlay closes the program without the end-of-party screen. Do not use it to end the run: use "Quit to library" (row 26).
 
 ## Sections still to fill (P1-18)
 - Spike S1 result and the pinned GX backend version (P1-12). **Reported:** `docs/spikes/s1-gx-backend.md`. Recommendation: aurora GX/MTX on Dawn at `514339438178ef2bed1b14e5149d90ece0c6e0cc`, with a host shim, a null backend and a small patch set. A gate runs at the start of P1-14. Folded into ADR 0007 §6 (Accepted). GX surface measured on Party Board's sources: 131 distinct entry points, 104 implemented by aurora at the pin, one real gap (`GXSetZTexture`, m419), no `GD*` calls.
 - Hash manifest. Starting areas: RNGs (§7), `GWSystem`/`GWPlayer`/`GWPlayerCfg`/game stats, HuPrc process list, object manager, overlay history, pad state, data-dir cache and ARAM map, MusyX sequencer and voice state, CARD/save media, virtual clock.
-- Known issues, the E1 sign-off checklist and the E2 input coverage table. The E7 reference-machine specs live in the Phase 1 plan's D7 table.
+- Known issues and the E2 input coverage table. The E1 sign-off checklist is §22. The E7 reference-machine specs live in the Phase 1 plan's D7 table.
