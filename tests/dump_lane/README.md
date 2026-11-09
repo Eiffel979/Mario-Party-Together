@@ -136,8 +136,15 @@ The lane refuses to start if any of these lies inside the repository (`path_guar
 | `MPT_DUMP_DIR` | your dumps | required |
 | `--capture DIR` | frame captures | off |
 | `--replay FILE`, `--party-save-at N FILE` | a party's replay, a diagnostic state | off |
-| `MPT_BUILD_CACHE` | the extracted disc and the built game module | `<MPT_DUMP_DIR>/mpt-build-cache` |
+| `MPT_BUILD_CACHE` | the extracted disc and the built game module | the shell's cache, `<user dir>/cache` (below) |
 | `MPT_SOURCE_CACHE` | pinned source checkouts (`<name>/<commit>`), used instead of fetching | off |
+
+The default build cache is the one the shell uses (`core/shell/user_dirs.h`), so the lane
+and the shell share builds: `%APPDATA%\MarioPartyTogether\mpt\cache` on Windows and
+`$XDG_DATA_HOME/mpt/cache` (usually `~/.local/share/mpt/cache`) on Linux. The lane never
+puts it in `MPT_DUMP_DIR`, which holds your dumps only: if the default would land there, the
+lane stops with an error. Setting `MPT_BUILD_CACHE` inside `MPT_DUMP_DIR` is your explicit
+choice and is allowed, with a note.
 
 `.gitignore` also ignores `captures/` and `mpt-build-cache/` folders, and the compliance
 scanner rejects any committed binary, but neither is a reason to put these folders in the tree.

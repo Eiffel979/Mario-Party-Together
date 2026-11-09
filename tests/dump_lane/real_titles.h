@@ -5,7 +5,8 @@
 // (identify, then the title's recipe in a BuildCache, then make_verified).
 //
 // Environment (all optional except MPT_DUMP_DIR, which main.cpp checks):
-//   MPT_BUILD_CACHE   the BuildCache root; default <MPT_DUMP_DIR>/mpt-build-cache (outside the repository)
+//   MPT_BUILD_CACHE   the BuildCache root; default the shell's, <user dir>/cache (core/shell/user_dirs.h).
+//                     Outside the repository; the default is never inside MPT_DUMP_DIR (path_guard.h)
 //   MPT_SOURCE_CACHE  a folder of pinned source checkouts (<name>/<commit>, as mpt_fetch_sources makes
 //                     them). Used instead of fetching; each must still match the lock to count as pinned.
 
