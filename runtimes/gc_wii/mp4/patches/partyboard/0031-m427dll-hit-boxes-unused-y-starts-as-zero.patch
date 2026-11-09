@@ -1,0 +1,52 @@
+Apply order 0031 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+m427Dll: the hit boxes' unused y starts as zero, not uninitialised stack, on MPT_PC
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+ADR 0008, "Gate status after the implementation", decision point 1 (the seed 2 split). m427Dll's
+map.c builds hit boxes in local Vecs and passes them by value to fn_1_15F10 and fn_1_15FD0
+(player.c), which copy them into lbl_1_bss_57C's records in a HuMem block. fn_1_7C34, fn_1_7F38 and
+fn_1_8768 set only x and z; y is never written, so the records got whatever the stack held there. On
+PC that included the low half of a pointer into the module (seqPunctTbl's address), which moved with
+the module layout and split the layout probe's trail on seed 2 at frame 70,499. The records' y is
+never read (the hit tests and the debug draw use x and z only), so this changes no behaviour: y is
+now zero on every platform. Unconditional on PC.
+
+diff --git a/src/REL/m427Dll/map.c b/src/REL/m427Dll/map.c
+index 4861296..8ee7da8 100644
+--- a/src/REL/m427Dll/map.c
++++ b/src/REL/m427Dll/map.c
+@@ -1414,6 +1414,11 @@ void fn_1_7C34(void)
+     M427DllMapSubstruct *var_r26;
+     s16 var_r25;
+ 
++#ifdef MPT_PC
++    /* Only x and z are set below, and the hit boxes this fills are read by x and z only; y would carry
++     * stale stack bytes (host frames on PC) into the game heap. It is zero instead. */
++    sp14.y = 0.0f;
++#endif
+     for (var_r26 = lbl_1_bss_158.unk3A0, var_r29 = 0; var_r29 < 5; var_r29++, var_r26++) {
+         for (var_r28 = 0, var_r31 = lbl_1_bss_158.unk4; var_r28 < 2; var_r28++, var_r31++) {
+             if ((var_r31->unk18E[var_r29] == 0) && ((var_r31->unk84.z - 7000.0f) < var_r26->unk4.z)
+@@ -1478,6 +1483,11 @@ void fn_1_7F38(void)
+     s32 var_r24;
+     s32 var_r23;
+ 
++#ifdef MPT_PC
++    /* Only x and z are set below, and the hit boxes this fills are read by x and z only; y would carry
++     * stale stack bytes (host frames on PC) into the game heap. It is zero instead. */
++    sp14.y = 0.0f;
++#endif
+     for (var_r26 = lbl_1_bss_158.unk34C, var_r27 = 0; var_r27 < 3; var_r27++, var_r26++) {
+         for (var_r28 = 0, var_r30 = lbl_1_bss_158.unk4; var_r28 < 2; var_r28++, var_r30++) {
+             if ((var_r30->unk178[var_r27] == 0) && ((var_r30->unk84.z - 7000.0f) < var_r26->unk4.z)
+@@ -1686,6 +1696,10 @@ void fn_1_8768(M427DllMapSubstruct3 *var_r28, M427DllMapUNKB8 *var_r31, s16 var_
+     }
+     sp2C.z = var_r30->pos.z - 30.0f;
+     sp20.z = 30.0f + var_r30->pos.z;
++#ifdef MPT_PC
++    /* As in fn_1_7C34: the box's y is never set and never read; zero, not stale stack. */
++    sp2C.y = sp20.y = 0.0f;
++#endif
+     fn_1_15F10(sp2C, sp20, 1, 1, var_r28->unk0);
+ }
+ 
