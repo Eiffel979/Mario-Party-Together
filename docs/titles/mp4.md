@@ -924,6 +924,15 @@ The `armem.c` loops would never see their callback under the default mode, so MP
   - **Every module hit noted**, OFF, the full party to `finished` at frame 250,789 (4,180 checkpoints): `module_cxx` 0, `module_unknown` 0, `module_raw` 0, `module_misaligned` 0, and `module_code_interior` 58 (one word, at most 1 per checkpoint; open, below). 3,629 distinct notes: the symbol notes are function starts and data symbols by offset, and the text notes are string literals, all real pointers.
   - **ON against OFF, the full party**: identical to frame 104,000, **different from frame 105,000** (open, below). The gate is not met yet.
   - `--perturb` (10,000 frames, 64 samples): 0 failed. `--conformance`: 0 problems, 70 of 70 coverage targets.
+  - **Cost of zeroing** (ADR 0008, "Stale heap bytes", point 5). The same machine, `mpt_dump_lane --boot mp4 --party --seed 1 --frame-times`, N = 5 runs of each build, alternating, one at a time: the build before zeroing (this branch at `a1bd65a` with the two zeroing commits reverted) against the zeroing build. Exempt frames come from game-visible events only: boot until the first `bootDll` frame, overlay changes, and frames in which the SDK completes a DVD read or an ARAM transfer (1,229 of 250,800 frames in every run of both builds). Medians:
+
+    | | before | zeroing | change | budget |
+    |---|---|---|---|---|
+    | total step time, full party | 381.4 s | 376.5 s | −1.3% | under +2% |
+    | process wall time | 471.3 s | 464.8 s | −1.4% | |
+    | p99 over 249,571 steady frames | 2.468 ms | 2.441 ms | −0.03 ms | under +0.25 ms |
+
+    Both are within budget; the difference is below the run-to-run noise (one run of each build was 15–45% slower than the rest, from other load on the machine, and the medians leave those out). No high-water mark is needed.
 - **Open: two layout-dependent words in an HSF model block.** At frame 105,000 (Toad's Midway Madness, turn 9, on the board) the ON and OFF heap dumps differ in exactly two words, 40 bytes apart, inside a HuMem block that holds a loaded HSF model file (`HSFV037`). Both lie in that file's matrix section (matrix 14, at its first and its 11th float), where a matrix should hold floats:
   - `0x00005B979E745100`: a full code address inside `m430Dll`'s code, not a function start (`module_code_interior`; this is the one word left in the notes run);
   - `0x0000727D9E727524`: the low 32 bits of another code address, with `0x0000727D` above it.
