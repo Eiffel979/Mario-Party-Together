@@ -134,11 +134,12 @@ jobs:
       # GX layer inputs (P1-21, E10): the verified aurora checkout and a headers-only Dawn
       # prefix, so the null GX build, its scenes and the MTX goldens run under -Werror on both
       # OSes (runtimes/gc_wii/gx/README.md). Windows keeps them on a short path: Dawn's and
-      # aurora's paths are long, and some MSVC tools stop at 260 characters.
+      # aurora's paths are long, and some MSVC tools stop at 260 characters. Linux uses RUNNER_TEMP:
+      # actions/cache does not save a path with '..' in it, as with the vcpkg binary cache above.
       - name: Set the GX source and Dawn paths
         shell: bash
         run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then root="C:/mpt"; else root="$GITHUB_WORKSPACE/../mpt-gx"; fi
+          if [ "$RUNNER_OS" = "Windows" ]; then root="C:/mpt"; else root="$RUNNER_TEMP/mpt-gx"; fi
           mkdir -p "$root"
           echo "MPT_GX_SOURCES=$root/s" >> "$GITHUB_ENV"
           echo "MPT_GX_DAWN=$root/dawn" >> "$GITHUB_ENV"
@@ -289,9 +290,10 @@ jobs:
       - name: Bootstrap vcpkg
         run: bash .github/scripts/bootstrap-vcpkg.sh
 
+      # The build job's Linux path, so the headers-only Dawn prefix it saves restores here.
       - name: Set the GX source and Dawn paths
         run: |
-          root="$GITHUB_WORKSPACE/../mpt-gx"
+          root="$RUNNER_TEMP/mpt-gx"
           mkdir -p "$root"
           echo "MPT_GX_SOURCES=$root/s" >> "$GITHUB_ENV"
           echo "MPT_GX_DAWN=$root/dawn" >> "$GITHUB_ENV"
