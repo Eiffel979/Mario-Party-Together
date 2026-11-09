@@ -237,7 +237,10 @@ class Launcher final : public shell::IOverlay {
       return false;
     }
     switch (e.type) {
-      case SDL_EVENT_KEY_DOWN: on_key(e.key, true); break;
+      case SDL_EVENT_KEY_DOWN:
+        last_pad_.reset();  // a keyboard choice seats the controller by the rule, not the last pad
+        on_key(e.key, true);
+        break;
       case SDL_EVENT_KEY_UP: on_key(e.key, false); break;
       case SDL_EVENT_MOUSE_MOTION:
         context_->ProcessMouseMove(static_cast<int>(e.motion.x * mouse_scale_), static_cast<int>(e.motion.y * mouse_scale_),
@@ -245,6 +248,7 @@ class Launcher final : public shell::IOverlay {
         break;
       case SDL_EVENT_MOUSE_BUTTON_DOWN:
       case SDL_EVENT_MOUSE_BUTTON_UP: {
+        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) last_pad_.reset();
         const int button = e.button.button == SDL_BUTTON_LEFT ? 0 : (e.button.button == SDL_BUTTON_RIGHT ? 1 : 2);
         if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
           context_->ProcessMouseButtonDown(button, rml_modifiers(SDL_GetModState()));
