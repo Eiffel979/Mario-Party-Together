@@ -57,14 +57,14 @@ jobs:
     timeout-minutes: 150
     env:
       MPT_VCPKG_DIR: ${{ github.workspace }}/../vcpkg
-      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/../vcpkg-cache
+      # VCPKG_DEFAULT_BINARY_CACHE is set in a step below: actions/cache rejects a path with '..'.
       MPT_SOURCE_CACHE: ${{ github.workspace }}/external/sources
       MPT_DAWN_PREFIX: ${{ github.workspace }}/external/dawn
       BUILD_DIR: ${{ github.workspace }}/build/gx-gate
       CC: clang
       CXX: clang++
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install build dependencies, Mesa lavapipe and the Vulkan loader
         run: |
@@ -87,20 +87,19 @@ jobs:
           dpkg-query -W -f='mesa-vulkan-drivers ${Version}\nlibvulkan1 ${Version}\n' mesa-vulkan-drivers libvulkan1
           vulkaninfo --summary || true
 
+      - name: Set the vcpkg binary cache path
+        run: echo "VCPKG_DEFAULT_BINARY_CACHE=$RUNNER_TEMP/vcpkg-cache" >> "$GITHUB_ENV"
+
       - name: Restore vcpkg binary cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
           key: vcpkg-gx-ubuntu-24.04-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: vcpkg-gx-ubuntu-24.04-${{ env.VCPKG_COMMIT }}-
 
+      # Retries network failures (.github/scripts/bootstrap-vcpkg.sh).
       - name: Bootstrap vcpkg
-        run: |
-          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
-          git clone https://github.com/microsoft/vcpkg "$MPT_VCPKG_DIR"
-          git -C "$MPT_VCPKG_DIR" checkout "$VCPKG_COMMIT"
-          "$MPT_VCPKG_DIR/bootstrap-vcpkg.sh" -disableMetrics
-          echo "VCPKG_ROOT=$MPT_VCPKG_DIR" >> "$GITHUB_ENV"
+        run: bash .github/scripts/bootstrap-vcpkg.sh
 
       # The whole tree with Clang, so runtimes/gc_wii builds in-tree and its tests are visible here.
       # Warnings are not errors here: this job builds the whole tree with Clang, which the main CI does
@@ -121,7 +120,7 @@ jobs:
       - name: Restore the Dawn install
         id: dawn-cache
         if: ${{ !inputs.clean_dawn }}
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: external/dawn
           key: dawn-ubuntu-24.04-${{ steps.versions.outputs.clang }}-${{ hashFiles('runtimes/gc_wii/gx/dawn.lock', 'runtimes/gc_wii/gx/tools/build_dawn.cmake') }}
@@ -139,7 +138,7 @@ jobs:
 
       - name: Save the Dawn install
         if: ${{ steps.dawn-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: external/dawn
           key: dawn-ubuntu-24.04-${{ steps.versions.outputs.clang }}-${{ hashFiles('runtimes/gc_wii/gx/dawn.lock', 'runtimes/gc_wii/gx/tools/build_dawn.cmake') }}
@@ -196,7 +195,7 @@ jobs:
 
       - name: Upload the synthetic scene images and trails
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: gx-linux-scenes
           path: |
