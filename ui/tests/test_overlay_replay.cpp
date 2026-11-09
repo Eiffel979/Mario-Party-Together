@@ -13,6 +13,7 @@
 #include <RmlUi/Core.h>
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -474,6 +475,12 @@ TEST_CASE("bring-up gate: the launcher renders, is gamepad-navigable and leaves 
 TEST_CASE("walkthrough: Turn x/y while paused, then the post-session screen") {
   SdlVideo video;
   const Replay replay = record_party();
+  const std::vector<ReplayCheckpoint> plain = play(replay, nullptr, {});
+  REQUIRE(plain == replay.checkpoints);
+  // A session stopped early has played a prefix of the UI-off trail.
+  const auto prefix_of_plain = [&](const std::vector<ReplayCheckpoint>& trail) {
+    return !trail.empty() && trail.size() <= plain.size() && std::equal(trail.begin(), trail.end(), plain.begin());
+  };
 
   SUBCASE("a finished party shows Party finished and the replay path") {
     Harness ui(video);
@@ -488,7 +495,7 @@ TEST_CASE("walkthrough: Turn x/y while paused, then the post-session screen") {
     std::string paused_title;
     bool turn_shown = false;
     std::string ending_title;
-    play(replay, &ui, script, nullptr, [&](std::uint64_t tick) {
+    const std::vector<ReplayCheckpoint> trail = play(replay, &ui, script, nullptr, [&](std::uint64_t tick) {
       if (tick == 185) {
         paused_title = shown_title();
         turn_shown = shows("Turn 2/3");
@@ -499,6 +506,7 @@ TEST_CASE("walkthrough: Turn x/y while paused, then the post-session screen") {
     CHECK(paused_title == "Paused");
     CHECK(turn_shown);
     CHECK(ending_title == "Party over");
+    CHECK(prefix_of_plain(trail));
     CHECK(ui.shell.pauses == 2);
     CHECK(ui.shell.resumes == 1);
     CHECK(ui.shell.stops == 1);
@@ -529,7 +537,7 @@ TEST_CASE("walkthrough: Turn x/y while paused, then the post-session screen") {
         press(190, SDL_GAMEPAD_BUTTON_DPAD_DOWN), release(191, SDL_GAMEPAD_BUTTON_DPAD_DOWN),
         press(200, SDL_GAMEPAD_BUTTON_SOUTH), release(201, SDL_GAMEPAD_BUTTON_SOUTH),  // Quit to library
     };
-    play(replay, &ui, script);
+    CHECK(prefix_of_plain(play(replay, &ui, script)));
     CHECK(ui.shell.stops == 1);
     CHECK(ui.shell.phase == PartyPhase::board);
     CHECK(ui.shell.turn == 2);
@@ -556,7 +564,7 @@ TEST_CASE("walkthrough: Turn x/y while paused, then the post-session screen") {
     };
     bool any_turn = true;
     std::string title;
-    play(replay, &ui, script, nullptr, [&](std::uint64_t tick) {
+    const std::vector<ReplayCheckpoint> trail = play(replay, &ui, script, nullptr, [&](std::uint64_t tick) {
       ui.shell.max_turns = 0;  // as a title that does not report it (read while paused: no step resets it)
       if (tick == 185) {
         title = shown_title();
@@ -565,5 +573,6 @@ TEST_CASE("walkthrough: Turn x/y while paused, then the post-session screen") {
     });
     CHECK(title == "Paused");
     CHECK_FALSE(any_turn);
+    CHECK(trail == plain);  // played to the end: the whole UI-off trail
   }
 }
