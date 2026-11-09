@@ -5,6 +5,8 @@
 // so an arena offset names the same bytes in every run of one build, and the lane reads them in place:
 //  - `--watch-word OFF[,OFF...]` prints the 64-bit word at each arena offset whenever it differs after a step;
 //  - `--find-word VALUE@FRAME` lists every aligned arena word equal to VALUE after FRAME steps;
+//  - `--dump-arena FRAME FILE` writes the arena (main RAM, then ARAM) after FRAME steps, for diffing two
+//    builds' memory (the file is game memory: it stays outside the repository, like a save state);
 //  - `--watch-write OFF[,OFF...]@FRAME` (Windows x64) arms a hardware data breakpoint on each offset (at most
 //    four, 8-byte aligned) from FRAME on. A write traps after it completes; a vectored handler records the
 //    instruction, the new value and an unwound call stack, clears the trap and resumes. The debug registers
@@ -15,6 +17,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -35,6 +38,8 @@ struct Options {
   std::vector<std::uint64_t> writes;    // --watch-write
   std::uint64_t write_frame = 0;
   std::uint64_t arena_bytes = 128ull << 20;  // main RAM plus ARAM, scanned by --find-word
+  std::uint64_t dump_frame = 0;              // --dump-arena (0: off)
+  std::filesystem::path dump_path;
 };
 
 // "0x1234,0x5678" (hex, with or without 0x).
@@ -175,7 +180,7 @@ inline void drain(const std::vector<std::uint64_t>&) {}
 class Watcher {
  public:
   explicit Watcher(Options o) : o_(std::move(o)), last_(o_.words.size(), 0) {}
-  bool active() const { return !o_.words.empty() || o_.find_frame != 0 || !o_.writes.empty(); }
+  bool active() const { return !o_.words.empty() || o_.find_frame != 0 || !o_.writes.empty() || o_.dump_frame != 0; }
 
   void before(std::uint64_t f) {
     if (!o_.writes.empty() && !armed_ && f + 1 >= o_.write_frame) {
@@ -196,6 +201,14 @@ class Watcher {
       last_[i] = v;
     }
     seen_ = true;
+    if (o_.dump_frame != 0 && frame == o_.dump_frame) {
+      bool ok = false;
+      if (std::FILE* f = std::fopen(o_.dump_path.string().c_str(), "wb")) {
+        ok = std::fwrite(reinterpret_cast<const void*>(kArenaBase), 1, o_.arena_bytes, f) == o_.arena_bytes;
+        ok = std::fclose(f) == 0 && ok;
+      }
+      std::printf("dump-arena frame %llu: %s\n", static_cast<unsigned long long>(frame), ok ? "written" : "FAILED");
+    }
     if (o_.find_frame != 0 && frame == o_.find_frame) {
       for (std::uint64_t off = 0; off + 8 <= o_.arena_bytes; off += 8)
         if (read_word(off) == o_.find_value)

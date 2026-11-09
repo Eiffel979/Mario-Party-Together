@@ -1133,6 +1133,9 @@ int main(int argc, char** argv) {
       const std::size_t at = w.find('@');
       boot_options.watch.writes = mpt::dump_lane::watch::parse_list(w.substr(0, at));
       boot_options.watch.write_frame = at == std::string::npos ? 0 : std::strtoull(w.substr(at + 1).c_str(), nullptr, 10);
+    } else if (arg == "--dump-arena" && i + 2 < argc) {
+      boot_options.watch.dump_frame = std::strtoull(argv[++i], nullptr, 10);
+      boot_options.watch.dump_path = argv[++i];
     } else if (arg == "--watchdog" && has_value) {
       boot_options.watchdog = std::strtoull(argv[++i], nullptr, 10);
     } else if (arg == "--replay" && has_value) {
@@ -1149,7 +1152,9 @@ int main(int argc, char** argv) {
                   "                     [--press button@frame[+frames][,...]]... [--capture DIR [--capture-every N]]\n"
                   "                     [--party [--party-board N] [--party-wheel FROM:TO] [--watchdog N] [--replay FILE]\n"
                   "                              [--hash-items FILE [--note-module-hits]] [--frame-times]\n"
-                  "                              [--party-save-at N FILE] [--party-resume FILE]]\n"
+                  "                              [--party-save-at N FILE] [--party-resume FILE]\n"
+                  "                              [--watch-word OFF,...] [--find-word VALUE@FRAME]\n"
+                  "                              [--watch-write OFF,...@FRAME] [--dump-arena FRAME FILE]]\n"
                   "                     [--verify-replay FILE]]\n"
                   "       mpt_dump_lane --layout-probe\n");
       return 2;
@@ -1194,8 +1199,9 @@ int main(int argc, char** argv) {
   // Captures (the user's game output) and the caches (an extracted disc, built modules, decomp
   // checkouts) must stay outside the repository too, and so must --hash-items (it names the game's
   // symbols).
-  const std::array<mpt::dump_lane::GuardedPath, 6> written = {{
+  const std::array<mpt::dump_lane::GuardedPath, 7> written = {{
       {"--party-save-at", boot_options.party_save},
+      {"--dump-arena", boot_options.watch.dump_path},
       {"--capture", boot_options.capture_dir},
       {"--hash-items", boot_options.hash_items},
       {"--replay", boot_options.replay_out},
