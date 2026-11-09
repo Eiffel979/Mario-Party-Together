@@ -7,6 +7,7 @@
   <div class="panel center">
     <h1>Paused</h1>
     <p class="muted">{{pause_title}}</p>
+    <p data-if="has_turn">{{pause_turn}}</p>
     <div class="btn wide" data-event-click="resume" autofocus="">Resume</div>
     <div class="btn wide" data-event-click="quit_library">Quit to library</div>
     <div class="btn wide" data-event-click="exit_app">Exit Mario Party Together</div>
