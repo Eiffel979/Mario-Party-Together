@@ -33,6 +33,7 @@
 #include "save_store.h"
 #include "session_record.h"
 #include "ui_host.h"
+#include "user_dirs.h"
 
 namespace mpt::shell {
 namespace {
@@ -61,30 +62,6 @@ constexpr std::string_view kUsage =
 constexpr std::uint64_t kMaxLagNs = 250'000'000;
 // Idle wait when no frame is due (no session, paused, UI focus).
 constexpr std::uint64_t kIdleFrameNs = 1'000'000'000ull / 60;
-
-struct UserDirs {
-  std::filesystem::path root;
-  std::filesystem::path saves;  // <root>/saves/<title>/<region>/ (ADR 0004 rule 5)
-  std::filesystem::path cache;  // <root>/cache: the BuildCache root (P1-10)
-};
-
-std::optional<UserDirs> user_dirs(const AppOptions& options, std::string& error) {
-  std::filesystem::path root;
-  if (options.user_dir) {
-    root = *options.user_dir;
-  } else {
-    // Short org and app names keep build-cache paths well inside Windows' 260-character
-    // limit (P1-09/P1-10; see also the longPathAware manifest).
-    char* pref = SDL_GetPrefPath("MarioPartyTogether", "mpt");
-    if (!pref) {
-      error = std::string("no user data folder: ") + SDL_GetError();
-      return std::nullopt;
-    }
-    root = std::filesystem::path(reinterpret_cast<const char8_t*>(pref));
-    SDL_free(pref);
-  }
-  return UserDirs{root, root / "saves", root / "cache"};
-}
 
 std::optional<std::vector<std::byte>> read_file(const std::filesystem::path& path, std::string& error) {
   std::ifstream in(path, std::ios::binary);
@@ -257,7 +234,7 @@ std::optional<T> take_or_print(std::variant<T, Result> v, const char* context, s
 // exits non-zero on the first mismatch.
 int run_verify_replay(const AppOptions& options, const ShellTitles& titles) {
   std::string error;
-  const std::optional<UserDirs> dirs = user_dirs(options, error);
+  const std::optional<UserDirs> dirs = user_dirs(options.user_dir, error);
   if (!dirs) {
     std::fprintf(stderr, "%s\n", error.c_str());
     return 1;
@@ -832,7 +809,7 @@ int run(const AppOptions& options, const ShellTitles& titles, const OverlayFacto
     return 1;
   }
   std::string error;
-  std::optional<UserDirs> dirs = user_dirs(options, error);
+  std::optional<UserDirs> dirs = user_dirs(options.user_dir, error);
   if (!dirs) {
     std::fprintf(stderr, "%s\n", error.c_str());
     SDL_Quit();
