@@ -35,6 +35,9 @@ fs::path utf8Path(const char* s) { return fs::path(reinterpret_cast<const char8_
 const fs::path kV11 = utf8Path(MPT_STUB_V11);
 const fs::path kV10 = utf8Path(MPT_STUB_V10);
 const fs::path kNoExport = utf8Path(MPT_STUB_NO_EXPORT);
+const fs::path kOldBase = utf8Path(MPT_STUB_OLD_BASE);
+const fs::path kCross = utf8Path(MPT_STUB_CROSS);
+constexpr std::uintptr_t kCrossBase = static_cast<std::uintptr_t>(MPT_STUB_CROSS_BASE);
 
 // Whether the image is mapped in this process right now (without loading it).
 bool mapped(const fs::path& path) {
@@ -95,6 +98,33 @@ TEST_CASE("a module away from its fixed base is refused and unloaded") {
   REQUIRE_MESSAGE(api != nullptr, error);
   release_module();
   CHECK_FALSE(mapped(kV11));
+}
+
+TEST_CASE("the module base keeps the whole image below the next 4 GiB boundary") {
+  // ADR 0008, "Module words: a safe rule must not depend on layout", point 1.
+  CHECK(kBase == 0x5B97'9E3C'0000ull);
+  CHECK((kBase & 0xFFFF) == 0);  // 64 KiB aligned (Windows), so also page aligned (ELF)
+  std::string error;
+  const MptMp4Api* api = load_module(kV11, kBase, error);
+  REQUIRE_MESSAGE(api != nullptr, error);
+  release_module();
+}
+
+TEST_CASE("a module linked at the old base is refused and unloaded") {
+  std::string error;
+  CHECK(load_module(kOldBase, kBase, error) == nullptr);
+  CHECK(has(error, "not at its fixed base"));
+  CHECK(has(error, "loaded at 0x500000000000"));
+  CHECK_FALSE(mapped(kOldBase));
+}
+
+TEST_CASE("a module whose image crosses a 4 GiB boundary is refused and unloaded") {
+  std::string error;
+  // At its own base, so only the end check can refuse it.
+  CHECK(load_module(kCross, kCrossBase, error) == nullptr);
+  CHECK(has(error, "must not cross a 4 GiB boundary"));
+  CHECK(has(error, "above 0x5b9800000000"));
+  CHECK_FALSE(mapped(kCross));
 }
 
 TEST_CASE("a v1.0 module is refused and unloaded") {

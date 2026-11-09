@@ -171,6 +171,37 @@ void onArq(uintptr_t req) {
 }
 }  // namespace
 
+// ADR 0008, "Stale heap bytes": ARAlloc returns a zeroed block whatever a freed block left there, and
+// mpt_gc_ARClear zeroes an ARAM range for a title's own ARAM allocator.
+TEST_CASE("ARAM: ARAlloc returns zeroed blocks and mpt_gc_ARClear zeroes a range") {
+  bool ok = true;
+  Game g{[&] {
+    static u32 stack[8];
+    static std::byte pattern[0x300], back[0x300];
+    std::memset(pattern, 0xA5, sizeof pattern);
+    ARInit(stack, 8);
+    const u32 a = ARAlloc(0x300);
+    ARStartDMA(ARAM_DIR_MRAM_TO_ARAM, reinterpret_cast<uintptr_t>(pattern), a, 0x300);
+    ARFree(nullptr);
+    const u32 b = ARAlloc(0x200);  // the same place, smaller
+    const u32 c = ARAlloc(0x100);  // the rest of the old block
+    std::memset(back, 0xFF, sizeof back);
+    ARStartDMA(ARAM_DIR_ARAM_TO_MRAM, reinterpret_cast<uintptr_t>(back), a, 0x300);
+    ok = b == a && c == a + 0x200;
+    for (std::size_t i = 0; i < sizeof back; ++i) ok = ok && back[i] == std::byte{0};
+    ARStartDMA(ARAM_DIR_MRAM_TO_ARAM, reinterpret_cast<uintptr_t>(pattern), a, 0x300);
+    mpt_gc_ARClear(a + 0x40, 0x80);
+    ARStartDMA(ARAM_DIR_ARAM_TO_MRAM, reinterpret_cast<uintptr_t>(back), a, 0x300);
+    for (std::size_t i = 0; i < sizeof back; ++i)
+      ok = ok && back[i] == ((i >= 0x40 && i < 0xC0) ? std::byte{0} : std::byte{0xA5});
+    ARFree(nullptr);
+    ARFree(nullptr);
+  }};
+  auto sdk = boot(g);
+  CHECK(step(*sdk) == StepStatus::halted);
+  CHECK(ok);
+}
+
 TEST_CASE("ARAM: stack allocation, synchronous DMA both ways, ARQ callbacks") {
   bool ok = true;
   u32 a1 = 0, a2 = 0, top = 0, freed = 0;

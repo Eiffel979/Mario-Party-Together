@@ -31,6 +31,28 @@ target_compile_options(mpt_mp4_module_symbols_tests PRIVATE ${_warn})
 mpt_mp4_link_symtab(mpt_mp4_module_symbols_tests)
 add_test(NAME mp4_module_symbols COMMAND mpt_mp4_module_symbols_tests)
 
+# Real linkers keep the function type (ADR 0008, "Module words: a safe rule must not depend on layout",
+# point 6): a stub module (tests/mp4_loader/function_starts_*), linked exactly like the game module by
+# this Clang build's lld-link or ld.lld, reports a static C, an extern C and an assembly function as
+# function starts.
+set(_mp4_loader "${_mp4}/../../../tests/mp4_loader")
+include("${_mp4}/layout.cmake")
+add_library(mpt_mp4_function_starts_stub MODULE "${_mp4_loader}/function_starts_module.cpp"
+                                                "${_mp4_loader}/function_starts_stub.c")
+target_include_directories(mpt_mp4_function_starts_stub PRIVATE "${_mp4}/include")
+target_link_libraries(mpt_mp4_function_starts_stub PRIVATE mpt_mp4_module_symbols)
+set_target_properties(mpt_mp4_function_starts_stub PROPERTIES PREFIX "" C_VISIBILITY_PRESET hidden
+                      CXX_VISIBILITY_PRESET hidden)
+target_compile_options(mpt_mp4_function_starts_stub PRIVATE ${_warn})
+mpt_mp4_fixed_base_link(mpt_mp4_function_starts_stub)
+mpt_mp4_link_symtab(mpt_mp4_function_starts_stub)
+add_executable(mpt_mp4_function_starts_tests "${_mp4_loader}/test_function_starts.cpp")
+target_compile_options(mpt_mp4_function_starts_tests PRIVATE ${_warn})
+target_link_libraries(mpt_mp4_function_starts_tests PRIVATE ${CMAKE_DL_LIBS})
+add_dependencies(mpt_mp4_function_starts_tests mpt_mp4_function_starts_stub)
+add_test(NAME mp4_function_starts
+         COMMAND mpt_mp4_function_starts_tests "$<TARGET_FILE:mpt_mp4_function_starts_stub>")
+
 # The copy-destination debug trap on the real GXCopyTex (null renderer), when the GX layer is built.
 if(TARGET mpt::gx)
   add_executable(mpt_mp4_copy_trap_tests "${_mp4}/tests/test_copy_trap.cpp" "${_mp4}/src/copy_trap.cpp")

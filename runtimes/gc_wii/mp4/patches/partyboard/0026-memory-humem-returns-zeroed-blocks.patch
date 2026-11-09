@@ -1,0 +1,40 @@
+Apply order 0026 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+memory: HuMem returns zeroed blocks, on MPT_PC
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+ADR 0008, "Stale heap bytes: game heaps return zeroed blocks on PC". HuMem returned a block holding
+whatever its earlier occupants left: on a 64-bit host often half of an 8-byte pointer to a function,
+so the bytes depended on the module layout and differed between Windows and Linux (the layout
+probe's full-party run split on such a word in a particle record at frame 82,000). HuMemMemoryAlloc2,
+behind HuMemMemoryAlloc and HuMemMemoryAllocNum (and so HuMemDirectMalloc, its Num form and process
+heaps), now clears the whole user area, to the end of the block, after the split and the header
+write. The header layout and the constant caller address are unchanged. Zero-on-alloc, never on
+free, so a use-after-free reads what it read before. Unconditional on PC.
+
+diff --git a/src/game/memory.c b/src/game/memory.c
+index ff17123..d575fd5 100644
+--- a/src/game/memory.c
++++ b/src/game/memory.c
+@@ -1,6 +1,10 @@
+ #include "game/memory.h"
+ #include "dolphin/os.h"
+ 
++#ifdef MPT_PC
++#include <string.h>
++#endif
++
+ #ifdef SKIP_HU_ALLOC
+ #include <stdlib.h>
+ #endif
+@@ -81,6 +85,11 @@ static void *HuMemMemoryAlloc2(void *heap_ptr, size_t size, uintptr_t num, uintp
+             block->magic = 165;
+             block->num = num;
+             block->retaddr = retaddr;
++#ifdef MPT_PC
++            /* ADR 0008, "Stale heap bytes": a block's user area is zero when it is returned, whatever
++             * earlier allocations left there (on a 64-bit host often half of an 8-byte pointer). */
++            memset(BLOCK_GET_DATA(block), 0, (size_t)block->size - (size_t)(BLOCK_GET_DATA(block) - (char *)block));
++#endif
+             return BLOCK_GET_DATA(block);
+         }
+         block = block->next;

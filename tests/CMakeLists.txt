@@ -54,16 +54,27 @@ add_test(NAME conformance COMMAND mpt_conformance_tests)
 # the loader keeps one module per process.
 if(TARGET mpt_mp4_runtime)
   include("${PROJECT_SOURCE_DIR}/runtimes/gc_wii/mp4/layout.cmake")
-  foreach(_stub v11 v10 no_export)
+  # old_base: a v1.1 stub at the module base before ADR 0008's 2026-11-07 ruling. cross: a v1.1 stub
+  # whose image crosses a 4 GiB boundary (linked 64 KiB below one, with a larger image).
+  set(_mp4_stub_cross_base "0x5B97FFFF0000")
+  foreach(_stub v11 v10 no_export old_base cross)
     add_library(mpt_mp4_stub_${_stub} MODULE mp4_loader/stub_module.cpp)
     target_include_directories(mpt_mp4_stub_${_stub} PRIVATE "${PROJECT_SOURCE_DIR}/runtimes/gc_wii/mp4/include")
     set_target_properties(mpt_mp4_stub_${_stub} PROPERTIES PREFIX "" CXX_VISIBILITY_PRESET hidden)
-    mpt_mp4_fixed_base_link(mpt_mp4_stub_${_stub})
+    if(_stub STREQUAL "old_base")
+      mpt_mp4_fixed_base_link(mpt_mp4_stub_${_stub} BASE 0x500000000000)
+    elseif(_stub STREQUAL "cross")
+      mpt_mp4_fixed_base_link(mpt_mp4_stub_${_stub} BASE ${_mp4_stub_cross_base})
+    else()
+      mpt_mp4_fixed_base_link(mpt_mp4_stub_${_stub})
+    endif()
     mpt_set_warnings(mpt_mp4_stub_${_stub})
   endforeach()
   target_compile_definitions(mpt_mp4_stub_v11 PRIVATE MPT_STUB_API_SIZE=MPT_MP4_API_SIZE_V1_1)
   target_compile_definitions(mpt_mp4_stub_v10 PRIVATE MPT_STUB_API_SIZE=MPT_MP4_API_SIZE_V1_0)
   target_compile_definitions(mpt_mp4_stub_no_export PRIVATE MPT_STUB_NO_EXPORT)
+  target_compile_definitions(mpt_mp4_stub_old_base PRIVATE MPT_STUB_API_SIZE=MPT_MP4_API_SIZE_V1_1)
+  target_compile_definitions(mpt_mp4_stub_cross PRIVATE MPT_STUB_API_SIZE=MPT_MP4_API_SIZE_V1_1 MPT_STUB_BIG_IMAGE)
 
   add_executable(mpt_mp4_loader_tests unit/main.cpp mp4_loader/test_module_loader.cpp)
   target_link_libraries(mpt_mp4_loader_tests PRIVATE mpt::mp4_runtime doctest::doctest ${CMAKE_DL_LIBS})
@@ -71,8 +82,12 @@ if(TARGET mpt_mp4_runtime)
     MPT_MP4_MODULE_BASE=${MPT_MP4_MODULE_BASE}ull
     "MPT_STUB_V11=\"$<TARGET_FILE:mpt_mp4_stub_v11>\""
     "MPT_STUB_V10=\"$<TARGET_FILE:mpt_mp4_stub_v10>\""
-    "MPT_STUB_NO_EXPORT=\"$<TARGET_FILE:mpt_mp4_stub_no_export>\"")
-  add_dependencies(mpt_mp4_loader_tests mpt_mp4_stub_v11 mpt_mp4_stub_v10 mpt_mp4_stub_no_export)
+    "MPT_STUB_NO_EXPORT=\"$<TARGET_FILE:mpt_mp4_stub_no_export>\""
+    "MPT_STUB_OLD_BASE=\"$<TARGET_FILE:mpt_mp4_stub_old_base>\""
+    "MPT_STUB_CROSS=\"$<TARGET_FILE:mpt_mp4_stub_cross>\""
+    MPT_STUB_CROSS_BASE=${_mp4_stub_cross_base}ull)
+  add_dependencies(mpt_mp4_loader_tests mpt_mp4_stub_v11 mpt_mp4_stub_v10 mpt_mp4_stub_no_export
+                   mpt_mp4_stub_old_base mpt_mp4_stub_cross)
   mpt_set_warnings(mpt_mp4_loader_tests)
   add_test(NAME mp4_module_loader COMMAND mpt_mp4_loader_tests)
 endif()
@@ -95,6 +110,10 @@ mpt_generate_title_registration(mpt_dump_lane)
 if(TARGET mpt_mp4_runtime)
   target_link_libraries(mpt_dump_lane PRIVATE mpt::mp4_runtime)
   target_compile_definitions(mpt_dump_lane PRIVATE MPT_DUMP_LANE_MP4)
+  # The MP4 module's layout probe mode, for --layout-probe (dump_lane/layout_perturbation.cmake).
+  if(DEFINED MPT_MP4_RECIPE_LAYOUT_PROBE)
+    target_compile_definitions(mpt_dump_lane PRIVATE "MPT_DUMP_LANE_LAYOUT_PROBE=\"${MPT_MP4_RECIPE_LAYOUT_PROBE}\"")
+  endif()
   target_link_libraries(mpt_dump_lane PRIVATE mpt::mp4_adapter)
 endif()
 mpt_set_warnings(mpt_dump_lane)
@@ -108,6 +127,12 @@ if(TARGET mpt_mp4_runtime AND DEFINED MPT_MP4_RECIPE_LAYOUT_PROBE AND NOT MPT_MP
     COMMAND ${CMAKE_COMMAND} "-DPROBE_LANE=$<TARGET_FILE:mpt_dump_lane>" "-DREFERENCE_LANE=${MPT_DUMP_LANE_LAYOUT_REFERENCE}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/dump_lane/layout_perturbation.cmake")
   set_tests_properties(dump_lane_layout_perturbation PROPERTIES LABELS dump SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 7200)
+  # The gate (ADR 0008, "Module words: a safe rule must not depend on layout", point 6): the whole party
+  # to `finished` on both lanes, exit 0. Hours, not minutes: ctest -L dump -R layout_perturbation_full.
+  add_test(NAME dump_lane_layout_perturbation_full
+    COMMAND ${CMAKE_COMMAND} "-DPROBE_LANE=$<TARGET_FILE:mpt_dump_lane>" "-DREFERENCE_LANE=${MPT_DUMP_LANE_LAYOUT_REFERENCE}"
+            -DFULL=ON -P "${CMAKE_CURRENT_SOURCE_DIR}/dump_lane/layout_perturbation.cmake")
+  set_tests_properties(dump_lane_layout_perturbation_full PROPERTIES LABELS dump SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 21600)
 endif()
 
 # Cross-process determinism (ADR 0002 rule 10 follow-up, P1-20b1): the same FakeRuntime run

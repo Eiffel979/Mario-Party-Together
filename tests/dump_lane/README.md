@@ -39,13 +39,23 @@ Run both before changing MP4's hash manifest, `runtimes/gc_wii/mp4/src/abi.cpp`'
    `-DMPT_DUMP_LANE_LAYOUT_REFERENCE=<the normal build's mpt_dump_lane>`, then run
    `ctest -L dump -R layout_perturbation` there (`dump_lane/layout_perturbation.cmake`). It plays the
    same autopilot party (`--party --every 10`) on both lanes in separate processes and requires the two
-   `frame N hash` trails and exit codes to be identical. `-DSEEDS=1;2;3` and `-DFRAMES=N` on a direct
-   `cmake -P` run widen it. ON moves every function, every game global and the game core's read-only
-   data; `rodata` moves only the read-only data. The option is test only: it needs `MPT_BUILD_TESTS`
-   and is refused in CI presets, and it changes the module's build ID. If a trail differs, run both
-   lanes with `--boot mp4 --hash-items FILE` at the first differing checkpoint and diff the files; the
-   `note misaligned` and `note code_interior` lines name words the canonical rules leave
-   layout-dependent.
+   `frame N hash` trails, exit codes and final `dump lane: party` lines to be identical. It first
+   checks with `mpt_dump_lane --layout-probe` that the reference is a normal build and the other a
+   probe build, and reports SKIPPED when a lane skips (exit 77).
+   - `dump_lane_layout_perturbation` is the quick check: 6,000 frames, where both lanes exit 1.
+   - `dump_lane_layout_perturbation_full` is the gate (ADR 0008, "Module words: a safe rule must not
+     depend on layout"): the whole party to `finished`, and both lanes must exit 0. It takes hours.
+
+   On a direct `cmake -P` run, `-DSEEDS=1;2;3`, `-DFRAMES=N` and `-DFULL=ON` choose the runs, and
+   `-DHASH_ITEMS_DIR=<dir outside the repository>` also tallies the canonical rules over every
+   checkpoint (`--party --hash-items`): `module_code_interior` must be 0 on both lanes, and
+   `module_unknown` and `module_raw` are printed for review. ON moves every function, every game
+   global and the game core's read-only data; `rodata` moves only the read-only data. The option is
+   test only: it needs `MPT_BUILD_TESTS` and the recipe, is refused in CI presets, and changes the
+   module's build ID. If a trail differs, run both lanes with `--boot mp4 --hash-items FILE` at the
+   first differing checkpoint and diff the files; the `note misaligned`, `note code_interior`,
+   `note raw` and `note unknown` lines name words the canonical rules leave layout-dependent.
+   `--note-module-hits` notes every module hit, for checking that each is a real pointer.
 
 `--hash-items` files and captures name or show game content: keep them outside the repository.
 

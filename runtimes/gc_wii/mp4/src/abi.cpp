@@ -59,6 +59,7 @@ struct MptMp4Game {
   std::uintptr_t arena_base = 0;
   bool copy_trap = false;
   bool debug_hooks = false;  // MPT_MP4_BOOT_DEBUG_HOOKS: test-only entries allowed (PR #48)
+  bool note_module_hits = false;  // MPT_MP4_BOOT_DEBUG_NOTE_MODULE_HITS: debug_hash_items notes every hit
   // debug_perturb's last flip, restored by the next call with the same target (test only).
   std::uint32_t perturb_pending_target = 0;
   std::byte* perturb_pending = nullptr;
@@ -305,6 +306,7 @@ MptMp4Status create(const MptMp4BootConfig* in, MptMp4Game** out, MptMp4Error* e
     card = std::move(media);
   }
   game->debug_hooks = (config.flags & MPT_MP4_BOOT_DEBUG_HOOKS) != 0;
+  game->note_module_hits = (config.flags & MPT_MP4_BOOT_DEBUG_NOTE_MODULE_HITS) != 0;
   if ((config.flags & MPT_MP4_BOOT_DEBUG_COPY_TRAP) != 0) {
     mpt::mp4::copy_trap_enable();
     game->copy_trap = true;
@@ -474,8 +476,11 @@ std::uint64_t deepHash(const MptMp4Game& game) {
 // Untyped memory is digested as 64-bit words, each canonicalized first. Canonicalizing can only merge
 // values, never split them:
 //  - a word inside the SDK arena becomes a tagged arena offset;
-//  - a word inside the module becomes its symbol by name and offset, or a string literal by its text
-//    (ModuleSymbols::canonical), because the DLL and the .so lay the module out differently;
+//  - a word inside the module (ModuleSymbols::canonical, ADR 0008 "Module words: a safe rule must not
+//    depend on layout"), because the DLL and the .so lay the module out differently: in code, only an
+//    exact function start becomes its function's name; in data and read-only data, the symbol by name
+//    and offset, or a string literal by its text. Every other module word (code interiors, padding,
+//    headers, gaps) is hashed raw: the base (layout.cmake) makes such a false match improbable;
 //  - the default NaNs hash as one value each (ADR 0008, NaN rule for untyped memory, PR #56): an f32
 //    half 0xFFC00000 becomes 0x7FC00000, and an aligned f64 word 0xFFF8000000000000 becomes
 //    0x7FF8000000000000, so both f64 default NaNs give the same value. Every other bit pattern stays
@@ -495,13 +500,15 @@ std::uint64_t splitmix(std::uint64_t x) {
 struct CanonCounts {
   std::uint64_t arena = 0, module_symbol = 0, module_text = 0, module_cxx = 0, module_unknown = 0;
   std::uint64_t nan32 = 0, nan64 = 0;
-  // Layout hazards, counted but not changed (the hash is unaffected): a code address at a nonzero
-  // offset (most likely an integer pair, which then hashes by a layout-dependent function and offset),
-  // and a module address at 4 mod 8, which no rule sees, so it hashes raw.
-  std::uint64_t module_code_interior = 0, module_misaligned = 0;
-  // Where the walk is (a symbol or a range), and what each C++ or unknown module hit pointed at:
-  // diagnostics for names that differ between platforms.
+  // Module words hashed raw, counted but not changed: a code word that is not a function start (most
+  // likely an integer pair; expected 0 at the module base of layout.cmake), and a module word in no
+  // section. And a module address at 4 mod 8, which no rule sees, so it hashes raw too.
+  std::uint64_t module_code_interior = 0, module_raw = 0, module_misaligned = 0;
+  // Where the walk is (a symbol or a range), and what each C++, unknown, raw or code-interior module
+  // hit pointed at: diagnostics for names that differ between platforms. With all_notes
+  // (MPT_MP4_BOOT_DEBUG_NOTE_MODULE_HITS), every module hit, symbol and text ones included.
   std::string where;
+  bool all_notes = false;
   std::vector<std::string> notes;
 };
 
@@ -516,8 +523,9 @@ struct Canon {
   static constexpr std::uint64_t kNan64 = 0x7FF8'0000'0000'0000ull;
 
   // A superset of the words slow() may change, in three compares: the fixed arena and module bases sit
-  // at 0x4000'0000'0000 and 0x5000'0000'0000 (layout.cmake), so their high halves lie in
-  // [0x4000, 0x6000); a high half of 0xFFC00000 or 0xFFF80000 (OR 0x00380000 gives 0xFFF80000 for both);
+  // at 0x4000'0000'0000 and 0x5B97'9E3C'0000 (layout.cmake), so their high halves lie in
+  // [0x4000, 0x6000) (the module's is 0x5B97 throughout: the host refuses an image that crosses a
+  // 4 GiB boundary); a high half of 0xFFC00000 or 0xFFF80000 (OR 0x00380000 gives 0xFFF80000 for both);
   // a low half of 0xFFC00000. canonFor() checks that the live ranges stay inside that window.
   static bool special(std::uint64_t w) {
     const std::uint32_t lo = static_cast<std::uint32_t>(w), hi = static_cast<std::uint32_t>(w >> 32);
@@ -533,27 +541,44 @@ struct Canon {
       mpt::mp4::PointerClass cls;
       const std::uint64_t v = symbols->canonical(static_cast<std::uintptr_t>(w), &cls);
       if (counts != nullptr) {
+        const char* kind = nullptr;  // a note for this hit, if any
         switch (cls) {
-          case mpt::mp4::PointerClass::symbol: ++counts->module_symbol; break;
-          case mpt::mp4::PointerClass::code_interior:
+          case mpt::mp4::PointerClass::symbol:
             ++counts->module_symbol;
-            ++counts->module_code_interior;
-            counts->notes.push_back("code_interior " + counts->where + " -> " +
-                                    symbols->nameAt(static_cast<std::uintptr_t>(w)));
+            if (counts->all_notes) kind = "symbol";
             break;
-          case mpt::mp4::PointerClass::text: ++counts->module_text; break;
+          case mpt::mp4::PointerClass::text:
+            ++counts->module_text;
+            if (counts->all_notes) kind = "text";
+            break;
+          case mpt::mp4::PointerClass::code_interior:
+            ++counts->module_code_interior;
+            kind = "code_interior";
+            break;
+          case mpt::mp4::PointerClass::raw:
+            ++counts->module_raw;
+            kind = "raw";
+            break;
           case mpt::mp4::PointerClass::cxx:
             ++counts->module_cxx;
-            counts->notes.push_back("cxx " + counts->where + " -> " + symbols->nameAt(static_cast<std::uintptr_t>(w)));
+            kind = "cxx";
             break;
           case mpt::mp4::PointerClass::unknown:
             ++counts->module_unknown;
-            counts->notes.push_back("unknown " + counts->where + " -> " +
-                                    symbols->nameAt(static_cast<std::uintptr_t>(w)));
+            kind = "unknown";
             break;
         }
+        if (kind != nullptr) {
+          // A word hashed raw or as the sentinel also shows its value: most likely an integer pair.
+          char word[24] = "";
+          if (mpt::mp4::isRaw(cls) || cls == mpt::mp4::PointerClass::unknown)
+            std::snprintf(word, sizeof word, " (0x%016llx)", static_cast<unsigned long long>(w));
+          counts->notes.push_back(std::string(kind) + " " + counts->where + " -> " +
+                                  symbols->nameAt(static_cast<std::uintptr_t>(w)) + word);
+        }
       }
-      return v;
+      // A raw class: v is w itself (the word is hashed as it is).
+      return mpt::mp4::isRaw(cls) ? w : v;
     }
     if (w == 0xFFF8'0000'0000'0000ull) {
       if (counts != nullptr) ++counts->nan64;
@@ -737,7 +762,10 @@ std::uint64_t hashMemoryXplat(const MptMp4Game& game, const Canon& c, const Item
 std::uint64_t crossPlatformHash(const MptMp4Game& game, const Items* items) {
   CanonCounts counts;
   Canon c = canonFor(game);
-  if (items != nullptr) c.counts = &counts;
+  if (items != nullptr) {
+    c.counts = &counts;
+    counts.all_notes = game.note_module_hits;
+  }
   mpt::StateHasher h;
   h.update_u64(0x4D50'3448'4153'4801ull);  // "MP4HASH", manifest version 1
   auto part = [&](const char* name, std::uint64_t d) {
@@ -768,14 +796,15 @@ std::uint64_t crossPlatformHash(const MptMp4Game& game, const Items* items) {
   part("symbols", hashGameSymbols(c, items));
   part("memory", hashMemoryXplat(game, c, items));
   if (items != nullptr) {
-    // Not part of the hash: how often each canonical rule fired. A module_symbol count from words that
-    // are really integers (an upper half of 0x00005000) or module_unknown hits point at false matches.
+    // Not part of the hash: how often each canonical rule fired, and the module words left raw. A
+    // module_code_interior, module_raw or module_unknown hit is most likely an integer that falls in
+    // the module range: each needs an explanation (ADR 0008, point 5).
     const std::pair<const char*, std::uint64_t> n[] = {
         {"count arena", counts.arena},           {"count module_symbol", counts.module_symbol},
         {"count module_text", counts.module_text}, {"count module_cxx", counts.module_cxx},
         {"count module_unknown", counts.module_unknown}, {"count nan32", counts.nan32},
         {"count nan64", counts.nan64}, {"count module_code_interior", counts.module_code_interior},
-        {"count module_misaligned", counts.module_misaligned}};
+        {"count module_raw", counts.module_raw}, {"count module_misaligned", counts.module_misaligned}};
     for (const auto& [name, value] : n) (*items)(name, value, 0);
     for (const std::string& note : counts.notes) (*items)("note " + note, 0, 0);
   }
@@ -1098,8 +1127,11 @@ MptMp4StepResult statusOf(const MptMp4Game* game) { return game ? result(*game) 
 // data (each block's header and data); the HuMem heaps are among them.
 std::int32_t memoryUse(const MptMp4Game* game, MptMp4MemoryUse* out) {
   if (game == nullptr || out == nullptr || out->struct_size < MPT_MP4_MEMORY_USE_SIZE_V1_4) return MPT_MP4_ERR_ARGUMENT;
-  const std::uint32_t size = out->struct_size;
-  *out = MptMp4MemoryUse{};
+  // A caller built against the v1.4 struct passes 160 bytes: fill only what it has room for.
+  const std::uint32_t size = std::min<std::uint32_t>(out->struct_size, sizeof(MptMp4MemoryUse));
+  MptMp4MemoryUse use{};
+  MptMp4MemoryUse* const caller = out;
+  out = &use;
   out->struct_size = size;
   out->main_ram = game->sdk->mainRam().size();
   std::uint64_t used = 0;
@@ -1116,6 +1148,10 @@ std::int32_t memoryUse(const MptMp4Game* game, MptMp4MemoryUse* out) {
     out->heap_used[i] = heap_used;
   }
   out->aram_used = game->sdk->aramInUse().size();
+  const mpt::gc::Sdk::IoCounts io = game->sdk->ioCounts();
+  out->dvd_reads = io.dvd_reads;
+  out->aram_transfers = io.aram_transfers;
+  std::memcpy(caller, &use, size);
   return MPT_MP4_OK;
 }
 

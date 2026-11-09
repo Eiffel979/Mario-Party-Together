@@ -177,6 +177,14 @@ class Sdk {
   // ARAM below the ARAlloc top: the reserved base plus everything ARAlloc handed out.
   std::span<const std::byte> aramInUse() const;
 
+  // DVD reads and ARAM transfers since boot (host-side counts, never saved or hashed): a frame in
+  // which either grows is a load frame for frame-time measurements (ADR 0008, "Stale heap bytes").
+  struct IoCounts {
+    std::uint64_t dvd_reads = 0;
+    std::uint64_t aram_transfers = 0;
+  };
+  IoCounts ioCounts() const;
+
   struct Impl;
 
  private:

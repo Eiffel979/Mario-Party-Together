@@ -11,6 +11,7 @@ namespace {
 void copy(u32 type, uintptr_t mainmem, u32 aram_addr, u32 length, const char* what) {
   if (std::uint64_t{aram_addr} + length > kAramBytes) fatal(std::string(what) + ": ARAM address out of range");
   if (length == 0) return;
+  ++impl().io_aram_transfers;
   auto* ram = reinterpret_cast<std::byte*>(mainmem);
   std::byte* ar = impl().aramBase() + aram_addr;
   if (type == ARAM_DIR_MRAM_TO_ARAM) {
@@ -72,6 +73,9 @@ u32 ARAlloc(u32 length) {
   const u32 addr = s.ar_top;
   s.ar_stack[s.ar_stack_depth++] = length;
   s.ar_top += length;
+  // ADR 0008, "Stale heap bytes": an ARAM block is zero when it is returned, whatever an earlier,
+  // freed block (or a DMA into free space) left there.
+  std::memset(impl().aramBase() + addr, 0, length);
   return addr;
 }
 
@@ -114,6 +118,12 @@ void ARStartDMA(u32 type, uintptr_t mainmem_addr, u32 aram_addr, u32 length) {
   copy(type, mainmem_addr, aram_addr, length, "ARStartDMA");
   if (ARCallback cb = st().ar_dma_callback)
     completeIo(Source::aram, EventKind::ar_dma, nullptr, reinterpret_cast<void*>(cb), 0);
+}
+
+void mpt_gc_ARClear(u32 aram_addr, u32 length) {
+  boundary();
+  if (std::uint64_t{aram_addr} + length > kAramBytes) fatal("mpt_gc_ARClear: ARAM address out of range");
+  if (length != 0) std::memset(impl().aramBase() + aram_addr, 0, length);
 }
 
 u32 ARGetDMAStatus(void) {

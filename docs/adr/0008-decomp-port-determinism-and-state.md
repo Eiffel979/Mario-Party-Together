@@ -447,7 +447,7 @@ There is a common cause. `HuMem`, `OSAlloc` and the sub-allocators that run insi
 1. **Every byte of a block's user area is zero when the allocator returns it**, for every allocator whose memory the hash reads. That is each level of allocation, not only the outermost:
    - `HuMem`: the static `HuMemMemoryAlloc2`, which both `HuMemMemoryAlloc` and `HuMemMemoryAllocNum` go through, so `HuMemDirectMalloc`, `HuMemDirectMallocNum` and every heap built on them are covered. This is a Party Board patch in our series.
    - The SDK's `OSAllocFromHeap`.
-   - **To the block's end, not the requested size.** The hash reads the whole block, so the zeroed range is everything after the header up to the block's end: `block->size - header` in `HuMem` (a block can be larger than the request when the remainder is too small to split), and `need - kHeader` in the SDK's `OSAllocFromHeap`. Every sub-allocator below follows the same rule.
+   - **To the block's end, not the requested size.** The hash reads the whole block, so the zeroed range is everything after the header up to the block's end: `block->size - header` in `HuMem` and `b->size - kHeader` in the SDK's `OSAllocFromHeap`. In both, a block can be larger than the request when the remainder is too small to split. *(Corrected on 2026-11-09: this said `need - kHeader` for the SDK, which misses the unsplit tail; see "Gate status after the implementation", finding 3.)* Every sub-allocator below follows the same rule.
    - **msm's sub-allocator.** msm takes one `HuMemDirectMalloc(HEAP_MUSIC, …)` block at boot, hands it to `msmMemInit`, and from then on sub-allocates inside it with its own first-fit allocator, `msmMemAlloc`. MusyX's `salMalloc` reaches that allocator through `sndSetHooks`. The hash reads the whole msm block, freed sub-blocks included, so zeroing the outer `HuMem` block once at boot does not help. `msmMemAlloc`, and `msmSndMalloc` if it is a separate path, zero on allocation, in a Party Board patch of their own.
    - **ARAM: `HuARMalloc`.** ARAM in use is hashed, so `HuARMalloc` blocks zero on allocation as well. Emulated ARAM lives in the arena (§7), so this is a plain `memset`. ARAM is not exempt: its contents are DMA'd from main RAM as well as from disc, so a stale ARAM block can carry host-layout bytes too.
    - **The general rule:** any sub-allocator that hands out pieces of a game-heap block, or of emulated ARAM, zeroes on allocation by the same rules. runtime-gc-wii lists every such allocator in `docs/titles/<id>.md` §11 (for MP4: `HuMem`, `msmMemAlloc`/`msmSndMalloc`, `HuARMalloc` and the SDK's `OSAlloc`), and a newly found one is added there and patched before its title's gate counts as met. A game pool that reuses fixed slots without an allocation call is not an allocator in this sense; point 6 covers it.
@@ -507,3 +507,91 @@ The rest of "Module words" point 6 stands: the synthetic reader tests, the real-
 - runtime-gc-wii: new Party Board patches (next in the series) for `HuMemMemoryAlloc2`, for msm's `msmMemAlloc`/`msmSndMalloc`, and for `HuARMalloc`; zeroing in the SDK's `OSAllocFromHeap`; the allocator list in `mp4.md` §11; the unit tests; the cost measurement; the re-recorded same-platform trails; and `mp4.md` §11 (the divergence note) and §20 (the results, closing the open item on layout-dependent words).
 - qa-reviewer checks at merge that the zeroing is unconditional in the PC build, that the trails were re-recorded in the same change, and that the counts come from the full-party run.
 - No core contract changes. `kCoreContractVersion`, the module ABI version and the save-state layout stay as they are. The build fingerprint (§10) already keeps states from before and after apart.
+
+## Gate status after the implementation (architect, 2026-11-09)
+### Context
+runtime-gc-wii implemented "Module words" and "Stale heap bytes" on `mp4-code-word-canonicalization` (`docs/titles/mp4.md` §11, §20). Windows, seed 1:
+- **Met:** the synthetic reader, real-linker and allocator tests; the base checks; rodata against OFF, seeds 1–5 to 20,000 frames, identical; `--perturb` 0 failed; `--conformance` 0 problems, 70 of 70 targets; the cost, −1.3% total and −0.03 ms at p99, within budget; trails re-recorded. Over the full party, `module_cxx`, `module_unknown`, `module_raw` and `module_misaligned` are 0.
+- **Not met:** the layout gate. ON and OFF are identical to frame 104,000 and differ from frame 105,000 (turn 9, on the board). Before zeroing they split at 82,000. `module_code_interior` is 58, which is one word, at most once per checkpoint.
+- **The split** is two words, 40 bytes apart, in the matrix section of a loaded HSF model (`HSFV037`) in a `HuMem` block. One is `0x00005B979E745100`, a full code address inside `m430Dll`, which is not a function start and is seen long before `m430Dll` runs. The other is `0x0000727D9E727524`, the low 32 bits of a code address. Under ON both move by the same `0x2814`, so they come from code addresses, not from the file. They are written **after** the block was allocated, so zeroing cannot reach them.
+
+Three further findings came with the report:
+1. msm's PC block header is 48 bytes, but `msmMemAlloc` sizes and places blocks as if it were 32. So a nearly full msm heap can run past its end into the next `HuMem` block. This predates the branch, and patch 0027 clamps its own zeroing to msm's heap end.
+2. The state hash covers ARAM only up to the SDK's `ARAlloc` top. `HuARMalloc` hands out ARAM from `0x20` to `ARGetSize()`, over a range that also contains msm's `ARAlloc` region. Most `HuARMalloc` memory is therefore probably not hashed.
+3. The SDK zeroes `b->size - kHeader`, not `need - kHeader` as "Stale heap bytes" point 1 said.
+
+### Decision
+**1. The frame-105,000 split is a port bug, and it is fixed at its source.**
+- **Why it is a bug.** Two code-derived values sit in a model's matrix data, and the game reads that data: the renderer and any code that takes a bone or node transform. The value depends on where code is linked, so it differs between Windows and Linux. That breaks D5 and rule 4 whatever the hash does.
+- **The likely causes are all port bugs:** reading uninitialised stack or heap memory, writing through a stale or dangling pointer, or a 32/64-bit width or layout mismatch (for example, a loader or fixup that writes an 8-byte host pointer, or one half of it, into a 4-byte file slot).
+- **No typed entry by default.** Point 6 of "Stale heap bytes" allows a typed entry only for a field nothing reads. Matrix data is read, so a typed entry is ruled out unless the investigation below shows otherwise, with the read list point 6 requires. A write into memory the writer does not own is always fixed by a patch, even if nothing reads the bytes, because it is a memory-safety bug.
+- **Finding the writer (runtime-gc-wii).**
+  - The run is deterministic and the arena is at a fixed address, so the word's address is the same in every run of one build.
+  - Bisect on OFF to the first frame where either word holds a module address: per-frame hash items or notes over the window between the last clean checkpoint and the first bad one.
+  - Then set a data watchpoint on that arena address for that frame. That can be a hardware watchpoint in a debugger, or a test-only write check built like the layout probe. Neither may change game state, and neither ships in a normal build.
+  - Optional aid: a test-only lane that fills coroutine stacks with a fixed non-zero pattern at creation. If its trail differs from the normal lane's, something reads uninitialised stack. Keeping it as a standing check would be a separate ruling.
+- **If the writer cannot be found, or the fix needs more than a Party Board, aurora or SDK patch,** the work comes back to architect with the evidence. Nothing is waived, and the untyped rules are never widened.
+- **Acceptance.** Every item must be met before the gate counts as met:
+  - `mp4.md` §20 records the writer for both words: the function, the call path, the file and line in the pinned source, the class of the cause, and why the value is code-derived. If one writer explains both words, one record covers both.
+  - The fix is a patch at the source: Party Board, aurora or the SDK, whichever owns the code. It gets a synthetic regression test where the code can be built without game material, such as a loader or fixup fed a hand-made input. Otherwise the regression check is the dump-lane rerun below.
+  - Over the full party on OFF, every heap module count is 0, including `module_code_interior`, with notes for every hit as before.
+  - **The layout gate:** ON against OFF over the full party played to `finished`, both lanes exit 0, identical trails, on **seed 1 and seed 2**. Seed 2 is added because each fix so far has moved the split later into the same seed-1 party, so later boards and minigames have been covered by one seed only. A split on seed 2 is handled by the same procedure.
+  - The regression set still passes: rodata against OFF (seeds 1–5, 20,000 frames), `--perturb`, `--conformance` and the deep-hash coverage self-test.
+  - Same-platform hashes are re-recorded in the same change if the fix changes state, as in "Stale heap bytes", "Re-recording".
+  - Finding 2's coverage (point 3 below) is in place before the gate is run for acceptance.
+
+**2. The branch lands now as its own PR, with the gate recorded as open.**
+- **What it does.** It implements both rulings in full and meets every acceptance item except the gate and the one `module_code_interior` word. It moves the split from 82,000 to 105,000 and removes every other class of hit.
+- **The remaining split is not caused by this branch.** It is a separate port bug with its own root cause. Holding the branch would mean either growing it with unrelated investigation or stacking a fix branch on it, and both are worse than landing.
+- **Conditions:**
+  - `mp4.md` §20 keeps the gate and the word listed as open. It already does.
+  - The PR description says the gate is open and names this amendment as the follow-up.
+  - The default layout CTest (the 6,000-frame quick check) passes.
+  - Nothing in the PR claims the gate is met.
+  - qa-reviewer reviews the rest of the acceptance of "Module words" point 6 and "Stale heap bytes" as usual.
+- **This amendment ships on the same branch,** so that the PR that lands with the gate open carries the ruling that allows it.
+- **The follow-up** starts from `main` after the merge, never from the branch. It contains point 1 and finding 2 (point 3).
+
+**3. Rulings on the findings.**
+- **Finding 1, msm's heap overrun: fix in a follow-up PR (runtime-gc-wii, reviewed by qa-reviewer).**
+  - **Why it must be fixed.** It is a memory-safety bug: an overrun writes into another `HuMem` block, which the same code could not do on console.
+  - **Why it is not urgent.** Patch 0018 gives msm's heap large headroom, so it is not expected to trigger in normal play today.
+  - **Order.** It lands after the gate follow-up, so that the two PRs do not both re-record hashes at once. The exception: if the watchpoint in point 1 shows msm as the writer, it is fixed in the gate PR.
+  - **Acceptance:**
+    - msm sizes and places blocks with the real PC header size (`sizeof(MSMBLOCK)`), in a Party Board patch.
+    - `msmMemAlloc` fails cleanly, returning no block, instead of writing past msm's heap end.
+    - A synthetic test fills msm's heap to exactly full, with guard bytes after its end, and checks that the guard bytes are untouched and that the next allocation fails.
+    - A `static_assert` fixes `sizeof(MSMBLOCK)` to one value on both platforms. LLP64 and LP64 differ on `long`, so this is not automatic.
+    - `mp4.md` §11 drops the open note and records msm's peak use over the full party.
+    - Hashes are re-recorded if state changes.
+  - It must be fixed before E3c is run for acceptance.
+- **Finding 2, ARAM coverage: fix, as part of the gate follow-up (runtime-gc-wii, reviewed by qa-reviewer).**
+  - **Why it must be fixed.** `HuARMalloc` blocks are game state: cached data dirs, DMA'd from main RAM and from disc. They must be hashed. Identical trails over a hash that leaves them out prove less than they claim.
+  - **What is hashed:**
+    - Every ARAM byte that an allocator has handed out and not freed: the SDK's `ARAlloc` range, together with `HuARMalloc`'s in-use blocks as recorded in `ARInfo`.
+    - Each byte is hashed once, with the canonical walk, because ARAM can hold main-RAM bytes.
+    - Free ARAM is not hashed.
+  - **Where it is hashed.** The `HuARMalloc` part lives in the MP4 hash manifest (`runtimes/gc_wii/mp4`), never in the SDK, because `HuARMalloc` is MP4 code.
+  - **Coverage checks.** The conformance targets and the deep-hash coverage self-test cover the new range, and perturbation can sample it.
+  - **The overlap.** runtime-gc-wii checks in the pinned source how `HuARMalloc`'s range and msm's `ARAlloc` region are kept apart on console.
+    - If they can hand out the same bytes on PC, that is a live aliasing bug. It gets a patch, and a check fails the run if it happens again.
+    - If they are disjoint on console because of something the port lost, the patch restores it.
+    - `mp4.md` §11 records the answer.
+  - New hits that the wider coverage finds are handled as in point 1.
+- **Finding 3, the SDK's zeroing size: confirmed, no code change.**
+  - `b->size - kHeader` is right. When the remainder is too small to split, `b->size` is larger than `need`, and the hash reads the whole block.
+  - "Stale heap bytes" point 1 is corrected above.
+  - The synthetic `OSAlloc` test's case of a block larger than its request covers this.
+
+### Alternatives
+- **Wait for the gate before landing.** Rejected. It either grows the branch with an unrelated investigation or forces a stacked PR, and it keeps work whose acceptance is already met off `main`.
+- **A typed entry for the two words.** Rejected as a first resort. The data is read, and the value differs across platforms, so a typed entry would hide a behaviour difference (point 1).
+- **Keep seed 1 as the only gate seed.** Rejected. Seed 2 costs little, and one seed has been the only coverage of the later part of the party.
+
+### Consequences
+- **runtime-gc-wii:**
+  - updates the PR description for `mp4-code-word-canonicalization` as in point 2, and pulls this commit before committing again on that branch;
+  - after the merge, opens one follow-up branch from `main` for point 1 and finding 2, then another for finding 1;
+  - updates `mp4.md` §11 and §20 as each lands.
+- **qa-reviewer** reviews the current PR against point 2's conditions. For the follow-up, it checks the writer record, the patch, the seed-1 and seed-2 full-party gate runs and the ARAM coverage targets.
+- **No core contract change.** The module ABI and the save-state layout are unchanged. The build fingerprint keeps states from builds before and after these fixes apart, as before.

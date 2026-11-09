@@ -1,0 +1,51 @@
+Apply order 0027 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+msm: msm's heap returns zeroed blocks, on MPT_PC
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+ADR 0008, "Stale heap bytes: game heaps return zeroed blocks on PC". msm's heap is not built on
+HuMem: audio.c takes one HEAP_MUSIC block, msmMemInit runs on it, and msmMemAlloc sub-allocates inside
+it with its own first-fit allocator (MusyX's salMalloc reaches it too, through sndSetHooks and patch
+0001's msmSndMalloc, which only forwards to msmMemAlloc, so it needs no zeroing of its own). Patch
+0026's zeroing never reaches a block msm reuses, so msmMemAlloc now clears the whole block it
+returns: every byte up to where it would place the next block header (ptr + allocSize - 0x20),
+clamped to the end of msm's heap.
+Zero-on-alloc, never on free. Unconditional on PC.
+
+diff --git a/src/msm/msmmem.c b/src/msm/msmmem.c
+index ce4fac4..58f4a01 100644
+--- a/src/msm/msmmem.c
++++ b/src/msm/msmmem.c
+@@ -1,6 +1,10 @@
+ #include <stdint.h>
+ #include "msm/msmmem.h"
+ 
++#ifdef MPT_PC
++#include <string.h>
++#endif
++
+ typedef struct MSMBlock_s {
+     struct MSMBlock_s* prev;
+     struct MSMBlock_s* next;
+@@ -103,6 +107,22 @@ void* msmMemAlloc(u32 size) {
+             mem.head = blockNext;
+         }
+     }
++#ifdef MPT_PC
++    /* ADR 0008, "Stale heap bytes": the whole block is zero when it is returned: every byte up
++     * to where msmMemAlloc places the next block header (ptr + allocSize - 0x20), but never past the
++     * end of msm's heap. msm sub-allocates inside one HEAP_MUSIC block (audio.c), so HuMem's zeroing
++     * never reaches its reuse. */
++    {
++        uintptr_t end = (uintptr_t)block->ptr + (allocSize - 0x20);
++        uintptr_t heap_end = (uintptr_t)mem.ptr + mem.size;
++        if (end > heap_end) {
++            end = heap_end;
++        }
++        if (end > (uintptr_t)block->ptr) {
++            memset(block->ptr, 0, end - (uintptr_t)block->ptr);
++        }
++    }
++#endif
+     return block->ptr;
+ }
+ 

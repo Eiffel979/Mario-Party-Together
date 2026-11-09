@@ -95,6 +95,10 @@ typedef enum MptMp4VideoBackend {
 /* Debug hooks (ADR 0008 amendment, PR #48): the test-only entries (debug_*) act only on a game
  * created with this flag. Never part of the state hash or a save state. */
 #define MPT_MP4_BOOT_DEBUG_HOOKS 0x200u
+/* With MPT_MP4_BOOT_DEBUG_HOOKS: debug_hash_items writes a "note" line for every module word the state
+ * hash meets, symbol and text hits included, not only the hazards (ADR 0008, "Module words: a safe rule
+ * must not depend on layout", point 6). Never part of the state hash. */
+#define MPT_MP4_BOOT_DEBUG_NOTE_MODULE_HITS 0x400u
 
 /* video_backend, internal_scale, audio_output, cache_dir and arena_base are presentation or placement
  * settings and never change the state hash. Strings are copied during create. */
@@ -196,6 +200,11 @@ typedef struct MptMp4MemoryUse {
   uint64_t heap_size[MPT_MP4_MEMORY_HEAPS]; /* each HuMem heap's size */
   uint64_t heap_used[MPT_MP4_MEMORY_HEAPS]; /* allocated in it, block headers included */
   uint64_t aram_used;        /* ARAM below the ARAlloc top */
+  /* Filled when struct_size covers them (MPT_MP4_MEMORY_USE_SIZE_V1_4_IO): the SDK's DVD reads and
+   * ARAM transfers since boot. Host-side counts, never hashed or saved; a frame in which either grows
+   * is a load frame for frame-time measurements (ADR 0008, "Stale heap bytes", point 5). */
+  uint64_t dvd_reads;
+  uint64_t aram_transfers;
 } MptMp4MemoryUse;
 
 typedef void (*MptMp4ReportFn)(void* user, const char* text);
@@ -268,9 +277,11 @@ typedef struct MptMp4Api {
    * the hash). Parts: "fields", "sdk", one "sym <range>:<symbol>" per game data symbol name,
    * "symbols", one "<kind> <arena offset>" per RAM range, "aram", "memory". Then, outside the hash,
    * "count <rule>" with the number of words each canonicalization rule changed in its size field
-   * (arena, module_symbol, module_text, module_cxx, module_unknown, nan32, nan64), and two layout
-   * hazards it leaves as they are (module_code_interior, module_misaligned), each also with a "note"
-   * line. Diffing two lists
+   * (arena, module_symbol, module_text, module_cxx, module_unknown, nan32, nan64), and the module
+   * words it hashes raw (module_code_interior, module_raw, module_misaligned), then "note" lines: one
+   * per C++, unknown, raw, code-interior or misaligned hit, or per module hit of any kind with
+   * MPT_MP4_BOOT_DEBUG_NOTE_MODULE_HITS. The list of parts, counts and notes may grow in a later
+   * version: a reader matches names and ignores the ones it does not know. Diffing two lists
    * finds the symbol or range where two platforms differ (E3c). Same flag and refusal as
    * debug_deep_hash. Names are valid only during the call. */
   int32_t (*debug_hash_items)(const MptMp4Game* game, MptMp4HashItemFn fn, void* user);
@@ -307,6 +318,7 @@ typedef enum MptMp4PerturbTarget {
 #define MPT_MP4_API_SIZE_V1_3 192u /* adds debug_deep_hash and debug_hash_items */
 #define MPT_MP4_API_SIZE_V1_4 200u /* adds memory_use */
 #define MPT_MP4_MEMORY_USE_SIZE_V1_4 160u
+#define MPT_MP4_MEMORY_USE_SIZE_V1_4_IO 176u /* adds dvd_reads and aram_transfers */
 
 MPT_MP4_STATIC_ASSERT(sizeof(void*) == 8, "the MP4 game module ABI is defined for 64-bit hosts");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Error) == MPT_MP4_ERROR_SIZE_V1_0, "MptMp4Error v1.0");
@@ -316,7 +328,7 @@ MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Audio) == MPT_MP4_AUDIO_SIZE_V1_0, "MptMp4Aud
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Party) == MPT_MP4_PARTY_SIZE_V1_0, "MptMp4Party v1.0");
 MPT_MP4_STATIC_ASSERT(sizeof(MptMp4Api) == MPT_MP4_API_SIZE_V1_4, "MptMp4Api v1.4");
 MPT_MP4_STATIC_ASSERT(offsetof(MptMp4Api, memory_use) == MPT_MP4_API_SIZE_V1_3, "memory_use is the v1.4 append");
-MPT_MP4_STATIC_ASSERT(sizeof(MptMp4MemoryUse) == MPT_MP4_MEMORY_USE_SIZE_V1_4, "MptMp4MemoryUse v1.4");
+MPT_MP4_STATIC_ASSERT(sizeof(MptMp4MemoryUse) == MPT_MP4_MEMORY_USE_SIZE_V1_4_IO, "MptMp4MemoryUse v1.4 with I/O counts");
 MPT_MP4_STATIC_ASSERT(offsetof(MptMp4Api, status) == MPT_MP4_API_SIZE_V1_0, "status is the v1.1 append");
 MPT_MP4_STATIC_ASSERT(offsetof(MptMp4Api, debug_perturb) == MPT_MP4_API_SIZE_V1_1, "debug_perturb is the v1.2 append");
 MPT_MP4_STATIC_ASSERT(offsetof(MptMp4Api, debug_deep_hash) == MPT_MP4_API_SIZE_V1_2, "debug_deep_hash is the v1.3 append");
