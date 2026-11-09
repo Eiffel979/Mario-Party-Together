@@ -1130,6 +1130,145 @@ The phase is `board` on the instruction and results screens, and `minigame` with
 - E1 still needs 4 human seats through the launcher UI, and E3c the Linux run of this replay.
 - **Crash reports.** `mpt_dump_lane` prints a module-relative stack on a fatal exception and on `abort`, `std::terminate` and CRT invalid-parameter fail-fasts (`crash_report.h`); `llvm-nm -n` on the installed `mp4_game.dll` names the frames. A `/GS` stack-cookie failure skips every in-process hook, so it still ends the run without a report; the seed 5 stack came from running the lane under a debugger.
 
+## 22. E1 sign-off checklist (M4-10)
+
+E1 is the full local party (Phase 1 plan §4). The user plays it and fills in this checklist: on Windows for M4-11, and later on Linux under WSL2 for M4-14 (on hold, ruling M4-U2). An agent then re-verifies the replay (section D). qa approves the checklist.
+
+**Keep it public-safe.** Only the values asked for below go into this file. Never write a dump path, a disc ID, a user folder path, game text, screenshots or captures here. Keep those in your own local notes. The replay, its summary and the build cache stay on your computer and are never committed.
+
+**How to fill it in.** Put `yes`, `no` or the value in the cell for your OS. A `no` stops the sign-off: write a short note in the Notes list at the end and tell the agents.
+
+### A. Setup before you play
+
+1. Build the shell with the GX backend that draws to the screen (`MPT_GX_BACKEND=dawn`) and the MP4 title registered. `docs/BUILDING.md` has the presets.
+2. Make a new, empty folder for this run. This is `<user_dir>` below. Do not reuse an old user folder: a fresh one means no old save, no old input profile and no old build cache.
+3. Start the launcher with that folder. Use the executable you built (`<exe>`):
+
+   ```
+   <exe> --user-dir <user_dir>
+   ```
+
+4. Connect the keyboard and exactly one gamepad. No other controllers.
+
+### B. The checklist
+
+| # | Check | Windows (M4-11) | Linux, WSL2 (M4-14, **on hold**) |
+|---|---|---|---|
+| **Environment** | | | |
+| 1 | Date played | | on hold |
+| 2 | OS name, version and build (Linux: the distribution, kernel and WSL version) | | on hold |
+| 3 | CPU, GPU and RAM | | on hold |
+| 4 | GPU driver version | | on hold |
+| 5 | Gamepad model and how it is connected (USB or Bluetooth; Linux: forwarded with usbipd-win) | | on hold |
+| 6 | Repository commit the shell was built from (`git rev-parse --short HEAD`), and whether the tree was clean | | on hold |
+| 7 | Shell version (`<exe> --version`) | | on hold |
+| 8 | CMake preset and `MPT_GX_BACKEND` value | | on hold |
+| **Import, through the launcher** | | | |
+| 9 | `<user_dir>` was new and empty before the launcher started | | on hold |
+| 10 | Library: "Add game dump", then your own `.iso` picked from the list, the file dialog or by dropping it on the window | | on hold |
+| 11 | The dump matched the supported MP4 entry (record the disc ID and path in your own notes only) | | on hold |
+| 12 | The build finished in the launcher, and the library lists the game | | on hold |
+| 13 | Build ID: `runtime_build_version` in `<user_dir>/cache/builds/mp4/<key>/manifest.json` (it starts with `mp4-`) | | on hold |
+| 14 | `unpinned` is `false` in that manifest. An unpinned build cannot sign off E1. | | on hold |
+| 15 | The manifest's sources match the pins in section C | | on hold |
+| **Seats and devices (ruling M4-U1)** | | | |
+| 16 | Players screen: "Keyboard + controller, 2 computer players" chosen | | on hold |
+| 17 | Seat 1 is the keyboard and seat 2 is the gamepad. Both are set to human in the game's own party setup (only the first player starts as human there). | | on hold |
+| 18 | Seats 3 and 4 are computer players, set in the game's own party setup | | on hold |
+| **The party** | | | |
+| 19 | Board played: a regular party board (any of the first six in §12, not an Extra Room board). Write its content ID. | | on hold |
+| 20 | Number of turns chosen in the game's setup (at least 10) | | on hold |
+| 21 | Every turn was played, through the last minigame, the bonus stars and the final ranking | | on hold |
+| 22 | The pause overlay showed "Turn x/y", and Resume worked | | on hold |
+| 23 | Audio played through the whole party | | on hold |
+| 24 | No crash, hang, freeze or soft-lock. If you had to stop, write where in the Notes. | | on hold |
+| 25 | You did **not** quit the party before the final ranking ended, neither from the game's own pause menu nor with the launcher's "Quit to library" (see the caveat in section E) | | on hold |
+| 26 | After the final ranking, the game went back to its own mode select. You then opened the launcher's pause overlay (Escape, or the gamepad's Guide/Home button) and chose "Quit to library", without starting a new party. | | on hold |
+| 27 | The launcher then showed the "Party over" screen with the heading "Party finished" and "Turns played: N of N." | | on hold |
+| 28 | That screen named a replay under `replays/` in your user folder | | on hold |
+| **The replay and summary (ruling M4-C)** | | | |
+| 29 | `<user_dir>/replays/` holds `mp4-<seed>-<n>.mptr` and `mp4-<seed>-<n>.summary.txt`. Keep both. Do not move, rename or delete them, and keep `<user_dir>` as it is. | | on hold |
+| 30 | Summary `end` is `ok` | | on hold |
+| 31 | Summary `phase` is `finished` | | on hold |
+| 32 | Summary `turn` (for example `10/10`); the first number must be at least 10 | | on hold |
+| 33 | Summary `board` (same content ID as row 19) | | on hold |
+| 34 | Summary `runtime_build` (same as row 13), `runtime_unpinned` (`false`), `seed`, `frames` and `events` | | on hold |
+| **Agent re-verification (section D)** | | | |
+| 35 | Process 1: exit code 0, `party: phase finished`, `replay OK` with the frame and checkpoint counts | | on hold |
+| 36 | Process 2: the same | | on hold |
+| 37 | The two outputs are identical, and the last trail line (frame and hash) | | on hold |
+| 38 | Agent and commit that ran the check | | on hold |
+| **Sign-off** | | | |
+| 39 | Tester sign-off (yes/no) | | on hold |
+| 40 | qa-reviewer approval | | on hold |
+
+Notes (one line each, no paths or game text):
+- Windows:
+- Linux:
+
+### C. Pins to compare against (row 15)
+
+These are the pins on `main` when this checklist was written. If the lock files have changed since, the lock files win: compare against `runtimes/gc_wii/mp4/decomp.lock` and `runtimes/gc_wii/gx/dawn.lock` at the commit in row 6.
+
+| Source | Commit | Lock |
+|---|---|---|
+| Party Board | `98ac07fd1e8f7ab938bbb6fe75789fad99419010` | `runtimes/gc_wii/mp4/decomp.lock` |
+| musyx | `86851a3a8d51788d166ea42d137b49526f570400` | same |
+| aurora | `514339438178ef2bed1b14e5149d90ece0c6e0cc` | same |
+| Dawn | `13abc3bc8ea2d3c2050f9e77a12d012108ceee24` | `runtimes/gc_wii/gx/dawn.lock` |
+| Party Board patch set | 0001 to 0028 (`runtimes/gc_wii/mp4/patches/partyboard/`) | covered by the build ID |
+
+The build ID (row 13) already covers the pins, the patch sets, the toolchain and the module's own sources (`runtimes/gc_wii/mp4/build_id.cmake`). Rows 13 and 34 must agree.
+
+### D. Agent re-verification: the replay headless in 2 separate processes
+
+The agent runs this on the tester's computer, with the same executable, dump and user folder as the party. The tester gives the paths to the agent locally; they never go into the repository.
+
+Why each option is needed (`core/shell/app.cpp`, `run_verify_replay`):
+- `--verify-replay FILE` runs headless: no window, no audio and no UI.
+- `--dump` is required for MP4. Without it the run fails with `--dump is required to run mp4`. The build cache in the user folder is reused, so nothing is rebuilt.
+- `--user-dir` must be the same folder. It holds the build cache and the replay media store (`replays/media/`).
+- `--verify-replay` cannot be combined with `--title` or `--replay`.
+
+PowerShell, two separate processes:
+
+```powershell
+$exe  = "<exe>"
+$user = "<user_dir>"
+$dump = "<path to the dump>"
+$rep  = "$user\replays\mp4-<seed>-<n>.mptr"
+
+& $exe --verify-replay $rep --dump $dump --user-dir $user > verify-1.txt; "exit $LASTEXITCODE"
+& $exe --verify-replay $rep --dump $dump --user-dir $user > verify-2.txt; "exit $LASTEXITCODE"
+Compare-Object (Get-Content verify-1.txt) (Get-Content verify-2.txt)
+Get-Content verify-1.txt -Tail 3
+```
+
+Linux (when M4-14 is no longer on hold):
+
+```sh
+"$exe" --verify-replay "$rep" --dump "$dump" --user-dir "$user" > verify-1.txt; echo "exit $?"
+"$exe" --verify-replay "$rep" --dump "$dump" --user-dir "$user" > verify-2.txt; echo "exit $?"
+cmp verify-1.txt verify-2.txt && tail -n 3 verify-1.txt
+```
+
+Write `verify-*.txt` to a scratch folder outside the repository. What passes:
+- Both runs exit 0. Any checkpoint mismatch exits 1 and prints the error on stderr.
+- Each output ends with the hash trail (one `<frame> <state_hash>` line per checkpoint), then `party: phase finished, turn N/N, E events`, then `replay OK: F frames, C checkpoints`.
+- `Compare-Object` prints nothing (`cmp` is silent): the two processes give the same output.
+- The phase, turn and event count match the summary (rows 31, 32 and 34). The frame count matches the summary's `frames`.
+- Passing means the replay matches the trail recorded live, because each checkpoint in the file is checked as it plays.
+
+Record rows 35 to 38. Do not commit the replay, the summary or the outputs.
+
+### E. Known caveat: play through to the results
+
+Quitting a party from the game's own pause menu during its **last** turn also reads as `finished` (§21, M4-01, "Known limit"). No game state tells it apart from a finished party once the board has left the overlay history. So a `finished` phase alone does not prove that the party was played to the end. The tester must play through the last minigame, the bonus stars and the final ranking (rows 21 and 25).
+
+The session does not stop by itself when the party is over. The game goes back to its mode select and the phase stays `finished`. "Quit to library" from the launcher's pause overlay then stops the session, writes the replay and the summary, and shows the "Party over" screen (row 26). Do not start a new party first: its setup reads as `setup`, and the run then ends in the wrong phase.
+
+"Quit to library" during the party stops the session at once. The summary then keeps the phase the party was in, and the launcher shows "The game session ended" instead of "Party finished". That run cannot sign off E1.
+
 ## Sections still to fill (P1-18)
 - Spike S1 result and the pinned GX backend version (P1-12). **Reported:** `docs/spikes/s1-gx-backend.md`. Recommendation: aurora GX/MTX on Dawn at `514339438178ef2bed1b14e5149d90ece0c6e0cc`, with a host shim, a null backend and a small patch set. A gate runs at the start of P1-14. Folded into ADR 0007 §6 (Accepted). GX surface measured on Party Board's sources: 131 distinct entry points, 104 implemented by aurora at the pin, one real gap (`GXSetZTexture`, m419), no `GD*` calls.
 - Hash manifest. Starting areas: RNGs (§7), `GWSystem`/`GWPlayer`/`GWPlayerCfg`/game stats, HuPrc process list, object manager, overlay history, pad state, data-dir cache and ARAM map, MusyX sequencer and voice state, CARD/save media, virtual clock.
