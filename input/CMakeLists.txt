@@ -48,6 +48,7 @@ if(MPT_BUILD_TESTS)
     tests/main.cpp
     tests/test_held_mask.cpp
     tests/test_mapper.cpp
+    tests/test_mp4_e2_device.cpp
     tests/test_mp4_profile.cpp
     tests/test_names.cpp
     tests/test_ports.cpp

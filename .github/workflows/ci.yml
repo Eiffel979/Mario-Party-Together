@@ -20,7 +20,7 @@ jobs:
     name: Compliance (no dumps, no binaries)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -70,9 +70,9 @@ jobs:
     env:
       # Not VCPKG_ROOT: msvc-dev-cmd points that at Visual Studio's bundled vcpkg.
       MPT_VCPKG_DIR: ${{ github.workspace }}/../vcpkg
-      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/../vcpkg-cache
+      # VCPKG_DEFAULT_BINARY_CACHE is set in a step below: it must not contain '..'.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -97,6 +97,10 @@ jobs:
       - name: Show the Clang toolchain
         shell: bash
         run: |
+          # Ninja is the presets' generator. On Windows it comes from Visual Studio's CMake
+          # component, which msvc-dev-cmd puts on PATH; fail here, by name, if an image drops it.
+          cmake --version | head -n 1
+          echo "ninja $(ninja --version)"
           if [ "$RUNNER_OS" = "Windows" ]; then
             if command -v clang-cl >/dev/null 2>&1; then clang-cl --version; else echo "clang-cl is not on PATH"; fi
           else
@@ -106,45 +110,62 @@ jobs:
             ld.lld --version
           fi
 
+      # actions/cache rejects a path with '.' or '..' in it ("Invalid pattern"), so a cache path
+      # under github.workspace/.. was never saved and every run rebuilt every port from source,
+      # downloading each one from GitHub. RUNNER_TEMP is absolute and the same on both Linux jobs,
+      # which matters: the mp4-module job's restore only matches a cache saved with the same path.
+      - name: Set the vcpkg binary cache path
+        shell: bash
+        run: echo "VCPKG_DEFAULT_BINARY_CACHE=$RUNNER_TEMP/vcpkg-cache" >> "$GITHUB_ENV"
+
       - name: Restore vcpkg binary cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
           key: vcpkg-${{ matrix.os }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: vcpkg-${{ matrix.os }}-${{ env.VCPKG_COMMIT }}-
 
+      # Retries network failures. Runs after msvc-dev-cmd, so the VCPKG_ROOT it writes overrides
+      # the VS-bundled vcpkg for the steps below.
       - name: Bootstrap vcpkg
         shell: bash
-        run: |
-          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
-          git clone https://github.com/microsoft/vcpkg "$MPT_VCPKG_DIR"
-          git -C "$MPT_VCPKG_DIR" checkout "$VCPKG_COMMIT"
-          if [ "$RUNNER_OS" = "Windows" ]; then "$MPT_VCPKG_DIR/bootstrap-vcpkg.bat" -disableMetrics; else "$MPT_VCPKG_DIR/bootstrap-vcpkg.sh" -disableMetrics; fi
-          # Written after msvc-dev-cmd so it overrides the VS-bundled vcpkg for the steps below.
-          echo "VCPKG_ROOT=$MPT_VCPKG_DIR" >> "$GITHUB_ENV"
+        run: bash .github/scripts/bootstrap-vcpkg.sh
 
       # GX layer inputs (P1-21, E10): the verified aurora checkout and a headers-only Dawn
       # prefix, so the null GX build, its scenes and the MTX goldens run under -Werror on both
       # OSes (runtimes/gc_wii/gx/README.md). Windows keeps them on a short path: Dawn's and
-      # aurora's paths are long, and some MSVC tools stop at 260 characters.
+      # aurora's paths are long, and some MSVC tools stop at 260 characters. Linux uses RUNNER_TEMP:
+      # actions/cache does not save a path with '..' in it, as with the vcpkg binary cache above.
       - name: Set the GX source and Dawn paths
         shell: bash
         run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then root="C:/mpt"; else root="$GITHUB_WORKSPACE/../mpt-gx"; fi
+          if [ "$RUNNER_OS" = "Windows" ]; then root="C:/mpt"; else root="$RUNNER_TEMP/mpt-gx"; fi
           mkdir -p "$root"
           echo "MPT_GX_SOURCES=$root/s" >> "$GITHUB_ENV"
           echo "MPT_GX_DAWN=$root/dawn" >> "$GITHUB_ENV"
 
       # A first configure without the GX inputs: it builds the source fetcher, which needs
       # asset-import from the root project. GX is reported unavailable here, not an error.
+      # This configure runs vcpkg install, which downloads port sources and patches from GitHub,
+      # so it is retried once after a pause. Ports built before a failure are already in the
+      # binary cache, so the retry does not rebuild them. A vcpkg install failure inside the
+      # toolchain file also makes CMake report that it cannot find "Ninja"; that message is a
+      # consequence, not the cause (run 42568270791). "Show the Clang toolchain" checks Ninja itself.
       - name: Configure (to build the source fetcher)
+        id: configure-fetcher
+        continue-on-error: true
         run: cmake --preset ${{ matrix.preset }}
+
+      # `sleep` is also a PowerShell alias, so this line runs in both default shells.
+      - name: Configure (to build the source fetcher), retry
+        if: ${{ steps.configure-fetcher.outcome == 'failure' }}
+        run: sleep 60; cmake --preset ${{ matrix.preset }}
 
       - name: Build the source fetcher
         run: cmake --build --preset ${{ matrix.preset }} --target mpt_fetch_sources
 
       - name: Restore the verified aurora checkout
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.MPT_GX_SOURCES }}/aurora
           key: gx-aurora-${{ matrix.os }}-${{ hashFiles('runtimes/gc_wii/gx/aurora.lock') }}
@@ -158,7 +179,7 @@ jobs:
           "$tool" --lock runtimes/gc_wii/gx/aurora.lock --cache "$MPT_GX_SOURCES"
 
       - name: Restore the verified musyx checkout
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.MPT_GX_SOURCES }}/musyx
           key: gc-musyx-${{ matrix.os }}-${{ hashFiles('runtimes/gc_wii/mp4/decomp.lock') }}
@@ -186,7 +207,7 @@ jobs:
 
       - name: Restore the headers-only Dawn prefix
         id: dawn-headers
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.MPT_GX_DAWN }}
           key: gx-dawn-headers-${{ matrix.os }}-${{ hashFiles('runtimes/gc_wii/gx/dawn.lock', 'runtimes/gc_wii/gx/tools/build_dawn.cmake') }}
@@ -232,9 +253,9 @@ jobs:
     timeout-minutes: 45
     env:
       MPT_VCPKG_DIR: ${{ github.workspace }}/../vcpkg
-      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/../vcpkg-cache
+      # VCPKG_DEFAULT_BINARY_CACHE is set in a step below, as in the build job.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Linux build dependencies
         run: |
@@ -254,31 +275,38 @@ jobs:
           llvm-nm --version
           ld.lld --version
 
+      # Must be the build job's path exactly: a cache restores only with the path it was saved with.
+      - name: Set the vcpkg binary cache path
+        run: echo "VCPKG_DEFAULT_BINARY_CACHE=$RUNNER_TEMP/vcpkg-cache" >> "$GITHUB_ENV"
+
       # Restore-only: the build job owns saving this cache.
       - name: Restore vcpkg binary cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
           key: vcpkg-ubuntu-24.04-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: vcpkg-ubuntu-24.04-${{ env.VCPKG_COMMIT }}-
 
       - name: Bootstrap vcpkg
-        run: |
-          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
-          git clone https://github.com/microsoft/vcpkg "$MPT_VCPKG_DIR"
-          git -C "$MPT_VCPKG_DIR" checkout "$VCPKG_COMMIT"
-          "$MPT_VCPKG_DIR/bootstrap-vcpkg.sh" -disableMetrics
-          echo "VCPKG_ROOT=$MPT_VCPKG_DIR" >> "$GITHUB_ENV"
+        run: bash .github/scripts/bootstrap-vcpkg.sh
 
+      # The build job's Linux path, so the headers-only Dawn prefix it saves restores here.
       - name: Set the GX source and Dawn paths
         run: |
-          root="$GITHUB_WORKSPACE/../mpt-gx"
+          root="$RUNNER_TEMP/mpt-gx"
           mkdir -p "$root"
           echo "MPT_GX_SOURCES=$root/s" >> "$GITHUB_ENV"
           echo "MPT_GX_DAWN=$root/dawn" >> "$GITHUB_ENV"
 
+      # Retried once, as in the build job: vcpkg install downloads from GitHub.
       - name: Configure (to build the source fetcher)
+        id: configure-fetcher
+        continue-on-error: true
         run: cmake --preset ci-linux
+
+      - name: Configure (to build the source fetcher), retry
+        if: ${{ steps.configure-fetcher.outcome == 'failure' }}
+        run: sleep 60; cmake --preset ci-linux
 
       - name: Build the source fetcher
         run: cmake --build --preset ci-linux --target mpt_fetch_sources
@@ -294,7 +322,7 @@ jobs:
       # Restore-only: the build job owns saving this cache. It holds only generated WebGPU headers.
       - name: Restore the headers-only Dawn prefix
         id: dawn-headers
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ${{ env.MPT_GX_DAWN }}
           key: gx-dawn-headers-ubuntu-24.04-${{ hashFiles('runtimes/gc_wii/gx/dawn.lock', 'runtimes/gc_wii/gx/tools/build_dawn.cmake') }}
