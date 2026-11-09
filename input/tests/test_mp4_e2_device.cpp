@@ -18,8 +18,9 @@
 // PADClamp, which the game's pad reader applies (stick octagon 72/40/15,
 // triggers 30..180 minus 30, so 0..150). Thresholds in §18 are values the
 // minigames compare the clamped trigger against, so each threshold is checked
-// both on the InputFrame value (0..255) and on the clamped game value through
-// gc_view() below. gc_view() is a model of that documented contract written for
+// on the clamped game value through gc_view() below, and on the InputFrame
+// value (0..255) that clamps to it: game value g > 0 comes from raw g + 30
+// (raw_trigger_for()). gc_view() is a model of that documented contract written for
 // this test; the game-side proof (M4-07, dump lane) covers the real thing.
 //
 // Synthetic device state only. No game material.
@@ -53,7 +54,9 @@ namespace {
 
 // Game-side ranges after PADClamp.
 constexpr int kGcStickMax = 72;     // cardinal full tilt of the main stick
-constexpr int kGcTriggerMax = 150;  // 180 - 30
+constexpr int kGcTriggerClampMin = 30;   // PADClamp's trigger window: raw <= 30 reads 0,
+constexpr int kGcTriggerClampMax = 180;  // raw above 180 reads as 180, then 30 is subtracted
+constexpr int kGcTriggerMax = kGcTriggerClampMax - kGcTriggerClampMin;  // 150
 
 struct GcView {
   int stick_x = 0, stick_y = 0;  // after PADClamp, +Y up
@@ -88,7 +91,13 @@ void clamp_stick(int& px, int& py, int max, int xy, int min) {
   py = sy * y;
 }
 
-int clamp_trigger(int v) { return v <= 30 ? 0 : std::min(v, 180) - 30; }
+int clamp_trigger(int v) {
+  return v <= kGcTriggerClampMin ? 0 : std::min(v, kGcTriggerClampMax) - kGcTriggerClampMin;
+}
+
+// The InputFrame trigger value (0..255) that reaches game value `game` (1..150)
+// through PADClamp: the raw-units form of a §18 threshold.
+int raw_trigger_for(int game) { return game + kGcTriggerClampMin; }
 
 GcView gc_view(const PadState& p) {
   GcView g;
@@ -287,13 +296,18 @@ TriggerSweep sweep_trigger(Rig& rig, Side side) {
 
 // "L/R past t": released stays at or below t, a press goes past it. An analog
 // source also reaches exactly t and t + 1 (fine control on both sides of the
-// threshold) in game units, and in InputFrame units too.
+// threshold) in game units, and the InputFrame values that clamp to them.
 void check_trigger_past(Rig& rig, Side side, int t) {
   CAPTURE(side == Side::l ? "L" : "R");
   CAPTURE(t);
+  REQUIRE(t >= 1);
   REQUIRE(t + 1 <= kGcTriggerMax);
-  const GcView idle = gc_view(rig.map(rig.blank()));
-  CHECK(gc_trigger(idle, side) <= t);
+  const int raw_t = raw_trigger_for(t);
+  REQUIRE(clamp_trigger(raw_t) == t);
+  REQUIRE(clamp_trigger(raw_t + 1) == t + 1);
+  const PadState idle_pad = rig.map(rig.blank());
+  CHECK(gc_trigger(gc_view(idle_pad), side) <= t);
+  CHECK(pad_trigger(idle_pad, side) <= raw_t);
   const auto sources = click_sources(rig, side);
   REQUIRE_FALSE(sources.empty());
   for (const Source& s : sources) {
@@ -301,7 +315,7 @@ void check_trigger_past(Rig& rig, Side side, int t) {
     DeviceSnapshot snap = rig.blank();
     Rig::hold(snap, s);
     const PadState p = rig.map(snap);
-    CHECK(pad_trigger(p, side) > t);
+    CHECK(pad_trigger(p, side) > raw_t);
     CHECK(gc_trigger(gc_view(p), side) > t);
   }
   if (rig.kind() == DeviceKind::gamepad) {
@@ -310,8 +324,8 @@ void check_trigger_past(Rig& rig, Side side, int t) {
     CHECK(sw.monotone);
     CHECK(sw.game.count(t) == 1);
     CHECK(sw.game.count(t + 1) == 1);
-    CHECK(sw.pad.count(t) == 1);
-    CHECK(sw.pad.count(t + 1) == 1);
+    CHECK(sw.pad.count(raw_t) == 1);
+    CHECK(sw.pad.count(raw_t + 1) == 1);
   }
 }
 
@@ -330,7 +344,7 @@ void check_trigger_saturates(Rig& rig, Side side, int s) {
     Rig::hold(snap, src);
     const PadState p = rig.map(snap);
     CHECK(gc_trigger(gc_view(p), side) >= s);
-    CHECK(pad_trigger(p, side) >= s);
+    CHECK(pad_trigger(p, side) >= raw_trigger_for(s));
   }
   if (rig.kind() == DeviceKind::gamepad) {
     const TriggerSweep sw = sweep_trigger(rig, side);
