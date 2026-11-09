@@ -1,0 +1,32 @@
+Apply order 0029 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+EnvelopeExec: SetRevMtx's inverse starts as zero, not uninitialised stack, on MPT_PC
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+ADR 0008, "Gate status after the implementation", decision point 1. SetRevMtx (inlined into
+InitEnvelope, called by LoadHSF for every enveloped model) inverts each object's matrix into the local
+sp38 and concatenates it into the model's reverse matrices. MTXInverse returns 0 and writes nothing
+for a singular matrix, so when the first matrix inverted is singular, MTXConcat reads sp38
+uninitialised. On the console that is stale stack too; on PC the stack holds host frames, so the
+reverse matrices (read by the renderer and by EnvelopeProc) held bytes of return addresses and moved
+with the code layout. sp38 now starts as zero. After a successful inverse the loop still reuses the
+last one, which the game computed and every platform computes the same. Unconditional on PC.
+
+diff --git a/src/game/EnvelopeExec.c b/src/game/EnvelopeExec.c
+index 4e36999..d2ecd86 100644
+--- a/src/game/EnvelopeExec.c
++++ b/src/game/EnvelopeExec.c
+@@ -435,6 +435,14 @@ static void SetRevMtx(void) {
+     Mtx sp38;
+     Mtx sp8;
+ 
++#ifdef MPT_PC
++    /* MTXInverse leaves sp38 untouched when a matrix is singular, and the MTXConcat below then reads
++     * it. Before any inverse has succeeded that is uninitialised stack: on PC, host frames (return
++     * addresses, saved pointers), so the reverse matrices depended on where code was linked (ADR 0008,
++     * "Gate status after the implementation"). It starts as zero, a fixed value on every platform;
++     * after a successful inverse it keeps the last one, as before. */
++    memset(sp38, 0, sizeof(sp38));
++#endif
+     var_r29 = CurHsf->object;
+     for (var_r28 = i = 0; i < CurHsf->objectNum; i++, var_r29++) {
+         if (var_r29->type == 2) {

@@ -1,0 +1,72 @@
+Apply order 0030 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+armem: HuARMalloc keeps the console's ARAM base on MPT_PC, and lists its blocks for the state hash
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+ADR 0008, "Gate status after the implementation", finding 2. On the console HuARMalloc hands out ARAM
+from HU_AMEM_BASE (0x808000) to the end, and everything below is msm's: audio.c passes HU_AMEM_BASE
+to msmSysInit as aramEnd, and msmSysInit fails if msm's ARAM (from ARGetBaseAddress()) does not fit
+below it. Party Board's TARGET_PC branch started HuARMalloc at 0x20 instead, so its blocks covered
+msm's region, where MusyX DMAs its zero buffer at init and its stream buffers while streams play: the
+two could hand out the same bytes. MPT_PC now takes the console branch.
+
+Two PC-only reads for runtimes/gc_wii/mp4 (they change nothing): mpt_mp4_armem_in_use lists the
+in-use blocks from ARInfo in list (address) order, for the state hash and the run's ARAM alias check,
+and mpt_mp4_armem_floor gives HU_AMEM_BASE, the lowest address HuARMalloc may hand out.
+
+diff --git a/src/game/armem.c b/src/game/armem.c
+index 1ff6386..c7ed949 100644
+--- a/src/game/armem.c
++++ b/src/game/armem.c
+@@ -51,10 +51,13 @@ void HuARInit(void) {
+     for (i = 0; i < ARMEM_BLOCK_MAX; i++) {
+         ARInfo[i].aMemP = 0;
+     }
+-#ifdef TARGET_PC
++#if defined(TARGET_PC) && !defined(MPT_PC)
+     size = ARGetSize() - 0x20;
+     ARBase = 0x20;
+ #else
++    /* MPT_PC keeps the console's base: ARAM below HU_AMEM_BASE is msm's (audio.c passes it as msm's
++     * aramEnd, and msmSysInit checks that msm's ARAM fits below it). MusyX DMAs its zero buffer and
++     * its stream buffers there, so a HuARMalloc block from 0x20 shared those bytes. */
+     size = ARGetSize() - HU_AMEM_BASE;
+     ARBase = HU_AMEM_BASE;
+ #endif
+@@ -121,6 +124,37 @@ AMEM_PTR HuARMalloc(u32 size) {
+     return curr->aMemP;
+ }
+ 
++#ifdef MPT_PC
++/* runtimes/gc_wii/mp4 (ADR 0008, "Gate status after the implementation", finding 2): HuARMalloc's
++ * in-use blocks, in list order (which is address order), for the state hash and the ARAM alias check.
++ * Reads only. Writes at most max blocks and returns how many are in use, or -1 if the list does not
++ * end within ARMEM_BLOCK_MAX entries. */
++s32 mpt_mp4_armem_in_use(u32 *addr, u32 *size, s32 max) {
++    ARMEM_BLOCK *curr;
++    s32 n = 0;
++    s32 steps = 0;
++
++    for (curr = ARInfo; curr->next != 0; curr = curr->next) {
++        if (++steps > ARMEM_BLOCK_MAX) {
++            return -1;
++        }
++        if (curr->flag != 0) {
++            if (n < max) {
++                addr[n] = curr->aMemP;
++                size[n] = curr->size;
++            }
++            n++;
++        }
++    }
++    return n;
++}
++
++/* The lowest ARAM address HuARMalloc may hand out: msm's aramEnd (audio.c). */
++u32 mpt_mp4_armem_floor(void) {
++    return HU_AMEM_BASE;
++}
++#endif
++
+ void HuARFree(AMEM_PTR aMemP) {
+     ARMEM_BLOCK *prev;
+     ARMEM_BLOCK *next;
