@@ -32,11 +32,11 @@ struct SessionView {
   bool running = false;
   bool paused = false;
   std::uint64_t start_failures = 0;
-  std::string last_error;
+  std::string last_error{};
   PartyPhase phase = PartyPhase::none;
   std::int32_t turn = 0;       // 1-based, 0 before the party starts
   std::int32_t max_turns = 0;  // 0 if the title does not report it
-  std::filesystem::path replay_path;  // the live session's replay; empty if none was written
+  std::filesystem::path replay_path{};  // the live session's replay; empty if none was written
 };
 
 // "Turn 3/20" while a party is running (board, minigame or results, with a turn), else
@@ -49,7 +49,8 @@ std::string phase_text(PartyPhase phase);
 
 // The replay path as shown to the user: relative to the user dir, with '/' separators,
 // and no other path. A replay outside the user dir shows its file name only. Same rule
-// as the shell's .summary.txt (ruling M4-C).
+// as the shell's .summary.txt (ruling M4-C): keep it in step with summary_replay_path()
+// in core/shell/session_record.cpp, which ui/model/ cannot link.
 std::string replay_display_path(const std::filesystem::path& replay, const std::filesystem::path& user_dir);
 
 // What the post-session screen says.
