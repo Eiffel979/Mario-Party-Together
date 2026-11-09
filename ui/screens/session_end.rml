@@ -1,0 +1,21 @@
+<rml>
+<head>
+  <title>Party over</title>
+  <link type="text/rcss" href="../assets/theme.rcss"/>
+</head>
+<body data-model="ui">
+  <h1>{{end_heading}}</h1>
+  <div class="brand-bar"></div>
+  <div class="panel" data-if="!end_pending">
+    <p>{{end_detail}}</p>
+    <p class="muted small">{{end_replay}}</p>
+  </div>
+
+  <div class="btn" data-event-click="end_library" autofocus="">Back to library</div>
+
+  <div class="hints">
+    <span class="hint"><span class="glyph south"><span class="d n"></span><span class="d w"></span><span class="d e"></span><span class="d s"></span></span>Select</span>
+    <span class="hint"><span class="glyph east"><span class="d n"></span><span class="d w"></span><span class="d e"></span><span class="d s"></span></span>Library</span>
+  </div>
+</body>
+</rml>

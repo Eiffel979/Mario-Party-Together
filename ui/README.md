@@ -9,8 +9,9 @@ shell's presenter (ADR 0010). Phase 1 (P1-23, D6) has exactly these screens:
 | Add game dump | The in-UI file list (controllers) or the native file dialog (mouse). Drag-and-drop onto the window also works. |
 | File list | Drives, folders and dump files (`.iso`, `.gcm`, N64 images, and the compressed containers so their specific message is shown). |
 | Import | Identify, then build progress, then "ready" or a specific rejection (E11). Cancel stops the build. |
-| Players | Devices to Player 1-4 with hot-plug. Select a device to change its seat; a new controller joins with any button. Empty seats are computer players, chosen in the game's own setup. |
-| Pause | Opened by the host pause action (Esc, or the gamepad Guide button). Resume, Quit to library, Exit. |
+| Players | Each seat shows its device: "Keyboard", the controller's own name, or "Computer (CPU)". Select a device to change its seat; a new controller joins with any button. "Keyboard + controller, 2 computer players" sets up E1 in one step (ruling M4-U1). Empty seats are computer players, chosen in the game's own setup. A hint says the game may show a black screen at boot and to press START. |
+| Pause | Opened by the host pause action (Esc, or the gamepad Guide button). "Turn x/y" while a party runs (left out when the title does not report the turn count). Resume, Quit to library, Exit. |
+| Party over | After a session stops (Quit to library, or by itself): "Party finished" when the Director reported `finished`, else the phase it ended in. The replay path relative to the user dir, and no other path (ruling M4-C). Back to library. |
 
 ## Layout
 
@@ -39,11 +40,14 @@ launcher falls back to this source folder (developer builds).
 - **Resume masking.** "Resume" asks the shell to resume at once. The shell's
   `GameInputGate` (`core/shell/event_routing.h`) masks whatever is held when game input
   goes live again (ADR 0010 §3.3), so the confirm press never reaches the game.
+- The party phase, turn and replay path come only from `SessionStatus` (M4-06), never
+  from a runtime.
 - The pause action is input/'s reserved binding (`SdlInput::host_action`: Esc, Guide).
 - `ui_overlay_replay` (the ADR 0010 bring-up gate) plays a FakeRuntime replay with the real
   launcher, routed with the shell's own `route_event` and `GameInputGate`: paused with Esc
   or Guide, navigated with synthetic D-pad, stick and buttons, resumed with south or east.
-  The trail equals the trail with no UI.
+  The trail equals the trail with no UI. The M4-09 walkthrough on the same harness checks
+  "Turn x/y" on the pause screen and the post-session screen, finished and not.
 
 ## RCSS rules
 

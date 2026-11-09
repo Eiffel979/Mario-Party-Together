@@ -27,7 +27,9 @@ struct SeatDevice {
 struct SeatPort {
   bool seated = false;
   std::vector<std::string> devices;  // names of the devices on this port
-  std::string summary() const;      // "Keyboard" / "Computer player" / "Controller (disconnected)"
+  // Who plays this seat: "Keyboard", the controller's own name, "Keyboard + <name>",
+  // "Computer (CPU)" for an empty seat, or "Controller disconnected".
+  std::string summary() const;
 };
 
 class Seating {
@@ -50,6 +52,14 @@ class Seating {
   void cycle(input::DeviceId id, int direction);
   // Takes a device out; its port stops being seated once it has no device left.
   void leave(input::DeviceId id);
+
+  // The E1 setup (ruling M4-U1) in one step: the keyboard on Player 1, one controller
+  // on Player 2, every other device out, and Players 3 and 4 left to computer players.
+  // The controller is `pad` when it is a connected controller (the one that chose this),
+  // else the seated controller on the lowest seat, else the first one connected.
+  // Returns false and changes nothing when locked or without a keyboard and a controller.
+  bool can_seat_keyboard_and_controller() const;
+  bool seat_keyboard_and_controller(std::optional<input::DeviceId> pad = std::nullopt);
 
   std::size_t players() const;     // seated ports
   bool ready() const;              // at least one seated port with a device

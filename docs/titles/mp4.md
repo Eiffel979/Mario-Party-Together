@@ -825,7 +825,7 @@ The `armem.c` loops would never see their callback under the default mode, so MP
 **Dump lane.** `mpt_dump_lane --boot mp4 [--frames N] [--every N] [--seed S] [--perturb]` is the M1 check: it boots headless with no input, prints the state hash every N frames and the game's OSReport text, and fails if the runtime halts or faults. It also prints the mean wall time of a `stateHash()` call. That timing is a harness measurement; nothing in the runtime reads a clock.
 - `--perturb` runs the coverage checks below at every checkpoint, and fails on any miss.
 - `--press button@frame[+frames][,...]` holds buttons on player 1 (connected whenever a script is given; 6 frames by default). `--capture DIR [--capture-every N]` writes checkpoint frames as PNGs. Captures are the user's own game output: they go only to the directory given, never into the repository.
-- The dump comes from `MPT_DUMP_DIR`. It is identified and built through asset-import as `--dump` does, into `MPT_BUILD_CACHE` (default `<MPT_DUMP_DIR>/mpt-build-cache`).
+- The dump comes from `MPT_DUMP_DIR`. It is identified and built through asset-import as `--dump` does, into `MPT_BUILD_CACHE` (default the shell's build cache, `<user dir>/cache`; never inside `MPT_DUMP_DIR`).
 - `MPT_SOURCE_CACHE` reuses pinned checkouts instead of fetching them.
 - **Dev-environment quirk.** Processes started from the Claude desktop app see a virtualised `%APPDATA%` (under `%LOCALAPPDATA%\Packages\<app>\LocalCache\Roaming`), so caches built there are not the ones the real launcher uses. The first launch outside it rebuilds into the real `%APPDATA%` cache. No code change is needed.
 

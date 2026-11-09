@@ -125,6 +125,10 @@ scrollbarvertical sliderbar { background-color: #5a6280; border-radius: 5dp; }
 .seat.seated { border-color: #2f6f5e; background-color: #1f3a3a; }
 .seat .label { color: #ffb86b; }
 
+/* A row of buttons (the seating actions): side by side, sized to their text. */
+.actions { margin: 4dp 0; }
+.actions .btn { display: inline-block; width: auto; margin-right: 12dp; }
+
 /* Prompts drawn from plain boxes: four dots in a diamond, the lit one marks the button
    by position (south = confirm, east = back), never console-brand button art. */
 .hints { margin-top: 24dp; color: #a9b0bf; font-size: 18dp; }

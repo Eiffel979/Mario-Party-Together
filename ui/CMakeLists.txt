@@ -76,7 +76,8 @@ if(MPT_BUILD_TESTS)
     tests/main.cpp
     tests/test_overlay_replay.cpp
   )
-  target_link_libraries(mpt_ui_overlay_tests PRIVATE mpt::ui mpt::shell_core doctest::doctest)
+  # RmlUi too: the walkthrough reads the shown document back (M4-09).
+  target_link_libraries(mpt_ui_overlay_tests PRIVATE mpt::ui mpt::shell_core RmlUi::RmlUi doctest::doctest)
   target_include_directories(mpt_ui_overlay_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
   target_compile_definitions(mpt_ui_overlay_tests PRIVATE MPT_UI_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   mpt_set_warnings(mpt_ui_overlay_tests)

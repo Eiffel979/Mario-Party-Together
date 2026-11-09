@@ -7,7 +7,7 @@ std::string SeatDevice::port_label() const {
 }
 
 std::string SeatPort::summary() const {
-  if (!seated) return "Computer player";
+  if (!seated) return "Computer (CPU)";
   if (devices.empty()) return "Controller disconnected";
   std::string text;
   for (const std::string& name : devices) {
@@ -70,6 +70,49 @@ void Seating::leave(input::DeviceId id) {
   const std::optional<std::size_t> port = ports_.port_of(id);
   ports_.assign(id, std::nullopt);
   if (port && ports_.devices_on(*port).empty()) ports_.set_seated(*port, false);
+}
+
+namespace {
+
+bool connected(const input::PortAssigner& ports, input::DeviceId id) {
+  for (const input::DeviceInfo& info : ports.devices()) {
+    if (info.id == id) return true;
+  }
+  return false;
+}
+
+std::optional<input::DeviceId> pick_controller(const input::PortAssigner& ports, std::optional<input::DeviceId> pad) {
+  if (pad && pad->kind == input::DeviceKind::gamepad && connected(ports, *pad)) return pad;
+  std::optional<input::DeviceId> seated;
+  std::size_t seated_port = kMaxPlayers;
+  std::optional<input::DeviceId> first;
+  for (const input::DeviceInfo& info : ports.devices()) {
+    if (info.id.kind != input::DeviceKind::gamepad) continue;
+    if (!first) first = info.id;
+    const std::optional<std::size_t> port = ports.port_of(info.id);
+    if (port && *port < seated_port) {
+      seated = info.id;
+      seated_port = *port;
+    }
+  }
+  return seated ? seated : first;
+}
+
+}  // namespace
+
+bool Seating::can_seat_keyboard_and_controller() const {
+  return !locked_ && connected(ports_, input::kKeyboardDevice) && pick_controller(ports_, std::nullopt).has_value();
+}
+
+bool Seating::seat_keyboard_and_controller(std::optional<input::DeviceId> pad) {
+  if (locked_ || !connected(ports_, input::kKeyboardDevice)) return false;
+  const std::optional<input::DeviceId> controller = pick_controller(ports_, pad);
+  if (!controller) return false;
+  for (std::size_t p = 0; p < kMaxPlayers; ++p) ports_.set_seated(p, false);  // also unassigns their devices
+  for (const input::DeviceInfo& info : ports_.devices()) ports_.assign(info.id, std::nullopt);
+  ports_.assign(input::kKeyboardDevice, 0);
+  ports_.assign(*controller, 1);
+  return true;
 }
 
 std::size_t Seating::players() const {
