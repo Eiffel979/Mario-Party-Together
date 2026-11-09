@@ -19,6 +19,11 @@ int main(int argc, char** argv) {
     std::fputs(message.c_str(), exit_code == 0 ? stdout : stderr);
     return exit_code;
   }
+#ifdef MPT_SHELL_FAKE_PARTY
+  // mpt_shell_fake_party (M4-06): the title plays the whole-party script by itself.
+  const mpt::shell::ShellTitles titles{mpt::test::fake_party_shell_title()};
+#else
   const mpt::shell::ShellTitles titles{mpt::test::fake_shell_title()};
+#endif
   return mpt::shell::run(*options, titles);
 }

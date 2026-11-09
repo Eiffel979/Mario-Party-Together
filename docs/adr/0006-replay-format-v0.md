@@ -105,3 +105,27 @@ Implementing the library pinned down the details below. No `.mptr` file existed 
    - `session_config_for(header, VerifiedDump, supplied_image)` maps a header back to a `SessionConfig`. It checks title and dump hash, and resolves blank, embedded or supplied media by hash. The rules stay nullopt.
    - `ReplayRecorder::record(inputs, session)` is called after each successful `Session::step` with the same inputs.
    - `verify_replay(session, replay)` plays a replay on a fresh session and reports the first checkpoint whose `state_hash` or `party_digest` differs.
+
+## Amendment for M4-06: launcher auto-record (architect, 2026-11-08, ruling M4-C)
+E1 needs evidence that a party played in the shell reached `finished` and that its replay verifies. A replay the user had to remember to ask for with `--record` is not reliable evidence, and the launcher has no `--record` at all. The file format above does not change (`format_version` stays 0). This amendment only says when the shell records and what it keeps next to a replay.
+
+1. **Every live session records.** A live session is one the shell starts from `--title` or from the launcher's `requestStart`, as opposed to `--replay` or `--verify-replay` playback. Each live session records a replay to `<user_dir>/replays/<title>-<seed>-<n>.mptr`.
+   - `<title>` is the title ID (`mp4`), `<seed>` is `RuntimeConfig::seed` in decimal, and `<n>` is the smallest integer from 1 for which neither that `.mptr` nor its summary exists.
+   - `--record FILE` still works. It overrides the path for the session started from the command line, and only that one: later sessions the launcher starts record automatically.
+   - Playback sessions (`--replay`, `--verify-replay`) never record.
+2. **Never with embedded media.** An auto-recorded replay never embeds the initial save image. Only `--record` with `--embed-save` embeds one.
+   - So that a kept replay still verifies after the save slot has moved on, the shell keeps a copy of a non-blank initial image in a local, content-addressed store, `<user_dir>/replays/media/<save_media_sha256>.mptsave`. It is in the same format as a save slot (ADR 0004).
+   - `--replay` and `--verify-replay` take a non-embedded image from that store when the digest is there, and otherwise from the save slot, as before (amendment for P1-05, point 2). The store is deduplicated by digest and is never part of the replay file.
+3. **Kept locally.** Replays, summaries and the media store stay in the user dir. Nothing is uploaded, and nothing is pruned automatically in Phase 1. Deleting old replays is the user's call.
+4. **A summary is written next to each replay**: `<name>.summary.txt` (for `--record FILE`, the same path with the extension replaced). It is plain `key value` lines:
+   - `summary_version`, `shell_version`, `runtime_build` (the build manifest's `runtime_build_version`, or `none` for a test title with no build), `runtime_unpinned`;
+   - `title`, `seed`, `dump_sha256`, `replay` (the replay's path relative to the user dir, or its file name alone when it is outside the user dir);
+   - `frames`, `end` (`ok`, or `failed` when a step failed);
+   - the Director's final `phase`, `turn` as `turn/max_turns`, `board` (a content ID, or `-`) and `events` (the Director's event count).
+
+   It never holds a path outside the user dir, a dump or build path, error text, or any game text (names, messages). Content IDs are ours, not game text. It is evidence for E1 (`docs/titles/<id>.md` checklists), not a format any tool depends on. A field may be added by bumping `summary_version`.
+5. **Writes happen at session stop, never at start.** The replay, the summary and the media copy are written when the session ends, with `write_file_atomic` (replay and media first, the summary last). A session that fails to start writes nothing. A failed write is reported and makes the shell exit non-zero, and it leaves no partial file. If the chosen name was taken while the session ran, the next free `<n>` is used.
+6. **Shell output.** At session stop the shell prints the Director's final phase, turn and event count for every session, live or playback. `--verify-replay` prints the same line after the trail. `SessionStatus` (shell-internal, `ui_host.h`) carries the phase, turn, turn count and replay path, so the launcher can show "Turn x/y" and a "Party finished" screen (M4-09).
+7. **Export.** The Consequences rule stands: the UI must warn before it exports a replay that embeds save media. An auto-recorded replay has none, but it is still the user's own inputs. Exporting stays an explicit user action, and Phase 1 has no export.
+
+No core contract changes (ruling M4-A). `FrameLoopHooks`, `ITitleRuntime`, `ITitleAdapter` and the Party Director types stay as they are. Everything above is shell behaviour in `core/shell/`.

@@ -26,6 +26,7 @@
 #include "overlay.h"
 #include "pacer.h"
 #include "save_store.h"
+#include "session_record.h"
 
 using namespace mpt;
 using namespace mpt::shell;
@@ -327,4 +328,77 @@ TEST_CASE("a replay's trail is the same with the UI on or off and across a pause
 
   StubOverlay later(/*open_at=*/400, /*close_at=*/420);
   CHECK(play(replay, &later, std::make_pair<std::uint64_t, std::uint64_t>(250, 300)) == plain);
+}
+
+// ---- M4-06: replay naming, summaries and the media store (ADR 0006 amendment for M4-06)
+
+TEST_CASE("auto-recorded replays take the next free <title>-<seed>-<n> name") {
+  const std::filesystem::path replays = replays_dir(scratch_dir("auto_names"));
+  CHECK(replays.filename() == "replays");
+  CHECK(next_replay_path(replays, TitleId::mp4, 42) == replays / "mp4-42-1.mptr");
+  CHECK(!std::filesystem::exists(replays));  // picking a name creates nothing
+
+  REQUIRE(write_file_atomic(replays / "mp4-42-1.mptr", std::vector<std::byte>(1)));
+  CHECK(next_replay_path(replays, TitleId::mp4, 42) == replays / "mp4-42-2.mptr");
+  // A summary alone also takes the name.
+  REQUIRE(write_file_atomic(replays / "mp4-42-2.summary.txt", std::vector<std::byte>(1)));
+  CHECK(next_replay_path(replays, TitleId::mp4, 42) == replays / "mp4-42-3.mptr");
+  CHECK(next_replay_path(replays, TitleId::mp4, 43) == replays / "mp4-43-1.mptr");
+  CHECK(next_replay_path(replays, TitleId::mp1, 42) == replays / "mp1-42-1.mptr");
+
+  CHECK(summary_path_for(replays / "mp4-42-1.mptr") == replays / "mp4-42-1.summary.txt");
+  CHECK(summary_path_for(replays / "party") == replays / "party.summary.txt");
+  Sha256Digest digest{};
+  digest[0] = 0xab;
+  CHECK(replay_media_path(replays, digest) == replays / "media" / (to_hex(digest) + ".mptsave"));
+}
+
+TEST_CASE("a summary names the replay relative to the user dir, or by file name alone") {
+  const std::filesystem::path user = scratch_dir("summary_paths") / "user";
+  CHECK(summary_replay_path(user / "replays" / "mp4-1-1.mptr", user) == "replays/mp4-1-1.mptr");
+  CHECK(summary_replay_path(user / "replays" / ".." / "x.mptr", user) == "x.mptr");
+  CHECK(summary_replay_path(user.parent_path() / "elsewhere" / "rec.mptr", user) == "rec.mptr");
+  CHECK(summary_replay_path(user.parent_path() / "user2" / "rec.mptr", user) == "rec.mptr");
+}
+
+TEST_CASE("the summary text is fixed key-value lines with the final party") {
+  SessionSummary s;
+  s.shell_version = "1.2.3";
+  s.runtime_build = "mp4-0123456789abcdef";
+  s.title = TitleId::mp4;
+  s.seed = 18446744073709551615ull;
+  s.dump_sha256 = std::string(64, 'a');
+  s.replay = "replays/mp4-1-1.mptr";
+  s.frames = 600;
+  s.party.phase = PartyPhase::finished;
+  s.party.turn = 20;
+  s.party.max_turns = 20;
+  s.party.board = BoardId::parse("mp4.board.fake_board");
+  s.events = 77;
+  const std::string text = format_summary(s);
+  CHECK(text == "# Mario Party Together session summary (ADR 0006, amendment for M4-06)\n"
+                "summary_version 1\n"
+                "shell_version 1.2.3\n"
+                "runtime_build mp4-0123456789abcdef\n"
+                "runtime_unpinned false\n"
+                "title mp4\n"
+                "seed 18446744073709551615\n"
+                "dump_sha256 " + std::string(64, 'a') + "\n"
+                "replay replays/mp4-1-1.mptr\n"
+                "frames 600\n"
+                "end ok\n"
+                "phase finished\n"
+                "turn 20/20\n"
+                "board mp4.board.fake_board\n"
+                "events 77\n");
+  s.failed = true;
+  s.party = PartySnapshot{};
+  const std::string failed = format_summary(s);
+  CHECK(failed.find("\nend failed\n") != std::string::npos);
+  CHECK(failed.find("\nphase none\n") != std::string::npos);
+  CHECK(failed.find("\nboard -\n") != std::string::npos);
+
+  CHECK(phase_name(PartyPhase::none) == "none");
+  CHECK(phase_name(PartyPhase::results) == "results");
+  CHECK(phase_name(PartyPhase::finished) == "finished");
 }

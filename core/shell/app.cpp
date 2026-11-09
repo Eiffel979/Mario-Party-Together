@@ -8,7 +8,9 @@
 #include <iterator>
 #include <memory>
 #include <random>
+#include <span>
 #include <string>
+#include <system_error>
 #include <string_view>
 #include <utility>
 #include <variant>
@@ -29,6 +31,7 @@
 #include "pacer.h"
 #include "presenter.h"
 #include "save_store.h"
+#include "session_record.h"
 #include "ui_host.h"
 
 namespace mpt::shell {
@@ -41,7 +44,8 @@ constexpr std::string_view kUsage =
     "  --seed N               Session seed (default: chosen by the shell and recorded)\n"
     "  --scale N              Internal render scale (presentation only)\n"
     "  --widescreen           16:9 output (presentation only)\n"
-    "  --record FILE          Record the session to a replay file (.mptr)\n"
+    "  --record FILE          Record the session to FILE (.mptr) instead of\n"
+    "                         <user dir>/replays/<title>-<seed>-<n>.mptr\n"
     "  --embed-save           With --record: put the initial save image in the replay\n"
     "  --replay FILE          Play a replay in the window and check its hash trail\n"
     "  --verify-replay FILE   Check a replay headless and print its hash trail\n"
@@ -104,6 +108,45 @@ std::string hex64(std::uint64_t v) {
 void print_trail(const std::vector<ReplayCheckpoint>& trail) {
   for (const ReplayCheckpoint& c : trail) {
     std::printf("%llu %s\n", static_cast<unsigned long long>(c.frame), hex64(c.state_hash).c_str());
+  }
+}
+
+bool path_exists(const std::filesystem::path& path) {
+  std::error_code ec;
+  return std::filesystem::exists(path, ec);
+}
+
+// The image a replay that does not embed its initial save needs (ADR 0006 amendment for
+// M4-06, point 2): from the local media store when it holds that digest, otherwise the
+// user's own save slot, matched by digest in session_config_for. Never written back
+// (ephemeral, ADR 0004 rule 6).
+std::optional<SaveMedia> supplied_save_media(const ReplayHeader& header, const UserDirs& dirs, TitleId title,
+                                             std::string_view region) {
+  std::string error;
+  if (!header.blank_save_media() && !header.embedded_save_media) {
+    const std::filesystem::path stored = replay_media_path(replays_dir(dirs.root), header.save_media_sha256);
+    if (path_exists(stored)) {
+      std::optional<SaveMedia> media = load_save_media(stored, error);
+      if (media && save_media_digest(media) == header.save_media_sha256) return media;
+      std::fprintf(stderr, "replay: ignoring a damaged copy in the media store\n");
+    }
+  }
+  return load_save_media(save_slot_path(dirs.saves, title, region), error);
+}
+
+// The build fingerprint a summary names: the build manifest's runtime_build_version
+// (asset-import build.h), or "none" for a test registration without a build.
+void read_runtime_build(const VerifiedDump& dump, SessionSummary& summary) {
+  summary.runtime_build = "none";
+  summary.runtime_unpinned = false;
+  if (dump.build_dir.empty()) return;
+  std::ifstream in(dump.build_dir / "manifest.json", std::ios::binary);
+  if (!in) return;
+  const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  std::string error;
+  if (const std::optional<asset_import::BuildManifest> manifest = asset_import::BuildManifest::parse(text, error)) {
+    if (!manifest->runtime_build_version.empty()) summary.runtime_build = manifest->runtime_build_version;
+    summary.runtime_unpinned = manifest->unpinned;
   }
 }
 
@@ -234,9 +277,7 @@ int run_verify_replay(const AppOptions& options, const ShellTitles& titles) {
   }
   std::optional<VerifiedDump> dump = take_or_print(resolve_dump(*title, options, *dirs), "dump");
   if (!dump) return 1;
-  // The user's own save may be the image the replay needs; it is matched by digest and
-  // never written back (ephemeral, ADR 0004 rule 6).
-  const std::optional<SaveMedia> slot = load_save_media(save_slot_path(dirs->saves, title->id, dump->region), error);
+  const std::optional<SaveMedia> slot = supplied_save_media(replay->header, *dirs, title->id, dump->region);
   std::optional<SessionConfig> config = take_or_print(session_config_for(replay->header, *dump, slot), "replay");
   if (!config) return 1;
   config->runtime.internal_scale = options.internal_scale;
@@ -247,6 +288,7 @@ int run_verify_replay(const AppOptions& options, const ShellTitles& titles) {
   if (!session) return 1;
   const ReplayVerification v = verify_replay(**session, *replay);
   print_trail(v.trail);
+  std::printf("%s\n", party_line((*session)->director()).c_str());
   if (!v.status) {
     std::fprintf(stderr, "%s\n", v.status.error().c_str());
     return 1;
@@ -293,6 +335,11 @@ class Shell final : public IShellCommands {
       s.paused = loop_ && loop_->paused();
       s.start_failures = start_failures_;
       s.last_error = last_error_;
+      const PartySnapshot& party = session_ ? session_->director().party() : last_party_;
+      s.phase = party.phase;
+      s.turn = party.turn;
+      s.max_turns = party.max_turns;
+      s.replay_path = replay_path_;
       return s;
     };
     return host;
@@ -309,6 +356,7 @@ class Shell final : public IShellCommands {
     }
     std::optional<VerifiedDump> dump = take_or_print(resolve_dump(*title, options_, dirs_), "dump");
     if (!dump) return false;
+    record_override_ = options_.record;  // this session only; launcher sessions record automatically
     return start_live(*dump, options_.seed);
   }
 
@@ -359,6 +407,8 @@ class Shell final : public IShellCommands {
  private:
   bool start_live(const VerifiedDump& dump, std::optional<std::uint64_t> seed) {
     last_error_.clear();
+    reset_recording();
+    const std::optional<std::filesystem::path> record_path = std::exchange(record_override_, std::nullopt);
     const ShellTitle* title = find_title(titles_, dump.title);
     if (!title) {
       last_error_ = std::string(to_string(dump.title)) + " is not available in this build";
@@ -376,12 +426,24 @@ class Shell final : public IShellCommands {
     config.runtime.widescreen = options_.widescreen;
     config.runtime.save_media = std::move(initial);
 
-    if (options_.record) {
-      std::optional<ReplayHeader> header =
-          take_or_print(make_replay_header(config, options_.embed_save), "record", &last_error_);
+    // Every live session records (ADR 0006 amendment for M4-06). Nothing is written
+    // until the session stops, so a start that fails leaves no file.
+    const bool embed = record_path && options_.embed_save;
+    {
+      std::optional<ReplayHeader> header = take_or_print(make_replay_header(config, embed), "record", &last_error_);
       if (!header) return false;
       recorder_.emplace(std::move(*header));
     }
+    auto_named_ = !record_path;
+    replay_path_ =
+        record_path ? *record_path : next_replay_path(replays_dir(dirs_.root), dump.title, config.runtime.seed);
+    if (!embed && config.runtime.save_media) initial_media_ = config.runtime.save_media;
+    summary_ = SessionSummary{};
+    summary_.shell_version = MPT_VERSION;
+    read_runtime_build(dump, summary_);
+    summary_.title = dump.title;
+    summary_.seed = config.runtime.seed;
+    summary_.dump_sha256 = dump.sha256;
     FrameLoopHooks hooks;
     hooks.sample = [this](std::uint64_t frame) -> std::optional<InputFrame> { return input_.sample(frame); };
     if (opened.persist) {
@@ -391,10 +453,25 @@ class Shell final : public IShellCommands {
         }
       };
     }
-    return start_session(config, std::move(hooks), recorder_ ? &*recorder_ : nullptr);
+    if (!start_session(config, std::move(hooks), &*recorder_)) {
+      reset_recording();
+      return false;
+    }
+    std::printf("recording to %s\n", display_path(replay_path_).c_str());
+    return true;
+  }
+
+  // Forgets the last session's recording and party, before any new session.
+  void reset_recording() {
+    recorder_.reset();
+    replay_path_.clear();
+    initial_media_.reset();
+    auto_named_ = false;
+    last_party_ = PartySnapshot{};
   }
 
   bool start_replay(const std::filesystem::path& path) {
+    reset_recording();  // playback never records
     std::string error;
     std::optional<std::vector<std::byte>> bytes = read_file(path, error);
     if (!bytes) {
@@ -411,7 +488,7 @@ class Shell final : public IShellCommands {
     }
     std::optional<VerifiedDump> dump = take_or_print(resolve_dump(*title, options_, dirs_), "dump");
     if (!dump) return false;
-    const std::optional<SaveMedia> slot = load_save_media(save_slot_path(dirs_.saves, title->id, dump->region), error);
+    const std::optional<SaveMedia> slot = supplied_save_media(playback_->header, dirs_, title->id, dump->region);
     std::optional<SessionConfig> config = take_or_print(session_config_for(playback_->header, *dump, slot), "replay");
     if (!config) return false;
     config->runtime.internal_scale = options_.internal_scale;
@@ -465,16 +542,10 @@ class Shell final : public IShellCommands {
 
   void end_session() {
     if (!session_) return;
-    if (recorder_ && options_.record) {
-      const std::vector<std::byte> bytes = encode_replay(recorder_->finish());
-      if (Result written = write_file_atomic(*options_.record, bytes); !written) {
-        std::fprintf(stderr, "record: %s\n", written.error().c_str());
-        exit_code_ = 1;
-      } else {
-        std::printf("recorded %s\n", display_path(*options_.record).c_str());
-      }
-      recorder_.reset();
-    }
+    const PartyDirector& director = session_->director();
+    std::printf("%s\n", party_line(director).c_str());
+    last_party_ = director.party();
+    if (recorder_) write_recording(director);
     if (playback_ && !replay_failed_) {
       if (next_checkpoint_ != playback_->checkpoints.size()) {
         std::fprintf(stderr, "replay: stopped before checkpoint %zu of %zu\n", next_checkpoint_,
@@ -491,6 +562,44 @@ class Shell final : public IShellCommands {
     input_.mapper().set_profile_all(input::builtin_default_profile());  // no title profile between sessions
     presenter_.clear_frame();
     audio_.pause();
+  }
+
+  // At session stop: the initial image (if any), the replay, then the summary (ADR 0006
+  // amendment for M4-06, point 5), so a summary only ever names a replay that exists.
+  void write_recording(const PartyDirector& director) {
+    const Replay replay = recorder_->finish();
+    recorder_.reset();
+    if (auto_named_ && (path_exists(replay_path_) || path_exists(summary_path_for(replay_path_)))) {
+      replay_path_ = next_replay_path(replays_dir(dirs_.root), summary_.title, summary_.seed);  // taken meanwhile
+    }
+    const auto fail = [this](const char* what, const Result& result) {
+      std::fprintf(stderr, "record: %s: %s\n", what, result.error().c_str());
+      exit_code_ = 1;
+      replay_path_.clear();  // the UI never shows a replay that is not there
+    };
+    if (initial_media_) {
+      const std::filesystem::path stored = replay_media_path(replays_dir(dirs_.root), save_media_digest(initial_media_));
+      if (!path_exists(stored)) {
+        if (Result written = store_save_media(stored, *initial_media_); !written) return fail("save image", written);
+      }
+    }
+    if (Result written = write_file_atomic(replay_path_, encode_replay(replay)); !written) {
+      return fail("replay", written);
+    }
+    std::printf("recorded %s\n", display_path(replay_path_).c_str());
+
+    summary_.replay = summary_replay_path(replay_path_, dirs_.root);
+    summary_.frames = replay.frame_count;
+    summary_.failed = loop_ && loop_->failure().has_value();
+    summary_.party = director.party();
+    summary_.events = director.events().size();
+    const std::string text = format_summary(summary_);
+    const std::filesystem::path summary_path = summary_path_for(replay_path_);
+    const auto* data = reinterpret_cast<const std::byte*>(text.data());
+    if (Result written = write_file_atomic(summary_path, std::span<const std::byte>(data, text.size())); !written) {
+      return fail("summary", written);
+    }
+    std::printf("summary %s\n", display_path(summary_path).c_str());
   }
 
   void check_replay_checkpoint(Session& session) {
@@ -608,6 +717,14 @@ class Shell final : public IShellCommands {
   std::unique_ptr<Session> session_;
   std::unique_ptr<FrameLoop> loop_;
   std::optional<ReplayRecorder> recorder_;
+  // Live-session recording (ADR 0006 amendment for M4-06). replay_path_ is where the
+  // current session records, or where the last one was written; empty for playback.
+  std::optional<std::filesystem::path> record_override_;  // --record, for the command-line session only
+  std::filesystem::path replay_path_;
+  bool auto_named_ = false;
+  std::optional<SaveMedia> initial_media_;  // non-blank and not embedded: kept in the media store
+  SessionSummary summary_;
+  PartySnapshot last_party_;  // the Director's party when the last session ended
   std::optional<std::filesystem::path> slot_;
   std::optional<Replay> playback_;
   std::optional<ReplayReader> reader_;
