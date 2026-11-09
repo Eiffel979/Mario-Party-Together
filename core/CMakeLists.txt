@@ -28,6 +28,7 @@ add_library(mpt_shell_core
   shell/frame_loop.cpp
   shell/save_store.cpp
   shell/session_record.cpp
+  shell/user_dirs.cpp
 )
 add_library(mpt::shell_core ALIAS mpt_shell_core)
 target_include_directories(mpt_shell_core PUBLIC shell)

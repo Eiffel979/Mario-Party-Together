@@ -22,7 +22,7 @@
 // `--press button@frame[+frames][,...]` holds buttons on player 1, and `--capture DIR
 // [--capture-every N]` writes checkpoint frames as PNG files to DIR. DIR, the --hash-items file,
 // MPT_BUILD_CACHE and MPT_SOURCE_CACHE must lie outside the repository, like MPT_DUMP_DIR
-// (path_guard.h).
+// (path_guard.h). The build cache defaults to the shell's (its user cache folder), never MPT_DUMP_DIR.
 
 #include <algorithm>
 #include <array>
@@ -46,6 +46,7 @@
 #include "png.h"
 #include "mpt/core/title_id.h"
 #include "real_titles.h"
+#include "user_dirs.h"
 #if defined(MPT_DUMP_LANE_MP4)
 #include "../conformance/conformance.h"
 #include "mpt/mp4/adapter.h"
@@ -72,11 +73,10 @@ std::string environment(const char* name);
 void register_titles(mpt::TitleRegistry& registry) { mpt::dump_lane::register_real_titles(registry); }
 
 // The VerifiedDump for a title, from the dump in MPT_DUMP_DIR, built through asset-import (the only
-// way to make one, ADR 0009 amendment after P1-10). See real_titles.h for MPT_BUILD_CACHE and
-// MPT_SOURCE_CACHE.
-std::variant<mpt::VerifiedDump, mpt::Result> resolve_dump(mpt::TitleId title, const std::filesystem::path& dump_dir) {
-  const std::string cache_env = environment("MPT_BUILD_CACHE");
-  const std::filesystem::path cache = cache_env.empty() ? dump_dir / "mpt-build-cache" : std::filesystem::path(cache_env);
+// way to make one, ADR 0009 amendment after P1-10) into `cache`, the BuildCache root main() chose.
+// See real_titles.h for MPT_BUILD_CACHE and MPT_SOURCE_CACHE.
+std::variant<mpt::VerifiedDump, mpt::Result> resolve_dump(mpt::TitleId title, const std::filesystem::path& dump_dir,
+                                                          const std::filesystem::path& cache) {
   return mpt::dump_lane::build_dump(title, dump_dir, MPT_KNOWN_DUMPS_JSON, cache, environment("MPT_SOURCE_CACHE"));
 }
 
@@ -702,7 +702,7 @@ int verify_replay_file(const BootOptions& options, const mpt::VerifiedDump& dump
 #endif
 
 // The M1 check: boot headless on the dump, no input, and step.
-int boot(const BootOptions& options, const std::filesystem::path& dump_dir) {
+int boot(const BootOptions& options, const std::filesystem::path& dump_dir, const std::filesystem::path& cache) {
   const std::optional<mpt::TitleId> title = mpt::parse_title_id(options.title);
   if (!title) {
     std::printf("dump lane: unknown title '%s'\n", options.title.c_str());
@@ -714,7 +714,7 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir) {
     std::printf("dump lane: no runtime registered for %s\n", options.title.c_str());
     return 1;
   }
-  auto dump = resolve_dump(*title, dump_dir);
+  auto dump = resolve_dump(*title, dump_dir, cache);
   if (mpt::Result* failure = std::get_if<mpt::Result>(&dump)) {
     std::printf("dump lane: %s\n", failure->error().c_str());
     return 1;
@@ -975,6 +975,26 @@ int main(int argc, char** argv) {
     std::puts("dump lane: MPT_DUMP_DIR is inside the repository; dumps must live outside it (ADR 0006)");
     return 1;
   }
+  // The build cache: MPT_BUILD_CACHE, else the shell's user cache folder (the same UserDirs call
+  // as the shell, so both share one cache). Never MPT_DUMP_DIR by default: it holds dumps only.
+  std::filesystem::path default_cache;
+  const std::string cache_env = environment("MPT_BUILD_CACHE");
+  if (cache_env.empty()) {
+    std::string error;
+    const std::optional<mpt::shell::UserDirs> dirs = mpt::shell::user_dirs(std::nullopt, error);
+    if (!dirs) {
+      std::printf("dump lane: %s; set MPT_BUILD_CACHE\n", error.c_str());
+      return 1;
+    }
+    default_cache = dirs->cache;
+  }
+  const mpt::dump_lane::BuildCacheRoot cache = mpt::dump_lane::build_cache_root(cache_env, default_cache);
+  if (const std::string refused = mpt::dump_lane::refuse_cache_in_dump(cache, dump_dir); !refused.empty()) {
+    std::printf("dump lane: %s\n", refused.c_str());
+    return 1;
+  }
+  if (cache.from_env && mpt::dump_lane::is_inside(cache.path, dump_dir))
+    std::puts("dump lane: note: MPT_BUILD_CACHE is inside MPT_DUMP_DIR; builds are written next to your dumps");
   // Captures (the user's game output) and the caches (an extracted disc, built modules, decomp
   // checkouts) must stay outside the repository too, and so must --hash-items (it names the game's
   // symbols).
@@ -983,14 +1003,14 @@ int main(int argc, char** argv) {
       {"--capture", boot_options.capture_dir},
       {"--hash-items", boot_options.hash_items},
       {"--replay", boot_options.replay_out},
-      {"MPT_BUILD_CACHE", std::filesystem::path(environment("MPT_BUILD_CACHE"))},
+      {cache.from_env ? "MPT_BUILD_CACHE" : "the build cache", cache.path},
       {"MPT_SOURCE_CACHE", std::filesystem::path(environment("MPT_SOURCE_CACHE"))},
   }};
   if (const std::string refused = mpt::dump_lane::refuse_inside(written, MPT_REPO_ROOT); !refused.empty()) {
     std::printf("dump lane: %s\n", refused.c_str());
     return 1;
   }
-  if (!boot_options.title.empty()) return boot(boot_options, dump_dir);
+  if (!boot_options.title.empty()) return boot(boot_options, dump_dir, cache.path);
 
   const auto fixtures = mpt::dump_lane::find_fixtures(MPT_REPLAYS_DIR);
   if (fixtures.empty()) {
@@ -1023,7 +1043,7 @@ int main(int argc, char** argv) {
       ++skipped;
       continue;
     }
-    auto dump = resolve_dump(title, dump_dir);
+    auto dump = resolve_dump(title, dump_dir, cache.path);
     if (mpt::Result* failure = std::get_if<mpt::Result>(&dump)) {
       std::printf("FAIL %s: %s\n", fixture.name.c_str(), failure->error().c_str());
       ++failed;
