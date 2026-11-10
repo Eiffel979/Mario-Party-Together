@@ -134,7 +134,14 @@ mpt_dump_lane --boot mp4 --verify-replay FILE
   (frames since mentDll started). Only the default board has been validated.
 - Diagnosis: `--party-save-at N FILE` saves the state before frame N, and `--party-resume FILE`
   goes on from it (no replay, not evidence). State files hold game memory: keep them outside the
-  repository.
+  repository. Resume in the same build only, and expect a `/GS` fail-fast (0xC0000409) in a game
+  function that was suspended at the save: its frame's stack cookie was made with the saving
+  process's `__security_cookie`, which differs in every process (`docs/titles/mp4.md`, M4-03).
+- Diagnosis: `--press` also works in party mode and adds its buttons on top of the autopilot (to probe
+  a soft lock).
+- `--party-unlock-bowser` boots with `MPT_MP4_BOOT_UNLOCK_BOWSERS_GNARLY_PARTY`
+  (`Mp4Runtime::setTestGameplayFlags`), so `--party-board 5` can reach Bowser's Gnarly Party. No replay
+  records the flag, so the lane refuses it with `--replay`, and such a run is diagnosis only.
 
 ## Diagnosis: arena watches (`watch.h`, MP4)
 

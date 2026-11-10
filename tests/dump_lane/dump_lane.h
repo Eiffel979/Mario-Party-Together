@@ -185,6 +185,9 @@ inline int board_wheel_moves(std::int32_t board) {
   return 0;
 }
 
+// Frames with no party change (phase, overlay or turn) after which the autopilot also pulses B.
+inline constexpr std::uint64_t kPartyStallFrames = 18000;
+
 // Player 1's pad for the step of `frame`, given the key and frames since its last change as of the
 // step before. The autopilot:
 //   - presses nothing before boot_wait;
@@ -194,7 +197,8 @@ inline int board_wheel_moves(std::int32_t board) {
 //     frames on, 2 off) with the stick released. Mashing alone soft-locks a human seat in Reversal of
 //     Fortune (m444), whose plunger only fires once the stick has pulled it back;
 //   - otherwise pulses A (4 frames every 30) on menus, setup, the board and the results;
-//   - on mentDll's board wheel window, holds the direction toward script.board instead.
+//   - on mentDll's board wheel window, pulls the stick toward script.board instead;
+//   - after kPartyStallFrames with no party change, also pulses B.
 inline PadState party_autopilot(const PartyScript& script, std::uint64_t frame, const PartyKey& key,
                                 std::uint64_t since_change) {
   PadState pad;
@@ -217,16 +221,22 @@ inline PadState party_autopilot(const PartyScript& script, std::uint64_t frame, 
   }
   if (overlay == "mentDll" && key.phase == PartyPhase::none && script.board != 0 &&
       since_change >= script.wheel_from && since_change < script.wheel_to) {
-    // One 4-frame direction pulse per 30 frames, one per move: the wheel takes a held direction once
-    // it has been idle for 21 frames, then waits again, so each pulse moves it exactly one board. No A
-    // is pressed in the window.
+    // One 4-frame stick pulse per 30 frames, one per move: the wheel takes a held direction once it
+    // has been idle for 21 frames, then waits again, so each pulse moves it exactly one board. It
+    // reads the stick (|x| >= 50) or HuPadBtn's d-pad bits, but Party Board's pad.c masks the d-pad out
+    // of HuPadBtn, so only the stick moves it. No A is pressed in the window.
     const int moves = board_wheel_moves(script.board);
     const std::uint64_t in_window = since_change - script.wheel_from;
     const std::uint64_t pulses = static_cast<std::uint64_t>(moves < 0 ? -moves : moves);
-    if (in_window / 30 < pulses && in_window % 30 < 4) pad.buttons |= moves < 0 ? kButtonDpadLeft : kButtonDpadRight;
+    if (in_window / 30 < pulses && in_window % 30 < 4) pad.stick_x = moves < 0 ? -32767 : 32767;
     return pad;
   }
   if (since_change >= 30 && since_change % 30 < 4) pad.buttons |= kButtonA;
+  // A stall (M4-03, seed 2): A alone can loop a human seat in a menu that only B leaves, such as a shop
+  // whose item the player cannot take. After kPartyStallFrames with no party change, B also pulses
+  // (4 frames every 60, between the A pulses). The longest normal stretch seen is 10,480 frames, so
+  // runs that never stall are unchanged, and the watchdog still catches a real lock.
+  if (since_change >= kPartyStallFrames && since_change % 60 >= 45 && since_change % 60 < 49) pad.buttons |= kButtonB;
   return pad;
 }
 
