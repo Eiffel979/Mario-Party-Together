@@ -805,6 +805,9 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
     if (!same && failure.empty()) failure = "the end-of-run save state did not round-trip";
   }
 
+  // The last state, for sweep tables (M4-03): the frame and hash the run stopped at.
+  std::printf("dump lane: final frame %llu hash %016llx\n", static_cast<unsigned long long>(session->frame()),
+              static_cast<unsigned long long>(session->runtime().stateHash()));
   const mpt::Replay replay = recorder.finish();
   if (!options.replay_out.empty() && !resumed) {
     const std::vector<std::byte> bytes = mpt::encode_replay(replay);
