@@ -3,6 +3,7 @@
 #define MPT_MP4_READS_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #include "mpt/mp4/game_abi.h"
 
@@ -33,6 +34,11 @@ void* mpt_mp4_registered_global(size_t* size);
  * 0 before HuMemInitAll). Returns 0 for a heap index out of range. Reads only. */
 int mpt_mp4_heap_use(int heap, size_t* size, size_t* used);
 int mpt_mp4_heap_count(void);
+/* Party Board patch 0030 (armem.c): HuARMalloc's in-use ARAM blocks in address order. Writes at most
+ * `max` and returns how many are in use, or -1 for a block list that does not end. Reads only. */
+int32_t mpt_mp4_armem_in_use(uint32_t* addr, uint32_t* size, int32_t max);
+/* The lowest ARAM address HuARMalloc may hand out: msm's aramEnd, HU_AMEM_BASE. */
+uint32_t mpt_mp4_armem_floor(void);
 
 #ifdef __cplusplus
 }

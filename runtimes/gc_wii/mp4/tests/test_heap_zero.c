@@ -89,6 +89,18 @@ static void testMsm(void) {
   unsigned char *s = msmMemAlloc(96);
   CHECK(w != NULL && m != NULL && s != NULL);
   CHECK(allZero(w, 256) && allZero(m, 512) && allZero(s, 96));
+  /* Not a multiple of 32 (qa, #72): msm rounds a 100-byte request up to a 128-byte user area (the
+   * next header starts after it), and all 128 bytes are zero, not only the 100 asked for. */
+  msmMemFree(s);
+  msmMemFree(m);
+  msmMemFree(w);
+  unsigned char *x = msmMemAlloc(512);
+  CHECK(x != NULL);
+  if (x != NULL) memset(x, 0x5A, 512);
+  msmMemFree(x);
+  unsigned char *r = msmMemAlloc(100);
+  CHECK(r != NULL && r >= x && r + 128 <= x + 512); /* inside the bytes just filled */
+  CHECK(r != NULL && allZero(r, 128));
 }
 
 int main(void) {

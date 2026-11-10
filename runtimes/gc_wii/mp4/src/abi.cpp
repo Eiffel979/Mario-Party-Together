@@ -358,6 +358,58 @@ MptMp4StepResult result(const MptMp4Game& game) {
   return MPT_MP4_STEP_FAULTED;
 }
 
+// HuARMalloc's in-use ARAM blocks (Party Board patch 0030), each as its ARAM address and bytes, in
+// address order. ADR 0008, "Gate status after the implementation", finding 2: they are game state (cached
+// data dirs, DMA'd from main RAM and read from disc), hashed with the SDK's ARAlloc range, every byte
+// once. A block is clipped to ARAM above the ARAlloc top and below ARAM's end; aramAlias() faults the run
+// before a clip could matter.
+constexpr std::int32_t kArmemBlocksMax = 64;  // armem.c's ARMEM_BLOCK_MAX
+struct ArmemBlock {
+  std::uint32_t addr;
+  std::span<const std::byte> bytes;
+};
+std::vector<ArmemBlock> armemBlocks(const MptMp4Game& game) {
+  std::uint32_t addr[kArmemBlocksMax], size[kArmemBlocksMax];
+  const std::int32_t n = std::min(mpt_mp4_armem_in_use(addr, size, kArmemBlocksMax), kArmemBlocksMax);
+  const std::span<std::byte> aram = game.sdk->aram();
+  const std::uint64_t top = game.sdk->aramInUse().size();
+  std::vector<ArmemBlock> out;
+  std::uint64_t done = top;  // bytes below this are hashed already
+  for (std::int32_t i = 0; i < n; ++i) {
+    const std::uint64_t from = std::max<std::uint64_t>(addr[i], done);
+    const std::uint64_t to = std::min<std::uint64_t>(std::uint64_t{addr[i]} + size[i], aram.size());
+    if (from >= to) continue;
+    out.push_back({addr[i], std::span<const std::byte>(aram.data() + from, to - from)});
+    done = to;
+  }
+  return out;
+}
+
+// The ARAM alias check (finding 2): HuARMalloc's blocks lie in [HU_AMEM_BASE, ARAM's end), above the
+// SDK's ARAlloc range and apart from each other. Below HU_AMEM_BASE is the console's msm region
+// (msmSysInit checks that msm's ARAM fits there); on PC it is unused (MUSY_TARGET_PC). Empty when they
+// do; a fault otherwise, which fails the run.
+std::string aramAlias(const MptMp4Game& game) {
+  std::uint32_t addr[kArmemBlocksMax], size[kArmemBlocksMax];
+  const std::int32_t n = mpt_mp4_armem_in_use(addr, size, kArmemBlocksMax);
+  if (n < 0 || n > kArmemBlocksMax) return "ARAM alias check: HuARMalloc's block list is broken";
+  const std::uint64_t floor = mpt_mp4_armem_floor();
+  const std::uint64_t top = game.sdk->aramInUse().size();
+  const std::uint64_t end = game.sdk->aram().size();
+  if (top > floor)
+    return "ARAM alias check: the SDK's ARAlloc range ends at " + std::to_string(top) +
+           ", above HuARMalloc's floor " + std::to_string(floor);
+  std::uint64_t prev_end = floor;
+  for (std::int32_t i = 0; i < n; ++i) {
+    const std::uint64_t a = addr[i], e = a + size[i];
+    if (a < prev_end || e > end)
+      return "ARAM alias check: HuARMalloc block [" + std::to_string(a) + ", " + std::to_string(e) +
+             ") overlaps msm's ARAM, the SDK's ARAlloc range or another block";
+    prev_end = e;
+  }
+  return {};
+}
+
 MptMp4StepResult step(MptMp4Game* game, const MptMp4InputFrame* input) {
   if (game == nullptr || input == nullptr) return MPT_MP4_STEP_FAULTED;
   game->audio.clear();
@@ -395,6 +447,9 @@ MptMp4StepResult step(MptMp4Game* game, const MptMp4InputFrame* input) {
   } else if (status == mpt::gc::StepStatus::faulted) {
     setFault(*game, Status::faulted, game->sdk->fault());
   }
+  if (game->status == Status::running) {
+    if (std::string alias = aramAlias(*game); !alias.empty()) setFault(*game, Status::faulted, std::move(alias));
+  }
   return result(*game);
 }
 
@@ -426,7 +481,7 @@ void digestBytes(void* user, const void* data, std::size_t size) {
 //  - The game core's and every REL's data range (gameStateRegions).
 //  - Main RAM: each allocated OSAlloc block; a block holding a HuMem heap is walked instead and
 //    only its allocated HuMem blocks count; main RAM outside the OS heaps counts in full.
-//  - ARAM below the ARAlloc top.
+//  - ARAM below the ARAlloc top, and HuARMalloc's in-use blocks above it (each ARAM byte once).
 // Floats in these ranges are hashed as raw bits: within one build and platform the game's NaN bits
 // are as deterministic as everything else (docs/titles/mp4.md §20 on ADR 0008's NaN rule).
 void hashMemory(const MptMp4Game& game, mpt::StateHasher& h) {
@@ -447,6 +502,10 @@ void hashMemory(const MptMp4Game& game, mpt::StateHasher& h) {
   });
   h.update_u64(broken);
   hashRange(h, game.sdk->aramInUse());
+  for (const ArmemBlock& b : armemBlocks(game)) {  // HuARMalloc's in-use blocks (patch 0030)
+    h.update_u64(b.addr);
+    hashRange(h, b.bytes);
+  }
 }
 
 // The module's own fields: determinism inputs and status. Presentation and debug settings never
@@ -755,6 +814,18 @@ std::uint64_t hashMemoryXplat(const MptMp4Game& game, const Canon& c, const Item
   hashCanonRange(aram, game.sdk->aramInUse(), c);
   h.update_u64(aram.digest());
   if (items != nullptr) (*items)("aram", game.sdk->aramInUse().size(), aram.digest());
+  // HuARMalloc's in-use blocks in address order, each by its ARAM address (an emulated-ARAM offset, the
+  // same on every platform) and its canonical words. Free ARAM is left out.
+  mpt::StateHasher armem;
+  std::uint64_t armem_bytes = 0;
+  for (const ArmemBlock& b : armemBlocks(game)) {
+    if (c.counts != nullptr) c.counts->where = "armem " + hex32(b.addr);
+    armem.update_u64(b.addr);
+    hashCanonRange(armem, b.bytes, c);
+    armem_bytes += b.bytes.size();
+  }
+  h.update_u64(armem.digest());
+  if (items != nullptr) (*items)("armem", armem_bytes, armem.digest());
   return h.digest();
 }
 
@@ -865,7 +936,10 @@ std::vector<std::span<std::byte>> deepCoverage(const MptMp4Game& game, std::uint
       add(r.bytes);
     });
   }
-  if (cls == 2 || cls == 3) add(game.sdk->aramInUse());
+  if (cls == 2 || cls == 3) {
+    add(game.sdk->aramInUse());
+    for (const ArmemBlock& b : armemBlocks(game)) add(b.bytes);
+  }
   return spans;
 }
 
@@ -903,6 +977,18 @@ std::byte* perturbByte(MptMp4Game& game, std::uint32_t target) {
       return static_cast<std::byte*>(mpt_mp4_humem_find_stack());
     case MPT_MP4_PERTURB_ARAM:
       return middle(game.sdk->aramInUse());
+    case MPT_MP4_PERTURB_ARMEM: {
+      const std::vector<ArmemBlock> blocks = armemBlocks(game);
+      return blocks.empty() ? nullptr : middle(blocks.front().bytes);
+    }
+    case MPT_MP4_PERTURB_FREE_ARAM: {  // ARAM's last byte, unless a block holds it
+      const std::span<std::byte> aram = game.sdk->aram();
+      const std::vector<ArmemBlock> blocks = armemBlocks(game);
+      if (aram.empty() || game.sdk->aramInUse().size() >= aram.size()) return nullptr;
+      if (!blocks.empty() && blocks.back().bytes.data() + blocks.back().bytes.size() == aram.data() + aram.size())
+        return nullptr;
+      return aram.data() + aram.size() - 1;
+    }
     case MPT_MP4_PERTURB_GLOBAL: {
       std::size_t size = 0;
       return static_cast<std::byte*>(mpt_mp4_registered_global(&size));
@@ -915,7 +1001,7 @@ std::byte* perturbByte(MptMp4Game& game, std::uint32_t target) {
 std::int32_t debugPerturb(MptMp4Game* game, std::uint32_t target) {
   const std::uint32_t cls = target & 0xFF;
   const bool sample = cls == MPT_MP4_PERTURB_SAMPLE;
-  if (!debugAllowed(game) || (!sample && (target < MPT_MP4_PERTURB_GAME_DATA || target > MPT_MP4_PERTURB_STACK)))
+  if (!debugAllowed(game) || (!sample && (target < MPT_MP4_PERTURB_GAME_DATA || target > MPT_MP4_PERTURB_FREE_ARAM)))
     return MPT_MP4_ERR_ARGUMENT;
   // A flip of a sampled byte can change the walk that chose it (a heap header), so the second call
   // restores the remembered byte instead of choosing again.

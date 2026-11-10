@@ -595,3 +595,69 @@ Three further findings came with the report:
   - updates `mp4.md` §11 and §20 as each lands.
 - **qa-reviewer** reviews the current PR against point 2's conditions. For the follow-up, it checks the writer record, the patch, the seed-1 and seed-2 full-party gate runs and the ARAM coverage targets.
 - **No core contract change.** The module ABI and the save-state layout are unchanged. The build fingerprint keeps states from builds before and after these fixes apart, as before.
+
+## Gate status after the writer fixes (architect, 2026-11-09)
+### Context
+runtime-gc-wii did the follow-up of "Gate status after the implementation" on `mp4-layout-gate-writer` (`docs/titles/mp4.md` §11, §20; Party Board patches 0029–0031). Windows:
+- **The writers are found and patched at the source.** Seed 1's two words: `SetRevMtx` (`EnvelopeExec.c:430`, 443–444) concatenates its local `sp38` when `MTXInverse` fails on a singular matrix, so uninitialised stack holding host frames reached the model's reverse matrices. Patch 0029 clears `sp38`, and the synthetic `mp4_envelope` test fails without it. Seed 2's split at frame 71,000: three `m427Dll` `map.c` functions set only `x` and `z` of hit-box Vecs, so `y` carried the low half of a module data address. Nothing reads `y` (read list in §20). Patch 0031, with no synthetic test.
+- **Finding 2 is fixed.** `HuARMalloc`'s blocks overlapped other ARAM on PC, because Party Board's `TARGET_PC` base was `0x20` instead of `HU_AMEM_BASE`. The live overlap was with the SDK's reserved base [0, 0x4000), not with MusyX (point 3's correction). Patch 0030 restores the console base, a per-step alias check faults the run if it happens again, `HuARMalloc`'s in-use blocks are hashed, and the perturbation and conformance targets (72 of 72) and `mp4_armem` cover them.
+- **Met:** every heap module count is 0 over the full seed-1 party, and 0 on seed 2 to frame 111,000. The layout gate on seed 1: both lanes reach `finished` at frame 250,789 with all 250 checkpoints identical. rodata seeds 1–5, `--perturb` and `--conformance` pass. Same-platform hashes are re-recorded (M1 seed 1 `7722e010cc2f09b1`, M4-01 `43198e9219fd8f37`).
+- **Not met: the layout gate on seed 2.** Both lanes give identical trails to frame 111,000 and then crash identically at frame 111,514: an access violation in `byteswap_animbankdata`, from `HuSprAnimRead` ← `Hu3DAnimCreate` ← `RoundItemInit` (`REL/w01Dll/mg_item.c:116`). `main` at `8a1431d`, before this branch, crashes at the same frame and the same address.
+- §11 leaves one question open: msm's own ARAM region, [`ARGetBaseAddress()`, + `aramSize`). Neither allocator hands it out, and it is not hashed. (The report first said it holds MusyX's zero buffer and stream buffers; that is MusyX's Dolphin path, which we do not build. On PC nothing writes the region. See point 3's correction.)
+
+### Decision
+**1. The branch lands now as its own PR. The seed-2 gate is recorded as blocked by the crash, and the crash moves into M4-03.**
+- **Why.** The crash is not caused by this branch and is not a layout word: `main` crashes at the same frame and address, and both lanes fault on the same address, so the bad value does not move with the code layout. It is a port crash on a seed nobody had played that far, which is what M4-03, the board and seed sweep, exists to find and fix. Every other acceptance item of "Gate status after the implementation" is met. Holding the branch would mean growing it with an unrelated crash investigation or stacking a fix branch on it, and both are worse than landing (the same reasoning as that amendment's point 2).
+- **The gate stays open.** The layout gate of "Gate status after the implementation", point 1, is met for seed 1 and **open for seed 2**. Nothing here waives it or drops seed 2.
+- **The PR description must state:**
+  - the writers and patches 0029 and 0031, and the finding 2 fix (patch 0030, the alias check, the `HuARMalloc` hash coverage);
+  - that the layout gate is **met for seed 1 and not met for seed 2**, blocked by the frame-111,514 crash, which reproduces on `main` at `8a1431d` and is moved into M4-03;
+  - the re-recorded hashes, by name and value;
+  - this amendment, as the ruling that allows landing with the seed-2 gate open.
+
+  Nothing in the PR, its commits or the docs claims the gate is met without the seed qualifier.
+- **`docs/titles/mp4.md` must state** (runtime-gc-wii, on this branch before the PR is opened):
+  - §20, seed 2: replace "This goes back to architect with the gate open for seed 2" with the ruling: open, blocked by the crash, which is an M4-03 item, rerun as in point 2 below; cite this amendment.
+  - §11, msm's region: replace "open for architect" with point 3's ruling and its read list.
+  - §20, patch 0031: the regression check is the seed-2 dump-lane run (point 4).
+- **qa-reviewer** reviews against these conditions, against the acceptance of "Gate status after the implementation" except the seed-2 gate, and against point 4's caller check.
+
+**2. The crash and the seed-2 gate, in M4-03 (runtime-gc-wii, reviewed by qa-reviewer).**
+- M4-03 starts from `main` after both this PR and #76 (M4-04) have merged, never from either branch.
+- The frame-111,514 crash is the first M4-03 fix. M4-03 is closed only when, in addition to its sweep table:
+  - `mp4.md` records the crash's cause (function, call path, file and line in the pinned source, class of cause) and the fix, as a Party Board, aurora or SDK patch. It gets a synthetic regression test where the code can be built without game material (for example `byteswap_animbankdata` fed a hand-made anim bank); otherwise the dump-lane rerun is the check.
+  - **The layout gate on seed 2:** ON against OFF over the full party played to `finished`, both lanes exit 0, identical trails. A new split is handled by the procedure of "Gate status after the implementation", point 1.
+  - Every heap module count is 0 over the full seed-2 party, with notes for every hit.
+  - The seed-1 gate and the regression set (rodata seeds 1–5, `--perturb`, `--conformance`, the deep-hash coverage self-test) still pass, and hashes are re-recorded if the fix changes state.
+- **Until the seed-2 gate is met,** "Module words" and "Stale heap bytes" are not complete, and E3c is not run for acceptance. E3c runs for diagnosis are fine.
+- **Order with finding 1** (msm's header overrun). That PR was ordered after the gate follow-up so that two PRs do not re-record hashes at once. It may now go after this PR, before or after the M4-03 crash fix, but the two land one after the other from `main`, not in parallel.
+
+**3. msm's ARAM region: excluded from the state hash, with a reason and a check. Owner: runtime-gc-wii (qa-reviewer reviews).**
+
+*Correction (2026-11-09, same day, after runtime-gc-wii checked the build and architect checked the source).* The first version of this point said the region holds MusyX's zero buffer and stream buffers, and gave "derived audio state that only the DSP reads" as the reason. That describes MusyX's `MUSY_TARGET_DOLPHIN` path. Our MusyX is built with `MUSY_TARGET=0` (`MUSY_TARGET_PC`, `runtimes/gc_wii/musyx/CMakeLists.txt`). In that block of `runtime/hw_aramdma.c`, `aramInit` touches no ARAM, `aramGetZeroBuffer` returns 0, `aramUploadData` is a `memmove` between host pointers, and `aramStoreData` and `aramAllocateStreamBuffer` take `salMalloc` blocks, which are in msm's heap in main RAM and already hashed. Every `ARQPostRequest` and `ARGetBaseAddress` in MusyX is in the Dolphin block, which is compiled out. msm itself (`msm/msmsys.c`) only takes `ARGetBaseAddress` for its size check, with `skipARInit`, and starts no DMA. The ruling below replaces the first version.
+- **The ruling stands: the region is excluded from `state_hash`.** The reason is now stronger and simpler. On PC nothing hands the region out and nothing writes it, so it holds the zeros the arena had at boot (§7) for the whole run. Hashing it would add a constant.
+- **The condition that makes the reason true.** The exclusion holds only while the region is untouched. So:
+  - `mp4.md` §11 keeps the read list (every path in the pinned sources that reads ARAM, none of which reads msm's region) and the correction note runtime-gc-wii added.
+  - **The run check changes: it covers both directions.** Any ARAM DMA, main RAM to ARAM or ARAM to main RAM, whose ARAM range overlaps msm's region faults the step ("ARAM msm region: …"). On PC the region should see no traffic at all, so a write is as much a bug as a read-back, and checking only reads would miss a new writer, whose bytes would then be unhashed state. The check lives next to the alias check in the MP4 module, or in the SDK's DMA path behind an MP4-supplied range, never in `core/`. A synthetic test triggers it in each direction.
+  - If the check ever fires in real play, the exclusion ends: it comes back to architect, and the region is hashed like `HuARMalloc`'s blocks, or its user is moved out.
+- **Not affected: save states.** The region lies in the arena (§7) and is saved and restored with it. The exclusion is from `state_hash` only.
+- **When.** Unchanged. The §11 read list ships with this PR (doc only). The run check and its test are part of M4-03's seed-2 gate work and must be in place before the seed-2 gate is run for acceptance.
+- **The overlap patch 0030 removed** was with the SDK's reserved base, not with MusyX: `HuARMalloc` from `0x20` covered [0, `AR_RESERVED_BYTES` = 0x4000), which the state hash already reads as the `ARAlloc` range. Those bytes were hashed twice and had two owners. Patch 0030 and the alias check (the `ARAlloc` top at or below `HU_AMEM_BASE`, `HuARMalloc` at or above it) close that as ruled. No ruling changes because of it.
+**4. Patch 0031 without a synthetic test: accepted.**
+- "Gate status after the implementation", point 1, allows the dump-lane rerun as the regression check where the code cannot be built without game material, and `m427Dll` cannot be built standalone.
+- The patch sets a field that the §20 read list shows is never read, so the risk is a missed site, not wrong behaviour. **qa-reviewer checks at merge** that §20 names every caller of `fn_1_15F10` and `fn_1_15FD0` in the pinned source, and that each either sets all three components or is one of the three patched sites.
+- **The regression evidence** is the seed-2 run: identical trails from frame 71,000, where the split had been, to frame 111,000, with all module counts 0. The full seed-2 gate in M4-03 (point 2) repeats it to `finished`.
+
+### Alternatives
+- **Fix the crash in this PR first.** Rejected. The crash predates the branch and does not depend on the layout, the branch's own acceptance is met, and fixing it here either grows the PR with an unrelated investigation or stacks a branch on it. M4-03 is where port crashes on new seeds are found and fixed.
+- **Drop seed 2 from the gate, or gate seed 2 only to frame 111,000.** Rejected. Seed 2 was added because one seed alone covered the later party, and a partial run leaves exactly that part uncovered.
+- **Hash msm's region.** Rejected for now: on PC nothing writes it, so it stays all zero, and hashing it adds cost without coverage. The DMA check keeps the exclusion honest, and point 3 says when it ends.
+- **Leave msm's region as an open follow-up.** Rejected: an unanswered coverage question at the gate is what finding 2 was. A ruling with a check is cheap.
+- **Keep point 3's first reason (derived audio state) and its read-back-only check.** Superseded by the correction: the reason described MusyX's Dolphin path, which we do not build, and on PC the stronger invariant (nothing touches the region at all) is the true one and is as cheap to check.
+- **Require a synthetic test for patch 0031.** Rejected: it would need `m427Dll` built without game material, which the pin does not allow, and the rule already provides the dump-lane alternative.
+
+### Consequences
+- **runtime-gc-wii:** the `mp4.md` §11 and §20 edits of point 1, with point 3's read list, on this branch (done in `d52d4c0`; one wording fix left: §11's last read-list sentence names the run check as ARAM-to-main-RAM only, and point 3 now makes it both directions, "ARAM msm region: …"); then the PR as in point 1. After this PR and #76 merge: M4-03 from `main`, the crash first, with the seed-2 gate and the msm-region DMA check in its acceptance; finding 1 one after the other with it.
+- **qa-reviewer:** reviews this PR against point 1's conditions and point 4's caller check. For M4-03, checks the crash record, the seed-2 gate run, and the msm-region DMA check and its test.
+- **architect:** M4-03's "Closed by" in `docs/phases/phase-1.md` gains the seed-2 crash, the seed-2 gate and the msm-region DMA check (same commit as this amendment).
+- **No core contract change.** `kCoreContractVersion`, the module ABI version and the save-state layout are unchanged.

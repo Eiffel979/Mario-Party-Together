@@ -246,6 +246,13 @@ std::optional<MptMp4MemoryUse> Mp4Runtime::memoryUse() const {
   return use;
 }
 
+std::int32_t Mp4Runtime::memoryUseInto(void* buffer, std::uint32_t struct_size) const {
+  if (game_ == nullptr || api_->struct_size < MPT_MP4_API_SIZE_V1_4 || api_->memory_use == nullptr)
+    return MPT_MP4_ERR_STATE;
+  std::memcpy(buffer, &struct_size, sizeof struct_size);  // struct_size is the first field
+  return api_->memory_use(game_, static_cast<MptMp4MemoryUse*>(buffer));
+}
+
 bool Mp4Runtime::readParty(MptMp4Party& out) const {
   if (game_ == nullptr) return false;
   out = MptMp4Party{};

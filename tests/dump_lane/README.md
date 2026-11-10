@@ -136,6 +136,27 @@ mpt_dump_lane --boot mp4 --verify-replay FILE
   goes on from it (no replay, not evidence). State files hold game memory: keep them outside the
   repository.
 
+## Diagnosis: arena watches (`watch.h`, MP4)
+
+```
+mpt_dump_lane --boot mp4 --party ... [--watch-word OFF[,OFF...]] [--find-word VALUE@FRAME]
+              [--watch-write OFF[,OFF...]@FRAME] [--dump-arena FRAME FILE]
+```
+
+The SDK arena sits at a fixed address, so an arena offset (hex) names the same bytes in every run of
+one build. None writes game memory; `--watch-write` can perturb stale stack bytes (see below). None is in the shell or the module.
+- `--find-word VALUE@FRAME` lists every aligned arena word equal to VALUE (hex) after FRAME steps.
+- `--watch-word` prints a word whenever it differs after a step: the first frame a word changes.
+- `--watch-write` (Windows x64) arms a hardware data breakpoint on up to four 8-byte-aligned words
+  from FRAME on and prints, for every write, the new value and the unwound call stack as module
+  offsets (`llvm-nm -n` on the installed `mp4_game.dll` names them). The trap's own handler runs on
+  the game's stack, so a value read from uninitialised stack can differ under it; that is itself
+  evidence of such a read.
+- `--dump-arena FRAME FILE` writes the arena (main RAM, then ARAM) after FRAME steps, for diffing two builds' memory. The file is game memory: keep it outside the repository.
+
+The watches act in `--party` mode only. They work under `--supervise`: the supervisor passes first-chance exceptions, including the data breakpoint's single-step trap, back to the lane. Combine them with `--party-save-at` and `--party-resume` to start near the frame. This is how the
+layout gate's writer was found (`docs/titles/mp4.md` §20).
+
 ## Crash reports (M4-04)
 
 ```

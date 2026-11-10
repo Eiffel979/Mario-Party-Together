@@ -248,3 +248,38 @@ TEST_CASE("ARAM DMA outside ARAM is a fault") {
   auto sdk = boot(g);
   CHECK(step(*sdk) == StepStatus::faulted);
 }
+
+// ABI v1.4 memory_use's I/O counts (qa, #72): every DVD read and every non-empty ARAM transfer counts
+// once, by DMA or by ARQ; a transfer of zero bytes and a failed open do not.
+TEST_CASE("I/O counts: DVD reads and ARAM transfers") {
+  const MemoryFileSource disc = makeDisc();
+  Sdk::IoCounts mid{};
+  Sdk* sdk_ptr = nullptr;
+  Game g{[&] {
+    static DVDFileInfo fi;
+    static std::byte buf[256];
+    static u32 stack[8];
+    CHECK(DVDOpen("a.bin", &fi));
+    CHECK(DVDRead(&fi, buf, 32, 0) == 32);
+    CHECK(DVDRead(&fi, buf, 32, 32) == 32);
+    CHECK_FALSE(DVDOpen("nope.bin", &fi));
+    ARInit(stack, 8);
+    const u32 a = ARAlloc(0x100);
+    ARStartDMA(ARAM_DIR_MRAM_TO_ARAM, reinterpret_cast<uintptr_t>(buf), a, 0x100);
+    ARStartDMA(ARAM_DIR_MRAM_TO_ARAM, reinterpret_cast<uintptr_t>(buf), a, 0);  // nothing to move
+    mid = sdk_ptr->ioCounts();
+    ARStartDMA(ARAM_DIR_ARAM_TO_MRAM, reinterpret_cast<uintptr_t>(buf), a, 0x40);
+    ARFree(nullptr);
+  }};
+  SdkConfig cfg;
+  cfg.files = &disc;
+  auto sdk = boot(g, cfg);
+  sdk_ptr = sdk.get();
+  CHECK(sdk->ioCounts().dvd_reads == 0);
+  CHECK(sdk->ioCounts().aram_transfers == 0);
+  CHECK(step(*sdk) == StepStatus::halted);
+  CHECK(mid.dvd_reads == 2);
+  CHECK(mid.aram_transfers == 1);
+  CHECK(sdk->ioCounts().dvd_reads == 2);
+  CHECK(sdk->ioCounts().aram_transfers == 2);
+}

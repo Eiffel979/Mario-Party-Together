@@ -202,7 +202,11 @@ typedef struct MptMp4MemoryUse {
   uint64_t aram_used;        /* ARAM below the ARAlloc top */
   /* Filled when struct_size covers them (MPT_MP4_MEMORY_USE_SIZE_V1_4_IO): the SDK's DVD reads and
    * ARAM transfers since boot. Host-side counts, never hashed or saved; a frame in which either grows
-   * is a load frame for frame-time measurements (ADR 0008, "Stale heap bytes", point 5). */
+   * is a load frame for frame-time measurements (ADR 0008, "Stale heap bytes", point 5).
+   * The module writes back the struct_size it filled, the smaller of the caller's and its own. A module
+   * from before the I/O counts (v1.4 without them) echoes the caller's struct_size even when it is
+   * larger and leaves both counts zero, so an echoed MPT_MP4_MEMORY_USE_SIZE_V1_4_IO alone does not
+   * show that they were filled. */
   uint64_t dvd_reads;
   uint64_t aram_transfers;
 } MptMp4MemoryUse;
@@ -303,7 +307,11 @@ typedef enum MptMp4PerturbTarget {
   /* v1.3: MPT_MP4_PERTURB_SAMPLE | (k << 8) flips a byte chosen from k alone among everything the deep
    * hash digests as memory, in class k % 4: game data, main RAM (heap blocks and headers), ARAM in
    * use, or all of them. The next call with the same target restores that byte. */
-  MPT_MP4_PERTURB_SAMPLE = 7
+  MPT_MP4_PERTURB_SAMPLE = 7,
+  /* Later targets (ADR 0008, "Gate status after the implementation", finding 2). A module from before
+   * them refuses them with MPT_MP4_ERR_ARGUMENT. */
+  MPT_MP4_PERTURB_ARMEM = 8,     /* the first in-use HuARMalloc ARAM block (middle byte) */
+  MPT_MP4_PERTURB_FREE_ARAM = 9  /* ARAM's last byte when no block holds it: must NOT count */
 } MptMp4PerturbTarget;
 
 /* v1.0 sizes (x86-64). A caller's struct_size must be at least these. */
