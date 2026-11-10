@@ -704,6 +704,13 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
     raw.struct_size = sizeof raw;
     if (mp4 != nullptr) mp4->readParty(raw);
     tracker.observe(f + 1, {party.phase, raw.overlay_name, party.turn});
+    // The board the party really plays (M4-03): once a party is in progress, the module's board read
+    // must be the one asked for, or the run fails (a wheel window that missed would play board 0).
+    if (mp4 != nullptr && (raw.flags & MPT_MP4_PARTY_IN_PROGRESS) != 0 && raw.board != options.script.board) {
+      failure = "played board " + std::to_string(raw.board) + ", not --party-board " +
+                std::to_string(options.script.board);
+      break;
+    }
     mpt::dump_lane::crash_note_party(phase_name(party.phase), raw.overlay_name, raw.board, party.turn, party.max_turns);
     // The Director's phase and the module's raw read, whenever either changes (the evidence for the
     // end-of-party flags, docs/titles/mp4.md section 21).
@@ -1140,6 +1147,15 @@ int main(int argc, char** argv) {
       boot_options.unlock_bowser = true;
     } else if (arg == "--party-board" && has_value) {
       boot_options.script.board = static_cast<std::int32_t>(std::strtol(argv[++i], nullptr, 10));
+      if (boot_options.script.wheel_to == 0) {
+        // The measured window (docs/titles/mp4.md, M4-03): the wheel takes the stick from frame 1,448
+        // of mentDll on; one kBoardWheelPulse slot per move, then 30 frames before A confirms.
+        // --party-wheel (after --party-board) overrides it.
+        const int moves = mpt::dump_lane::board_wheel_moves(boot_options.script.board);
+        boot_options.script.wheel_from = mpt::dump_lane::kBoardWheelFrom;
+        boot_options.script.wheel_to = mpt::dump_lane::kBoardWheelFrom + 30u +
+            mpt::dump_lane::kBoardWheelPulse * static_cast<std::uint64_t>(moves < 0 ? -moves : moves);
+      }
     } else if (arg == "--party-wheel" && has_value) {
       // FROM:TO, frames since mentDll started
       const std::string w = argv[++i];

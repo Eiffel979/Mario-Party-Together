@@ -225,6 +225,7 @@ TEST_CASE("dump lane: the party autopilot moves mentDll's board wheel only in it
   }
   script.board = 1;  // two moves left
   CHECK(pad(500).stick_x == -32767);
-  CHECK(pad(530).stick_x == -32767);
-  CHECK(pad(560).stick_x == 0);
+  CHECK(pad(530).stick_x == 0);
+  CHECK(pad(500 + dump_lane::kBoardWheelPulse).stick_x == -32767);
+  CHECK(pad(500 + 2 * dump_lane::kBoardWheelPulse).stick_x == 0);
 }

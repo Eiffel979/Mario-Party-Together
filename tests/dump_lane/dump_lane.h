@@ -171,10 +171,16 @@ struct PartyScript {
   std::int32_t board = 0;
   // No input before this frame (the boot logos).
   std::uint64_t boot_wait = 900;
-  // The wheel's window in mentDll, as frames since mentDll started (measured on seed 1; see
-  // docs/titles/mp4.md section 21). Outside it the autopilot never presses a direction.
+  // The wheel's window in mentDll, as frames since mentDll started (kBoardWheelFrom by default with
+  // --party-board; see docs/titles/mp4.md, M4-03). Outside it the autopilot never pulls the stick.
   std::uint64_t wheel_from = 0, wheel_to = 0;
 };
+
+// The first frame of mentDll (frames since it started) at which the board wheel takes the stick, with
+// the autopilot's A pulses before it (measured on seeds 1 and 2; docs/titles/mp4.md, M4-03).
+inline constexpr std::uint64_t kBoardWheelFrom = 1448;
+// Frames between the autopilot's stick pulses on the wheel, one move each.
+inline constexpr std::uint64_t kBoardWheelPulse = 60;
 
 // mentDll's wheel order: position -> GWSystem.board (mentDll main.c, fn_1_99CC); it starts at
 // position 2. Returns the signed number of moves from the default to `board`, or 0 if not listed.
@@ -221,14 +227,15 @@ inline PadState party_autopilot(const PartyScript& script, std::uint64_t frame, 
   }
   if (overlay == "mentDll" && key.phase == PartyPhase::none && script.board != 0 &&
       since_change >= script.wheel_from && since_change < script.wheel_to) {
-    // One 4-frame stick pulse per 30 frames, one per move: the wheel takes a held direction once it
-    // has been idle for 21 frames, then waits again, so each pulse moves it exactly one board. It
+    // One 4-frame stick pulse per kBoardWheelPulse frames, one per move: the wheel takes a held direction
+    // once it has been idle for 21 frames and its board models have settled (measured: 30 frames is too
+    // short), then waits again, so each pulse moves it exactly one board. It
     // reads the stick (|x| >= 50) or HuPadBtn's d-pad bits, but Party Board's pad.c masks the d-pad out
     // of HuPadBtn, so only the stick moves it. No A is pressed in the window.
     const int moves = board_wheel_moves(script.board);
     const std::uint64_t in_window = since_change - script.wheel_from;
     const std::uint64_t pulses = static_cast<std::uint64_t>(moves < 0 ? -moves : moves);
-    if (in_window / 30 < pulses && in_window % 30 < 4) pad.stick_x = moves < 0 ? -32767 : 32767;
+    if (in_window / kBoardWheelPulse < pulses && in_window % kBoardWheelPulse < 4) pad.stick_x = moves < 0 ? -32767 : 32767;
     return pad;
   }
   if (since_change >= 30 && since_change % 30 < 4) pad.buttons |= kButtonA;
