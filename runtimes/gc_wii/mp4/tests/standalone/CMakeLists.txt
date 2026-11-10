@@ -1,6 +1,6 @@
 # Unit checks of the game module's own machinery that need no Party Board checkout, so public CI runs
-# them: REL isolation and the pristine-data restore, the module's symbol-table reader, and the
-# copy-destination trap. Added by
+# them: REL isolation and the pristine-data restore, the module's symbol-table reader, the ARAM
+# checks and the copy-destination trap. Added by
 # mp4/tests (module builds) or directly by runtimes/gc_wii (every Clang build with tests).
 set(_mp4 "${CMAKE_CURRENT_LIST_DIR}/../..")
 include("${_mp4}/tools/MptMp4Rel.cmake")
@@ -52,6 +52,13 @@ target_link_libraries(mpt_mp4_function_starts_tests PRIVATE ${CMAKE_DL_LIBS})
 add_dependencies(mpt_mp4_function_starts_tests mpt_mp4_function_starts_stub)
 add_test(NAME mp4_function_starts
          COMMAND mpt_mp4_function_starts_tests "$<TARGET_FILE:mpt_mp4_function_starts_stub>")
+
+# The per-step ARAM alias check (finding 2) and msm's guarded region (ADR 0008, "Gate status after the
+# writer fixes", point 3), on synthetic block lists; the SDK's own tests cover the DMA guard itself.
+add_executable(mpt_mp4_aram_checks_tests "${_mp4}/tests/test_aram_checks.cpp" "${_mp4}/src/aram_checks.cpp")
+target_include_directories(mpt_mp4_aram_checks_tests PRIVATE "${_mp4}/src")
+target_compile_options(mpt_mp4_aram_checks_tests PRIVATE ${_warn})
+add_test(NAME mp4_aram_checks COMMAND mpt_mp4_aram_checks_tests)
 
 # The copy-destination debug trap on the real GXCopyTex (null renderer), when the GX layer is built.
 if(TARGET mpt::gx)

@@ -218,6 +218,7 @@ add_library(mp4_game SHARED
   src/libco_stats.c
   src/game_data.c
   src/abi.cpp
+  src/aram_checks.cpp
   src/copy_trap.cpp)
 include("${CMAKE_CURRENT_SOURCE_DIR}/tools/MptMp4ModuleSymbols.cmake")
 target_link_libraries(mp4_game PRIVATE mpt_mp4_game_flags ${MPT_MP4_REL_LIBS} mpt::gx mpt::musyx mpt_mp4_module_symbols)
@@ -298,7 +299,8 @@ if(MPT_BUILD_TESTS)
   add_subdirectory(tests)
   # Link checks on the game code (the DOL objects and every isolated REL): no host libm
   # transcendental or fma (ADR 0008 section 5), and no host threads, clocks, RNG or heap (ADR 0008
-  # sections 1, 2 and 7). Host-side files (abi.cpp, rel_loader.c, libco_stats.c, copy_trap.cpp) are not game code.
+  # sections 1, 2 and 7). Host-side files (abi.cpp, aram_checks.cpp, rel_loader.c, libco_stats.c, copy_trap.cpp) are not
+  # game code.
   # Hundreds of objects: the list goes through a file, not the command line.
   string(REPLACE ";" "\n" _rel_lines "${MPT_MP4_REL_LIBS}")
   file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/mp4_game_code.txt"
