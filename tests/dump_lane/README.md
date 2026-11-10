@@ -136,6 +136,32 @@ mpt_dump_lane --boot mp4 --verify-replay FILE
   goes on from it (no replay, not evidence). State files hold game memory: keep them outside the
   repository.
 
+## Crash reports (M4-04)
+
+```
+mpt_dump_lane --supervise [--crash-report FILE] --boot mp4 ...
+```
+
+- Without `--supervise` the lane reports what it can in-process (`crash_report.h`): a fatal exception,
+  `abort`, `std::terminate` and CRT invalid-parameter failures print the breadcrumbs below and a
+  module-relative stack on stderr. A `/GS` stack-cookie failure (0xC0000409) skips all of that.
+- `--supervise` (Windows) runs the lane as a child under a small debugger (`supervise.h`) that also
+  sees fail-fasts. On any crash it prints a report on stdout, and with `--crash-report FILE` writes it
+  to FILE (outside the repository; removed when the run starts, so it exists only after a crash). The
+  exit code is the child's.
+- A report has: the status (exception or fail-fast code), the run's mode, seed and board, the frame
+  being stepped with the party phase, turn and running overlay, the last checkpoint's frame and state
+  hash, the faulting address, the `culprit` (the first frame outside the CRT's failure machinery: for
+  /GS, the function whose cookie broke) and the stack. Frames are `module+offset symbol+offset`;
+  `mp4_game.dll` is named from its COFF symbol table. No game text and no paths, so a report can be
+  quoted in an issue or `docs/titles/mp4.md`.
+- On Linux the lane defines `__stack_chk_fail` itself (`stack_chk_fail.cpp`) and writes the same
+  breadcrumbs and the failing function to stderr and `--crash-report FILE`; `--supervise` is accepted
+  and runs in-process. This path is compile-only until the Linux runtime work resumes (M4-U2).
+- `--crash-selftest MODULE gs|av|abort` needs no dump: it crashes the synthetic stub
+  `tests/mp4_loader/overrun_stub.cpp` with made-up breadcrumbs. CTest runs it under `--supervise` on
+  Windows (`dump_lane_crash_report_*`, `crash_report_check.cmake`).
+
 ## Paths outside the repository
 
 The lane refuses to start if any of these lies inside the repository (`path_guard.h`, tested by
@@ -146,6 +172,7 @@ The lane refuses to start if any of these lies inside the repository (`path_guar
 | `MPT_DUMP_DIR` | your dumps | required |
 | `--capture DIR` | frame captures | off |
 | `--replay FILE`, `--party-save-at N FILE` | a party's replay, a diagnostic state | off |
+| `--crash-report FILE` | a crash report (holds no game material, but follows the same rule) | off |
 | `MPT_BUILD_CACHE` | the extracted disc and the built game module | the shell's cache, `<user dir>/cache` (below) |
 | `MPT_SOURCE_CACHE` | pinned source checkouts (`<name>/<commit>`), used instead of fetching | off |
 

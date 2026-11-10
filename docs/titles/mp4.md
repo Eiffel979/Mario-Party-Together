@@ -1128,7 +1128,7 @@ The phase is `board` on the instruction and results screens, and `minigame` with
 **Open:**
 - `--party-board` for boards other than the default: measure mentDll's wheel window.
 - E1 still needs 4 human seats through the launcher UI, and E3c the Linux run of this replay.
-- **Crash reports.** `mpt_dump_lane` prints a module-relative stack on a fatal exception and on `abort`, `std::terminate` and CRT invalid-parameter fail-fasts (`crash_report.h`); `llvm-nm -n` on the installed `mp4_game.dll` names the frames. A `/GS` stack-cookie failure skips every in-process hook, so it still ends the run without a report; the seed 5 stack came from running the lane under a debugger.
+- **Crash reports (M4-04, done).** `mpt_dump_lane --supervise [--crash-report FILE]` reports every crash, `/GS` fail-fasts included: the status and fail-fast code, mode, seed, board, frame, phase, turn, overlay, the last checkpoint's frame and hash, and the stack as `module+offset symbol+offset` (`mp4_game.dll` named from its COFF symbol table), with the `culprit` frame for a /GS failure. No game text or paths. Run the M4-03 sweep under it. Without `--supervise` the in-process hooks still cover exceptions, `abort`, `std::terminate` and invalid parameters. The Linux path (`__stack_chk_fail`) builds but has not run yet (M4-U2). See `tests/dump_lane/README.md`.
 
 ## 22. E1 sign-off checklist (M4-10)
 
