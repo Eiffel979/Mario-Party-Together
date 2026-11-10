@@ -45,6 +45,7 @@
 #include "crash_report.h"
 #include "path_guard.h"
 #include "png.h"
+#include "supervise.h"
 #include "mpt/core/title_id.h"
 #include "real_titles.h"
 #include "watch.h"
@@ -669,6 +670,7 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
       std::printf("dump lane: saved the state at frame %llu: %s\n", static_cast<unsigned long long>(f),
                   write_bytes(options.party_save, out) ? "ok" : "FAILED");
     }
+    mpt::dump_lane::crash_note_frame(f);  // crash report breadcrumbs (crash_report.h)
     mpt::InputFrame in;
     in.frame = f;
     in.pads[0] = mpt::dump_lane::party_autopilot(options.script, f, tracker.key(), tracker.sinceChange());
@@ -691,6 +693,7 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
     raw.struct_size = sizeof raw;
     if (mp4 != nullptr) mp4->readParty(raw);
     tracker.observe(f + 1, {party.phase, raw.overlay_name, party.turn});
+    mpt::dump_lane::crash_note_party(phase_name(party.phase), raw.overlay_name, raw.board, party.turn, party.max_turns);
     // The Director's phase and the module's raw read, whenever either changes (the evidence for the
     // end-of-party flags, docs/titles/mp4.md section 21).
     char line[192];
@@ -708,6 +711,7 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
       const std::uint64_t hash = session->runtime().stateHash();
       hash_time += std::chrono::steady_clock::now() - t0;
       ++hash_calls;
+      mpt::dump_lane::crash_note_checkpoint(f + 1, hash);
       if (mp4 != nullptr) {
         if (const std::optional<MptMp4MemoryUse> use = mp4->memoryUse()) {
           peak_osalloc.take(use->osalloc_used, f + 1);
@@ -864,6 +868,12 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir, cons
     std::printf("dump lane: no runtime registered for %s\n", options.title.c_str());
     return 1;
   }
+  mpt::dump_lane::crash_note_run(options.party                    ? "party"
+                                 : !options.verify_replay.empty() ? "verify-replay"
+                                 : options.save_load_diff != 0    ? "save-load-diff"
+                                 : options.conformance            ? "conformance"
+                                                                  : "boot",
+                                 options.seed);  // crash report breadcrumbs
   auto dump = resolve_dump(*title, dump_dir, cache);
   if (mpt::Result* failure = std::get_if<mpt::Result>(&dump)) {
     std::printf("dump lane: %s\n", failure->error().c_str());
@@ -928,6 +938,7 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir, cons
   std::uint64_t hash_calls = 0, deep_calls = 0;
   std::chrono::steady_clock::duration hash_time{}, deep_time{};
   for (std::uint64_t f = 0; f < options.frames; ++f) {
+    mpt::dump_lane::crash_note_frame(f);  // crash report breadcrumbs (crash_report.h)
     input.frame = f;
     input.pads[0] = scripted_pad(options, f);
     runtime->stepFrame(input);
@@ -939,6 +950,8 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir, cons
       if (mp4->readParty(raw)) {
         const mpt::PartySnapshot snap = mpt::mp4::snapshot_of(raw);
         static const char* const kPhases[] = {"none", "setup", "board", "minigame", "results", "finished"};
+        mpt::dump_lane::crash_note_party(kPhases[static_cast<int>(snap.phase)], raw.overlay_name, raw.board, raw.turn,
+                                         raw.max_turns);
         char line[256];
         std::snprintf(line, sizeof line, "overlay %s flags 0x%02x phase %s board %d turn %d/%d minigame %s",
                       raw.overlay_name[0] != 0 ? raw.overlay_name : "-", raw.flags,
@@ -963,6 +976,7 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir, cons
       const std::uint64_t hash = runtime->stateHash();
       hash_time += std::chrono::steady_clock::now() - t0;
       ++hash_calls;
+      mpt::dump_lane::crash_note_checkpoint(f + 1, hash);
       std::printf("frame %llu hash %016llx video %ux%u\n", static_cast<unsigned long long>(f + 1),
                   static_cast<unsigned long long>(hash), video.width, video.height);
       const std::uint64_t cap = options.capture_every != 0 ? options.capture_every : options.every;
@@ -1057,7 +1071,11 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir, cons
 int main(int argc, char** argv) {
   // Unbuffered, so a crash still leaves everything printed before it (the boot mode is a diagnostic).
   std::setvbuf(stdout, nullptr, _IONBF, 0);
+  // --supervise [--crash-report FILE]: rerun as a child and report the crashes it cannot (supervise.h).
+  if (const std::optional<int> supervised = mpt::dump_lane::supervise_if_asked(argc, argv, MPT_REPO_ROOT))
+    return *supervised;
   mpt::dump_lane::install_crash_report();  // a crash prints its stack (crash_report.h)
+  if (const std::optional<int> selftest = mpt::dump_lane::crash_selftest_if_asked(argc, argv)) return *selftest;
   BootOptions boot_options;
   bool frames_given = false;
   for (int i = 1; i < argc; ++i) {
@@ -1156,7 +1174,9 @@ int main(int argc, char** argv) {
                   "                              [--watch-word OFF,...] [--find-word VALUE@FRAME]\n"
                   "                              [--watch-write OFF,...@FRAME] [--dump-arena FRAME FILE]]\n"
                   "                     [--verify-replay FILE]]\n"
-                  "       mpt_dump_lane --layout-probe\n");
+                  "       mpt_dump_lane --layout-probe\n"
+                  "       mpt_dump_lane --supervise [--crash-report FILE] <any of the above>\n"
+                  "       mpt_dump_lane [--supervise [--crash-report FILE]] --crash-selftest MODULE gs|av|abort\n");
       return 2;
     }
   }
