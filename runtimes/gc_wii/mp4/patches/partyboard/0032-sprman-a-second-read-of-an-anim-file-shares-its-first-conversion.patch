@@ -1,0 +1,83 @@
+Apply order 0032 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+sprman: a second HuSprAnimRead of one anim file shares its first conversion, as on the console (MPT_PC)
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+M4-03, the seed 2 crash (ADR 0008, "Gate status after the writer fixes", point 2). On the console
+HuSprAnimRead relocates an anim file in place; reading the same file again finds it relocated
+(bank & ~0xFFFF) and shares it with useNum++. Party Board's BYTESWAPPING path converts into a new
+ANIMDATA instead, and swaps the file's header, banks, patterns, bitmaps, frames and layers in place
+on the way, with no mark. A second read of the same file swapped them all back to big-endian: the
+new ANIMDATA got bankNum 0x0E00-style counts and a byteswapped bank offset (0x14 -> 0x14000000), and
+byteswap_animbankdata read 320 MB past the file. w01Dll's RoundItemInit (mg_item.c, the item
+carousel on Toad's Midway Madness) loads w01 data 28 once and calls Hu3DAnimCreate on it for each of
+its four item models, so its second call crashed (seed 2, turn 11). The frames and layers the first
+ANIMDATA points at stay in the file, so even without the crash a second conversion would have
+corrupted the first one's frames.
+
+The first read now leaves MPT_ANIM_FILE_CONVERTED and the converted ANIMDATA's address in the file's
+header, which nothing reads once it is converted, and a later read of the file shares that ANIMDATA
+with useNum++, exactly as the console shares the relocated file. The mark's first half is the file's
+bankNum and patNum, which are never negative on disc. Synthetic test: mp4_sprman_anim (a hand-made
+anim file read twice and four times). Unconditional on PC.
+
+diff --git a/include/game/animdata.h b/include/game/animdata.h
+index 3853f02..8573e0e 100644
+--- a/include/game/animdata.h
++++ b/include/game/animdata.h
+@@ -98,6 +98,10 @@ typedef struct AnimData_s {
+ 
+ #ifdef BYTESWAPPING
+ #define ANIM_DATA_ALLOCATION_VALID 0xD3D3D3D3
++#ifdef MPT_PC
++/* An anim file HuSprAnimRead has converted: its first word, followed by the ANIMDATA at offset 8. */
++#define MPT_ANIM_FILE_CONVERTED 0xD3D3D3D3
++#endif
+ #endif
+ 
+ #endif
+diff --git a/src/game/sprman.c b/src/game/sprman.c
+index 7d05778..9b77e81 100644
+--- a/src/game/sprman.c
++++ b/src/game/sprman.c
+@@ -230,6 +230,25 @@ ANIMDATA *HuSprAnimRead(void *data)
+         anim->useNum++;
+         return anim;
+     }
++#ifdef MPT_PC
++    /* The console relocates an anim file in place, so reading the same file again finds it relocated
++     * and shares it (useNum++, above). The byteswapping path converts into a new ANIMDATA instead,
++     * swapping the file's header, banks, patterns, frames and layers in place as it goes, so a second
++     * read of the same file swapped them all back to big-endian and read the banks from a byteswapped
++     * offset (RoundItemInit's four Hu3DAnimCreate on one file: an access violation in
++     * byteswap_animbankdata). The first read leaves a mark and the converted ANIMDATA in the file's
++     * header, which nothing reads after conversion; a later read shares that ANIMDATA as the console
++     * does. The mark's first half is bankNum and patNum on disc, which are never negative. */
++    {
++        u32 mark;
++        memcpy(&mark, data, sizeof(mark));
++        if (mark == MPT_ANIM_FILE_CONVERTED) {
++            memcpy(&anim, (u8 *)data + 8, sizeof(anim));
++            anim->useNum++;
++            return anim;
++        }
++    }
++#endif
+     anim = HuMemDirectMalloc(HEAP_DATA, sizeof(ANIMDATA));
+     byteswap_animdata(data, anim);
+     anim->valid = ANIM_DATA_ALLOCATION_VALID;
+@@ -293,6 +312,15 @@ ANIMDATA *HuSprAnimRead(void *data)
+         bmp->data = (void *)((uintptr_t)bmp->data+(uintptr_t)data);
+     }
+     anim->useNum = 0;
++#if defined(BYTESWAPPING) && defined(MPT_PC)
++    {
++        /* The file's header is in host order now and copied into anim; mark it converted (above). */
++        u32 mark = MPT_ANIM_FILE_CONVERTED;
++        memset(data, 0, 16);
++        memcpy(data, &mark, sizeof(mark));
++        memcpy((u8 *)data + 8, &anim, sizeof(anim));
++    }
++#endif
+     return anim;
+ }
+ 
