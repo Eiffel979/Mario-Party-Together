@@ -19,15 +19,16 @@
 // The report holds numbers, module file names (never their folders) and symbol names: no game text and
 // no paths. It goes to stdout and, with --crash-report FILE, to FILE (outside the repository, like
 // every path the lane writes). FILE is removed when the run starts and written only on a crash, so it
-// never describes an older run. The supervisor returns the child's exit code.
+// never describes an older run; an existing FILE that is not a crash report is refused, never removed.
+// FILE comes from the wide command line on Windows. The supervisor returns the child's exit code.
 //
 // The debugger changes nothing the game sees: the child gets _NO_DEBUG_HEAP=1, so its heap is the same
 // as an unsupervised run's, and nothing in the runtime reads IsDebuggerPresent.
 //
 // On Linux, `--supervise` runs the lane in-process: the stack protector's failure path,
 // __stack_chk_fail, is the lane's own (stack_chk_fail.cpp) and writes the same breadcrumbs and the
-// failing function to stderr and --crash-report FILE. Compile-only until the Linux runtime work is
-// unblocked (phase-1.md M4-U2).
+// failing function to stderr and --crash-report FILE. CI runs it through the gs self-test; a game run
+// waits on the Linux runtime work (phase-1.md M4-U2).
 //
 // `--crash-selftest MODULE gs|av|abort` (no dump needed) loads a synthetic stub module
 // (tests/mp4_loader/overrun_stub.cpp), notes made-up breadcrumbs and makes the stub crash: a stack
@@ -62,6 +63,13 @@
 
 #include <algorithm>
 #include <map>
+// Older SDKs' dbghelp.h may lack these two (values from the 10.0.26100 SDK's DbgHelp.h).
+#ifndef SYMOPT_IGNORE_NT_SYMPATH
+#define SYMOPT_IGNORE_NT_SYMPATH 0x00001000
+#endif
+#ifndef SYMOPT_DISABLE_SRVSTAR_ON_STARTUP
+#define SYMOPT_DISABLE_SRVSTAR_ON_STARTUP 0x40000000
+#endif
 #elif !defined(_WIN32)
 #include <dlfcn.h>
 #endif
@@ -78,6 +86,23 @@ namespace supervise_detail {
 inline std::string base_name(const std::string& path) {
   const std::size_t slash = path.find_last_of("\\/");
   return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
+inline constexpr char kReportHeader[] = "dump lane crash report v1";
+
+// True when `file` begins with a crash report's header: only such a file may be replaced.
+inline bool starts_with_report_header(const std::filesystem::path& file) {
+  std::FILE* f = nullptr;
+#if defined(_WIN32)
+  if (_wfopen_s(&f, file.c_str(), L"rb") != 0) f = nullptr;
+#else
+  f = std::fopen(file.c_str(), "rb");
+#endif
+  if (f == nullptr) return false;
+  char head[sizeof kReportHeader - 1] = {};
+  const bool full = std::fread(head, 1, sizeof head, f) == sizeof head;
+  std::fclose(f);
+  return full && std::memcmp(head, kReportHeader, sizeof head) == 0;
 }
 
 inline bool write_report_file(const std::filesystem::path& file, const std::string& report) {
@@ -290,15 +315,27 @@ inline const char* fail_fast_name(ULONG_PTR code) {
   }
 }
 
+// A real fail-fast (__fastfail, a /GS cookie failure among them): STATUS_STACK_BUFFER_OVERRUN raised as
+// noncontinuable, or carrying the fail-fast code. Anything else with that code is an ordinary exception
+// and, first chance, goes back to the child like any other.
+inline bool is_fail_fast(const EXCEPTION_RECORD& er) {
+  return er.ExceptionCode == STATUS_STACK_BUFFER_OVERRUN &&
+         ((er.ExceptionFlags & EXCEPTION_NONCONTINUABLE) != 0 || er.NumberParameters >= 1);
+}
+
 // The report on a stopped child: status, breadcrumbs, the faulting address and the stack.
+// `search_path` is DbgHelp's whole symbol path: the folders of the child's own modules, local only.
+// That explicit path plus SYMOPT_IGNORE_NT_SYMPATH is the guarantee that a srv* entry in
+// _NT_SYMBOL_PATH cannot stall a report on the network. SYMOPT_DISABLE_SRVSTAR_ON_STARTUP is set too,
+// as a belt-and-braces extra, not as the guarantee.
 inline std::string exception_report(HANDLE process, DWORD thread_id, const EXCEPTION_RECORD& er, bool first_chance,
-                                    const CrashCrumbs& crumbs) {
+                                    const CrashCrumbs& crumbs, const std::wstring& search_path) {
   std::string out = "dump lane crash report v1\n";
   char line[512];
   std::snprintf(line, sizeof line, "status 0x%08lx %s%s", static_cast<unsigned long>(er.ExceptionCode),
                 status_name(er.ExceptionCode), first_chance ? "" : ", not handled");
   out += line;
-  if (er.ExceptionCode == STATUS_STACK_BUFFER_OVERRUN && er.NumberParameters >= 1) {
+  if (is_fail_fast(er) && er.NumberParameters >= 1) {
     std::snprintf(line, sizeof line, ", fail-fast code %llu %s",
                   static_cast<unsigned long long>(er.ExceptionInformation[0]), fail_fast_name(er.ExceptionInformation[0]));
     out += line;
@@ -313,8 +350,9 @@ inline std::string exception_report(HANDLE process, DWORD thread_id, const EXCEP
   format_crumbs(crumbs, crumb_text, sizeof crumb_text);
   out += crumb_text;
 
-  SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_FAIL_CRITICAL_ERRORS | SYMOPT_NO_PROMPTS);
-  const bool symbols = SymInitializeW(process, nullptr, TRUE) != FALSE;
+  SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_FAIL_CRITICAL_ERRORS | SYMOPT_NO_PROMPTS |
+                SYMOPT_IGNORE_NT_SYMPATH | SYMOPT_DISABLE_SRVSTAR_ON_STARTUP);
+  const bool symbols = SymInitializeW(process, search_path.empty() ? L"." : search_path.c_str(), TRUE) != FALSE;
   Namer namer{process, {}};
   const DWORD64 fault = reinterpret_cast<DWORD64>(er.ExceptionAddress);
   out += "fault " + namer.text(fault) + "\n";
@@ -407,6 +445,42 @@ inline void append_quoted(std::wstring& line, const std::wstring& arg) {
   line += L'"';
 }
 
+// The folder of a module the child loaded, for the symbol path; "" for one in the Windows folder
+// (system DLLs, whose symbols would come only from a symbol server).
+inline std::wstring module_folder(HANDLE file) {
+  if (file == nullptr) return {};
+  wchar_t path[MAX_PATH * 4];
+  const DWORD n = GetFinalPathNameByHandleW(file, path, static_cast<DWORD>(std::size(path)), FILE_NAME_NORMALIZED);
+  if (n == 0 || n >= std::size(path)) return {};
+  std::wstring folder(path, n);
+  if (folder.rfind(L"\\\\?\\UNC\\", 0) == 0) folder = L"\\\\" + folder.substr(8);
+  else if (folder.rfind(L"\\\\?\\", 0) == 0) folder = folder.substr(4);
+  const std::size_t slash = folder.find_last_of(L'\\');
+  if (slash == std::wstring::npos) return {};
+  folder.resize(slash);
+  wchar_t windows[MAX_PATH];
+  const UINT w = GetSystemWindowsDirectoryW(windows, MAX_PATH);
+  if (w > 0 && w < MAX_PATH && folder.size() >= w && CompareStringOrdinal(folder.c_str(), static_cast<int>(w), windows,
+                                                                           static_cast<int>(w), TRUE) == CSTR_EQUAL &&
+      (folder.size() == w || folder[w] == L'\\'))
+    return {};
+  return folder;
+}
+
+inline void add_search_folder(std::wstring& search_path, const std::wstring& folder) {
+  if (folder.empty() || folder.find(L';') != std::wstring::npos) return;
+  for (std::size_t at = 0; at <= search_path.size();) {
+    const std::size_t end = std::min(search_path.find(L';', at), search_path.size());
+    if (end - at == folder.size() &&
+        CompareStringOrdinal(search_path.c_str() + at, static_cast<int>(end - at), folder.c_str(),
+                             static_cast<int>(folder.size()), TRUE) == CSTR_EQUAL)
+      return;
+    at = end + 1;
+  }
+  if (!search_path.empty()) search_path += L';';
+  search_path += folder;
+}
+
 inline int run_supervised(const std::vector<std::wstring>& child_args, const std::filesystem::path& report_file) {
   // The shared breadcrumbs, zeroed; the child writes them (crash_report.h).
   wchar_t mapping_name[96];
@@ -445,6 +519,12 @@ inline int run_supervised(const std::vector<std::wstring>& child_args, const std
   DebugSetProcessKillOnExit(TRUE);  // if the supervisor dies, so does the child
 
   std::string report;
+  std::wstring search_path;  // the folders of the child's modules (exception_report)
+  {
+    const std::wstring exe_path(exe, exe_length);
+    const std::size_t slash = exe_path.find_last_of(L'\\');
+    if (slash != std::wstring::npos) add_search_folder(search_path, exe_path.substr(0, slash));
+  }
   bool loader_breakpoint_seen = false;
   DWORD exit_code = 1;
   for (bool done = false; !done;) {
@@ -464,8 +544,8 @@ inline int run_supervised(const std::vector<std::wstring>& child_args, const std
         }
         // A fail-fast reaches only the debugger, in either chance; anything else is fatal only
         // once the child has had its chance to handle it.
-        if ((!first || er.ExceptionCode == STATUS_STACK_BUFFER_OVERRUN) && report.empty())
-          report = exception_report(pi.hProcess, ev.dwThreadId, er, first, *crumbs);
+        if ((!first || is_fail_fast(er)) && report.empty())
+          report = exception_report(pi.hProcess, ev.dwThreadId, er, first, *crumbs, search_path);
         reply = DBG_EXCEPTION_NOT_HANDLED;
         break;
       }
@@ -473,6 +553,7 @@ inline int run_supervised(const std::vector<std::wstring>& child_args, const std
         if (ev.u.CreateProcessInfo.hFile != nullptr) CloseHandle(ev.u.CreateProcessInfo.hFile);
         break;
       case LOAD_DLL_DEBUG_EVENT:
+        add_search_folder(search_path, module_folder(ev.u.LoadDll.hFile));
         if (ev.u.LoadDll.hFile != nullptr) CloseHandle(ev.u.LoadDll.hFile);
         break;
       case EXIT_PROCESS_DEBUG_EVENT:
@@ -517,38 +598,55 @@ inline std::optional<int> supervise_if_asked(int& argc, char** argv, const std::
     if (arg == "--supervise") {
       supervise = true;
     } else if (arg == "--crash-report" && i + 1 < argc) {
-      report_file = std::filesystem::path(argv[++i]);  // the ANSI argv on Windows
+      report_file = std::filesystem::path(argv[++i]);  // replaced by the wide original on Windows, below
     } else {
       argv[kept++] = argv[i];
     }
   }
   if (!supervise && report_file.empty()) return std::nullopt;
-  const GuardedPath guarded[] = {{"--crash-report", report_file}};
-  if (const std::string refused = refuse_inside(guarded, repo_root); !refused.empty()) {
-    std::printf("dump lane: %s\n", refused.c_str());
-    return 1;
-  }
-  std::error_code ec;
-  if (!report_file.empty()) std::filesystem::remove(report_file, ec);  // never an older run's report
 #if defined(_WIN32) && defined(_M_X64)
-  if (!supervise) {
-    std::puts("dump lane: --crash-report needs --supervise on Windows");
-    return 2;
-  }
-  // The child's arguments are the wide originals (non-ASCII paths survive), minus the two above.
+  // The wide originals: FILE and the child's arguments keep non-ASCII characters the ANSI argv loses.
+  // The child gets every argument but the two above.
   int wargc = 0;
   LPWSTR* wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
   std::vector<std::wstring> child;
+  report_file.clear();
   for (int i = 1; wargv != nullptr && i < wargc; ++i) {
     const std::wstring a = wargv[i];
     if (a == L"--supervise") continue;
     if (a == L"--crash-report" && i + 1 < wargc) {
-      ++i;
+      report_file = std::filesystem::path(std::wstring(wargv[++i]));
       continue;
     }
     child.push_back(a);
   }
   if (wargv != nullptr) LocalFree(wargv);
+#endif
+  const GuardedPath guarded[] = {{"--crash-report", report_file}};
+  if (const std::string refused = refuse_inside(guarded, repo_root); !refused.empty()) {
+    std::printf("dump lane: %s\n", refused.c_str());
+    return 1;
+  }
+  // FILE is removed so it never describes an older run, but only if it is an older run's report:
+  // a mistyped FILE naming some other file is left alone.
+  if (!report_file.empty()) {
+    std::error_code ec;
+    const std::filesystem::file_status st = std::filesystem::symlink_status(report_file, ec);
+    if (!ec && std::filesystem::exists(st)) {
+      if (!std::filesystem::is_regular_file(st) || !supervise_detail::starts_with_report_header(report_file)) {
+        std::printf("dump lane: --crash-report FILE exists and is not a dump lane crash report (it does not start "
+                    "with \"%s\"); refusing to replace it\n",
+                    supervise_detail::kReportHeader);
+        return 1;
+      }
+      std::filesystem::remove(report_file, ec);
+    }
+  }
+#if defined(_WIN32) && defined(_M_X64)
+  if (!supervise) {
+    std::puts("dump lane: --crash-report needs --supervise on Windows");
+    return 2;
+  }
   return supervise_detail::run_supervised(child, report_file);
 #else
   argc = kept;

@@ -5,9 +5,11 @@
 // --crash-report FILE. The lane exports the symbol (tests/CMakeLists.txt), so the game module, which
 // is a shared object, binds its calls here rather than to glibc.
 //
-// Compile-only for now: the Linux runtime work, and with it a run of this path, waits on phase-1.md
-// M4-U2. Nothing here may itself be stack-protected, allocate, or rely on the corrupted frame: the
-// report is formatted into static storage and written with write(2).
+// The self-test (dump_lane_crash_report_gs) runs this path on Linux; a game run waits on phase-1.md
+// M4-U2. The functions here are not stack-protected, do not allocate and do not touch the corrupted
+// frame: the report is formatted into static storage and written with write(2). What they call
+// (format_crumbs, snprintf, dladdr) is not stack-protector-free, and need not be: their own frames
+// are new and intact, so their canaries hold; only the caller's frame is broken.
 #if defined(__linux__)
 
 #include <dlfcn.h>

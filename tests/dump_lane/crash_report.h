@@ -31,6 +31,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <initializer_list>
 
 #if defined(_WIN32) && defined(_M_X64)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -144,6 +145,14 @@ inline std::size_t format_crumbs(const CrashCrumbs& c, char* out, std::size_t si
   std::memcpy(mode, c.mode, sizeof c.mode);
   std::memcpy(phase, c.phase, sizeof c.phase);
   std::memcpy(overlay, c.overlay, sizeof c.overlay);
+  // Names only: anything outside [A-Za-z0-9_-] becomes '?', so a stray or corrupted name cannot put
+  // a path, a newline or other text into the report.
+  for (char* name : {mode, phase, overlay})
+    for (char* ch = name; *ch != 0; ++ch) {
+      const char v = *ch;
+      if (!((v >= 'A' && v <= 'Z') || (v >= 'a' && v <= 'z') || (v >= '0' && v <= '9') || v == '_' || v == '-'))
+        *ch = '?';
+    }
   add("run mode %s seed %llu", mode[0] != 0 ? mode : "-", static_cast<unsigned long long>(c.seed));
   if (c.has_party) add(" board %d", static_cast<int>(c.board));
   add("\n");

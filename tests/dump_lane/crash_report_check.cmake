@@ -24,6 +24,26 @@ string(RANDOM LENGTH 8 ALPHABET 0123456789abcdef _tag)
 set(_report "${_tmp}/mpt_crash_report_${KIND}_${_tag}.txt")
 file(REMOVE "${_report}")
 
+set(_failures "")
+
+# An existing FILE that is not a crash report is refused and left as it was (supervise.h).
+if(KIND STREQUAL "gs")
+  file(WRITE "${_report}" "not a crash report\n")
+  execute_process(
+    COMMAND "${LANE}" --supervise --crash-report "${_report}" --crash-selftest "${STUB}" "${KIND}"
+    RESULT_VARIABLE _refused_code
+    OUTPUT_VARIABLE _refused_out
+    ERROR_VARIABLE _refused_err)
+  file(READ "${_report}" _kept)
+  file(REMOVE "${_report}")
+  if(NOT "${_refused_out}" MATCHES "is not a dump lane crash report[^\n]*refusing to replace it")
+    list(APPEND _failures "an existing non-report FILE was not refused: ${_refused_out}${_refused_err}")
+  endif()
+  if(NOT "${_kept}" STREQUAL "not a crash report\n" OR "${_refused_code}" STREQUAL "0")
+    list(APPEND _failures "an existing non-report FILE was changed, or the refusal exited 0")
+  endif()
+endif()
+
 execute_process(
   COMMAND "${LANE}" --supervise --crash-report "${_report}" --crash-selftest "${STUB}" "${KIND}"
   RESULT_VARIABLE _code
@@ -31,7 +51,12 @@ execute_process(
   ERROR_VARIABLE _err)
 message(STATUS "exit: ${_code}\n--- stdout\n${_out}--- stderr\n${_err}---")
 
-set(_failures "")
+# The Windows supervisor prints the report on stdout; Linux's in-process __stack_chk_fail on stderr.
+if(WIN32)
+  set(_stream "${_out}")
+else()
+  set(_stream "${_err}")
+endif()
 # A function, not a macro: a macro would expand the escapes in the regex a second time.
 function(expect _text _regex)
   if(NOT "${_text}" MATCHES "${_regex}")
@@ -52,7 +77,7 @@ else()
 endif()
 
 # Every report: the header, the made-up breadcrumbs and the footer, in the file too.
-foreach(_text IN ITEMS "${_out}" "${_file}")
+foreach(_text IN ITEMS "${_stream}" "${_file}")
   expect("${_text}" "dump lane crash report v1\n")
   expect("${_text}" "\nrun mode selftest seed 7 board 3\n")
   expect("${_text}" "\nframe 1234 phase minigame turn 4/20 overlay selftestDll\n")
