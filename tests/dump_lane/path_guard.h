@@ -29,11 +29,23 @@ struct GuardedPath {
   std::filesystem::path path;  // empty: not in use, never refused
 };
 
+// A path as UTF-8 text for a message. Never throws: path::string() does on Windows for a wide path the
+// ANSI code page cannot hold, and an exception here ends the lane with no word of why. A path that
+// is not valid UTF-16 either (an unpaired surrogate) comes out as "?".
+inline std::string path_text(const std::filesystem::path& path) noexcept {
+  try {
+    const std::u8string u = path.u8string();
+    return std::string(u.begin(), u.end());
+  } catch (...) {
+    return "?";
+  }
+}
+
 // The refusal message for the first path in use that lies inside `root`, or "" if none does.
 inline std::string refuse_inside(std::span<const GuardedPath> paths, const std::filesystem::path& root) {
   for (const GuardedPath& g : paths) {
     if (g.path.empty() || !is_inside(g.path, root)) continue;
-    return std::string(g.what) + " (" + g.path.string() +
+    return std::string(g.what) + " (" + path_text(g.path) +
            ") is inside the repository; game material must stay outside it (ADR 0006)";
   }
   return {};

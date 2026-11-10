@@ -63,12 +63,12 @@
 
 #include <algorithm>
 #include <map>
-// Older SDKs' dbghelp.h may lack these two.
+// Older SDKs' dbghelp.h may lack these two (values from the 10.0.26100 SDK's DbgHelp.h).
 #ifndef SYMOPT_IGNORE_NT_SYMPATH
 #define SYMOPT_IGNORE_NT_SYMPATH 0x00001000
 #endif
-#ifndef SYMOPT_DISABLE_SYMSRVSEARCH
-#define SYMOPT_DISABLE_SYMSRVSEARCH 0x00080000
+#ifndef SYMOPT_DISABLE_SRVSTAR_ON_STARTUP
+#define SYMOPT_DISABLE_SRVSTAR_ON_STARTUP 0x40000000
 #endif
 #elif !defined(_WIN32)
 #include <dlfcn.h>
@@ -324,9 +324,10 @@ inline bool is_fail_fast(const EXCEPTION_RECORD& er) {
 }
 
 // The report on a stopped child: status, breadcrumbs, the faulting address and the stack.
-// `search_path` is DbgHelp's whole symbol path (the folders of the child's own modules): with an explicit
-// path DbgHelp ignores _NT_SYMBOL_PATH, and symbol servers are off, so a srv* entry cannot stall a report
-// on the network.
+// `search_path` is DbgHelp's whole symbol path: the folders of the child's own modules, local only.
+// That explicit path plus SYMOPT_IGNORE_NT_SYMPATH is the guarantee that a srv* entry in
+// _NT_SYMBOL_PATH cannot stall a report on the network. SYMOPT_DISABLE_SRVSTAR_ON_STARTUP is set too,
+// as a belt-and-braces extra, not as the guarantee.
 inline std::string exception_report(HANDLE process, DWORD thread_id, const EXCEPTION_RECORD& er, bool first_chance,
                                     const CrashCrumbs& crumbs, const std::wstring& search_path) {
   std::string out = "dump lane crash report v1\n";
@@ -350,7 +351,7 @@ inline std::string exception_report(HANDLE process, DWORD thread_id, const EXCEP
   out += crumb_text;
 
   SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_FAIL_CRITICAL_ERRORS | SYMOPT_NO_PROMPTS |
-                SYMOPT_IGNORE_NT_SYMPATH | SYMOPT_DISABLE_SYMSRVSEARCH);
+                SYMOPT_IGNORE_NT_SYMPATH | SYMOPT_DISABLE_SRVSTAR_ON_STARTUP);
   const bool symbols = SymInitializeW(process, search_path.empty() ? L"." : search_path.c_str(), TRUE) != FALSE;
   Namer namer{process, {}};
   const DWORD64 fault = reinterpret_cast<DWORD64>(er.ExceptionAddress);

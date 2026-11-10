@@ -154,6 +154,12 @@ add_test(NAME dump_lane_crash_report_refuses_repo_path
           --crash-selftest "$<TARGET_FILE:mpt_overrun_stub>" gs)
 set_tests_properties(dump_lane_crash_report_refuses_repo_path PROPERTIES
   PASS_REGULAR_EXPRESSION "--crash-report \\(.*\\) is inside the repository")
+# The same with a name the ANSI code page cannot hold: the refusal is still printed, not a crash.
+add_test(NAME dump_lane_crash_report_refuses_repo_path_non_ascii
+  COMMAND mpt_dump_lane --supervise --crash-report "${PROJECT_SOURCE_DIR}/build/日本_report.txt"
+          --crash-selftest "$<TARGET_FILE:mpt_overrun_stub>" gs)
+set_tests_properties(dump_lane_crash_report_refuses_repo_path_non_ascii PROPERTIES
+  PASS_REGULAR_EXPRESSION "--crash-report \\(.*_report\\.txt\\) is inside the repository")
 # MP4 layout perturbation (dump lane): only in a host build with MPT_MP4_RECIPE_LAYOUT_PROBE set, against a
 # normal build's lane named by MPT_DUMP_LANE_LAYOUT_REFERENCE. See dump_lane/layout_perturbation.cmake.
 if(TARGET mpt_mp4_runtime AND DEFINED MPT_MP4_RECIPE_LAYOUT_PROBE AND NOT MPT_MP4_RECIPE_LAYOUT_PROBE STREQUAL "OFF")
