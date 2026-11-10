@@ -123,7 +123,7 @@ set_tests_properties(dump_lane_replays PROPERTIES LABELS dump SKIP_RETURN_CODE 7
 # Crash reports (M4-04, dump_lane/supervise.h): --supervise debugs the lane to report /GS fail-fasts
 # (DbgHelp walks the stack); on Linux the lane's own __stack_chk_fail reports, exported so the game
 # module binds to it. The self-test crashes a synthetic stub module (mp4_loader/overrun_stub.cpp) and
-# needs no dump. Linux builds the stub and the path, but runs nothing yet (phase-1.md M4-U2).
+# needs no dump. Linux runs the gs case only (av and abort are Windows supervisor paths).
 add_library(mpt_overrun_stub MODULE mp4_loader/overrun_stub.cpp)
 set_target_properties(mpt_overrun_stub PROPERTIES PREFIX "")
 mpt_set_warnings(mpt_overrun_stub)
@@ -136,14 +136,24 @@ else()
   target_link_libraries(mpt_dump_lane PRIVATE ${CMAKE_DL_LIBS})
 endif()
 add_dependencies(mpt_dump_lane mpt_overrun_stub)
+set(_mpt_crash_kinds "")
 if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
-  foreach(_kind gs av abort)
-    add_test(NAME dump_lane_crash_report_${_kind}
-      COMMAND ${CMAKE_COMMAND} "-DLANE=$<TARGET_FILE:mpt_dump_lane>" "-DSTUB=$<TARGET_FILE:mpt_overrun_stub>"
-              -DKIND=${_kind} -P "${CMAKE_CURRENT_SOURCE_DIR}/dump_lane/crash_report_check.cmake")
-    set_tests_properties(dump_lane_crash_report_${_kind} PROPERTIES TIMEOUT 120)
-  endforeach()
+  set(_mpt_crash_kinds gs av abort)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(_mpt_crash_kinds gs)
 endif()
+foreach(_kind IN LISTS _mpt_crash_kinds)
+  add_test(NAME dump_lane_crash_report_${_kind}
+    COMMAND ${CMAKE_COMMAND} "-DLANE=$<TARGET_FILE:mpt_dump_lane>" "-DSTUB=$<TARGET_FILE:mpt_overrun_stub>"
+            -DKIND=${_kind} -P "${CMAKE_CURRENT_SOURCE_DIR}/dump_lane/crash_report_check.cmake")
+  set_tests_properties(dump_lane_crash_report_${_kind} PROPERTIES TIMEOUT 120)
+endforeach()
+# --crash-report FILE inside the repository is refused before anything runs (path_guard.h).
+add_test(NAME dump_lane_crash_report_refuses_repo_path
+  COMMAND mpt_dump_lane --supervise --crash-report "${PROJECT_SOURCE_DIR}/build/mpt_crash_report_refused.txt"
+          --crash-selftest "$<TARGET_FILE:mpt_overrun_stub>" gs)
+set_tests_properties(dump_lane_crash_report_refuses_repo_path PROPERTIES
+  PASS_REGULAR_EXPRESSION "--crash-report \\(.*\\) is inside the repository")
 # MP4 layout perturbation (dump lane): only in a host build with MPT_MP4_RECIPE_LAYOUT_PROBE set, against a
 # normal build's lane named by MPT_DUMP_LANE_LAYOUT_REFERENCE. See dump_lane/layout_perturbation.cmake.
 if(TARGET mpt_mp4_runtime AND DEFINED MPT_MP4_RECIPE_LAYOUT_PROBE AND NOT MPT_MP4_RECIPE_LAYOUT_PROBE STREQUAL "OFF")
