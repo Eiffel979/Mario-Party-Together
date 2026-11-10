@@ -144,7 +144,7 @@ mpt_dump_lane --boot mp4 --party ... [--watch-word OFF[,OFF...]] [--find-word VA
 ```
 
 The SDK arena sits at a fixed address, so an arena offset (hex) names the same bytes in every run of
-one build. None of these changes game state, and none is in the shell or the module.
+one build. None writes game memory; `--watch-write` can perturb stale stack bytes (see below). None is in the shell or the module.
 - `--find-word VALUE@FRAME` lists every aligned arena word equal to VALUE (hex) after FRAME steps.
 - `--watch-word` prints a word whenever it differs after a step: the first frame a word changes.
 - `--watch-write` (Windows x64) arms a hardware data breakpoint on up to four 8-byte-aligned words

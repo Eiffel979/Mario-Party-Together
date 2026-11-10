@@ -386,9 +386,9 @@ std::vector<ArmemBlock> armemBlocks(const MptMp4Game& game) {
 }
 
 // The ARAM alias check (finding 2): HuARMalloc's blocks lie in [HU_AMEM_BASE, ARAM's end), above the
-// SDK's ARAlloc range and apart from each other. Below HU_AMEM_BASE is msm's ARAM (msmSysInit checks
-// that it fits there), where MusyX DMAs its zero and stream buffers. Empty when they do; a fault
-// otherwise, which fails the run.
+// SDK's ARAlloc range and apart from each other. Below HU_AMEM_BASE is the console's msm region
+// (msmSysInit checks that msm's ARAM fits there); on PC it is unused (MUSY_TARGET_PC). Empty when they
+// do; a fault otherwise, which fails the run.
 std::string aramAlias(const MptMp4Game& game) {
   std::uint32_t addr[kArmemBlocksMax], size[kArmemBlocksMax];
   const std::int32_t n = mpt_mp4_armem_in_use(addr, size, kArmemBlocksMax);
