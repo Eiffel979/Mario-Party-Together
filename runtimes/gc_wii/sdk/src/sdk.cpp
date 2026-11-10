@@ -594,6 +594,9 @@ Result Sdk::create(const SdkConfig& config, MainFn main, void* arg, std::unique_
     if (region.empty() || !region.data()) return Result::failure("empty registered state region");
   if (config.card.size_mbits != 4 && config.card.size_mbits != 8 && config.card.size_mbits != 16)
     return Result::failure("card size must be 4, 8 or 16 Mbit");
+  for (const auto& guard : config.aram_guards)
+    if (guard.begin >= guard.end || guard.end > kAramBytes || guard.label.empty())
+      return Result::failure("an ARAM guard must be a non-empty, labelled range inside ARAM");
 
   auto I = std::make_unique<Impl>();
   I->config = config;
