@@ -204,7 +204,7 @@ inline constexpr std::uint64_t kPartyStallFrames = 18000;
 //     Fortune (m444), whose plunger only fires once the stick has pulled it back;
 //   - otherwise pulses A (4 frames every 30) on menus, setup, the board and the results;
 //   - on mentDll's board wheel window, pulls the stick toward script.board instead;
-//   - after kPartyStallFrames with no party change, also pulses B.
+//   - after kPartyStallFrames with no party change, also pulses B and turns the stick clockwise.
 inline PadState party_autopilot(const PartyScript& script, std::uint64_t frame, const PartyKey& key,
                                 std::uint64_t since_change) {
   PadState pad;
@@ -244,6 +244,17 @@ inline PadState party_autopilot(const PartyScript& script, std::uint64_t frame, 
   // (4 frames every 60, between the A pulses). The longest normal stretch seen is 10,480 frames, so
   // runs that never stall are unchanged, and the watchdog still catches a real lock.
   if (since_change >= kPartyStallFrames && since_change % 60 >= 45 && since_change % 60 < 49) pad.buttons |= kButtonB;
+  // The same stall also turns the stick clockwise through up, right, down and left, two frames each.
+  // The lottery's ball game (board/lottery.c, ExecBallGame) waits on a human seat until the stick has
+  // cranked its handle one full turn: it counts a sample only when an axis is past 57.6, the sample
+  // differs from the last one and the angle grew. Nothing else on the board leaves it, so without the
+  // turn every party whose human seat wins the ball game locks there.
+  if (since_change >= kPartyStallFrames) {
+    constexpr std::int16_t kTurn[4][2] = {{0, 32767}, {32767, 0}, {0, -32767}, {-32767, 0}};
+    const auto& dir = kTurn[(since_change / 2) % 4];
+    pad.stick_x = dir[0];
+    pad.stick_y = dir[1];
+  }
   return pad;
 }
 

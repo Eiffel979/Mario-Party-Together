@@ -222,6 +222,16 @@ TEST_CASE("dump lane: the party autopilot moves mentDll's board wheel only in it
     CHECK(board(dump_lane::kPartyStallFrames + 45).buttons == kButtonB);
     CHECK(board(dump_lane::kPartyStallFrames + 60).buttons == kButtonA);
     CHECK(board(dump_lane::kPartyStallFrames + 50).buttons == 0);
+    // The stall also turns the stick clockwise (up, right, down, left), two frames a direction, and
+    // never before it.
+    CHECK(board(dump_lane::kPartyStallFrames - 1).stick_x == 0);
+    CHECK(board(dump_lane::kPartyStallFrames - 1).stick_y == 0);
+    const std::uint64_t at = dump_lane::kPartyStallFrames;  // a multiple of 8
+    constexpr int kWant[4][2] = {{0, 32767}, {32767, 0}, {0, -32767}, {-32767, 0}};
+    for (std::uint64_t i = 0; i < 16; ++i) {
+      CHECK(board(at + i).stick_x == kWant[(i / 2) % 4][0]);
+      CHECK(board(at + i).stick_y == kWant[(i / 2) % 4][1]);
+    }
   }
   script.board = 1;  // two moves left
   CHECK(pad(500).stick_x == -32767);
