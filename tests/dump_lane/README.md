@@ -121,6 +121,11 @@ mpt_dump_lane --boot mp4 --verify-replay FILE
   the title, on the instruction screen and on the final ranking, pulls the stick and mashes A in minigames, and pulses A
   everywhere else. The default menu choices give Toad's Midway Madness, 20 turns, player 1 human
   and three COM players (mentDll asks for at least one human player).
+- Stall policy: after 18,000 frames with no party change (the longest normal stretch is 10,480) the
+  autopilot also pulses B and moves the stick in a 720-frame cycle: 264 frames turning it clockwise,
+  then a row-by-row sweep of a 192 by 96 pixel box. A human seat needs these on the board: B leaves
+  a shop whose item the player cannot take, the turning cranks the lottery's ball game and the sweep
+  rubs off its scratch ticket. None of the three has a time limit. A run that never stalls is unchanged.
 - The oracle is `Session::director()`: exit 0 only once its phase is `finished`. The run fails on a
   halt or fault, on a soft lock (`--watchdog`, default 36,000 frames with no party change) or when
   `--frames` (default 1,000,000) runs out.
