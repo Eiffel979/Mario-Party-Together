@@ -2,20 +2,21 @@ Apply order 0034 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fa
 lottery: the COM's crank input stays on its last entry instead of reading past the table, on MPT_PC
 Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
 
-M4-03, the board sweep (Goomba's Greedy Gala, seed 2, turn 3: a soft lock). In the lottery's ball
-game (ExecLottery, game/board/lottery.c) a COM player turns the handle from comInputBall, one
-stick position per frame, with comInputPos (a u8) advanced every frame until the handle reaches its
-end. The table ends with { 0x7F, 0x7F }, which marks the turn done, but the index ran on past it and
-read whatever follows the table in memory: other module data on PC, which differs by layout. On
-seed 2 those bytes left the handle still, so the lottery and the turn never ended (the main process
-waited in BoardLotteryExec, found from an arena dump of the stuck run). Adding OSReport calls
-elsewhere in the module changed the layout and made the hang go away, which is how it showed up as
-layout-dependent. The index now stays on the terminator, so the COM's last turn speed is kept and
-the handle runs to its end. A COM that finishes within the table, the usual case, is unchanged.
-Unconditional on PC.
+M4-03, found by reading while the board sweep's lottery soft locks were diagnosed; it is not their
+cause (that was the human seat's handle, which the test autopilot never turned: docs/titles/mp4.md,
+M4-03). In the lottery's ball game (ExecBallGame, game/board/lottery.c) a COM player turns the
+handle from comInputBall, one stick position per frame, with comInputPos (a u8) advanced every frame
+until the handle reaches its end. The table ends with { 0x7F, 0x7F }, which marks the COM done, but
+nothing stops the index there: while the handle is still short of its end, it runs on past the
+terminator and reads whatever follows the table in memory, which on PC is other module data that the
+linker is free to place there. Those bytes then drive the handle (a still or repeated sample slows
+it by 7% a frame, and a slowed handle may never reach its end). The index now stays on the
+terminator, so the COM's last turn speed is kept and the handle runs to its end. Unconditional on
+PC. No synthetic test: the function is static and needs the whole board to run; the board sweep
+covers it.
 
 diff --git a/src/game/board/lottery.c b/src/game/board/lottery.c
-index 08ddde0..827f4ce 100755
+index 08ddde0..7dcc77e 100755
 --- a/src/game/board/lottery.c
 +++ b/src/game/board/lottery.c
 @@ -868,7 +868,18 @@ static void ExecBallGame(void)
@@ -25,8 +26,8 @@ index 08ddde0..827f4ce 100755
 +#ifdef MPT_PC
 +                /* The COM's crank input ends at { 0x7F, 0x7F } ("done"), but comInputPos ran on past it
 +                 * every frame until the handle reached its end, reading whatever followed the table:
-+                 * other module data on PC, which differs by layout and here kept the handle still, so
-+                 * the lottery never ended. It stays on the last entry instead. */
++                 * other module data on PC, placed by the linker, which then drove the handle. It stays
++                 * on the last entry instead, which keeps the handle's speed until it reaches its end. */
 +                temp_r23 = comInputBall[comInputPos];
 +                if (comInputPos < sizeof(comInputBall) / sizeof(comInputBall[0]) - 1) {
 +                    comInputPos++;
