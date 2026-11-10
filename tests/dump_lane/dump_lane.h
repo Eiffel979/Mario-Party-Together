@@ -248,10 +248,11 @@ inline PadState party_autopilot(const PartyScript& script, std::uint64_t frame, 
     return pad;
   }
   if (since_change >= 30 && since_change % 30 < 4) pad.buttons |= kButtonA;
-  // A stall (M4-03, seed 2): A alone can loop a human seat in a menu that only B leaves, such as a shop
-  // whose item the player cannot take. After kPartyStallFrames with no party change, B also pulses
-  // (4 frames every 60, between the A pulses). The longest normal stretch seen is 10,480 frames, so
-  // runs that never stall are unchanged, and the watchdog still catches a real lock.
+  // A stall (M4-03): after kPartyStallFrames with no party change, B also pulses (4 frames every 60,
+  // between the A pulses), for a menu that A alone would loop in and only B leaves. It was added for
+  // the seed-2 soft locks before they were traced to the lottery (below); no run is known to need it.
+  // The longest normal stretch seen is 10,480 frames, so runs that never stall are unchanged, and the
+  // watchdog still catches a real lock.
   if (since_change >= kPartyStallFrames && since_change % 60 >= 45 && since_change % 60 < 49) pad.buttons |= kButtonB;
   // The same stall also moves the stick, for the lottery's two games (board/lottery.c), which wait on
   // a human seat's stick with no time limit and which nothing else on the board leaves:
