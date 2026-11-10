@@ -140,7 +140,7 @@ mpt_dump_lane --boot mp4 --verify-replay FILE
 
 ```
 mpt_dump_lane --boot mp4 --party ... [--watch-word OFF[,OFF...]] [--find-word VALUE@FRAME]
-              [--watch-write OFF[,OFF...]@FRAME]
+              [--watch-write OFF[,OFF...]@FRAME] [--dump-arena FRAME FILE]
 ```
 
 The SDK arena sits at a fixed address, so an arena offset (hex) names the same bytes in every run of
@@ -152,7 +152,9 @@ one build. None of these changes game state, and none is in the shell or the mod
   offsets (`llvm-nm -n` on the installed `mp4_game.dll` names them). The trap's own handler runs on
   the game's stack, so a value read from uninitialised stack can differ under it; that is itself
   evidence of such a read.
-Combine them with `--party-save-at` and `--party-resume` to start near the frame. This is how the
+- `--dump-arena FRAME FILE` writes the arena (main RAM, then ARAM) after FRAME steps, for diffing two builds' memory. The file is game memory: keep it outside the repository.
+
+The watches act in `--party` mode only. They work under `--supervise`: the supervisor passes first-chance exceptions, including the data breakpoint's single-step trap, back to the lane. Combine them with `--party-save-at` and `--party-resume` to start near the frame. This is how the
 layout gate's writer was found (`docs/titles/mp4.md` §20).
 
 ## Crash reports (M4-04)
