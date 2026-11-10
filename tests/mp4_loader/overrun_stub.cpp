@@ -7,10 +7,11 @@
 //   kind 1  a write through a null pointer (an access violation the lane does not handle)
 //   kind 2  abort()
 //
-// The overrun's length comes from the caller and the buffer is read back through a volatile pointer,
-// so the compiler can neither see the overrun at compile time nor drop the writes.
+// The overrun's length comes from the caller and every byte is written through a volatile pointer, so
+// the compiler can neither see the overrun at compile time nor drop the writes. A byte loop, not memset:
+// with _FORTIFY_SOURCE (Ubuntu's GCC enables it by default) memset becomes __memset_chk, which would
+// catch the overrun itself (__chk_fail) before the stack protector runs on return.
 #include <cstdlib>
-#include <cstring>
 
 #if defined(_WIN32)
 #define MPT_OVERRUN_STUB_EXPORT extern "C" __declspec(dllexport)
@@ -26,9 +27,9 @@ volatile int* volatile g_null = nullptr;
 
 MPT_OVERRUN_STUB_NOINLINE int overrun_stub_smash(int bytes) {
   char buffer[16];
-  std::memset(buffer, 'x', static_cast<std::size_t>(bytes));  // past the end on purpose
-  volatile char* read = buffer;
-  return read[0] + read[15];
+  volatile char* write = buffer;
+  for (int i = 0; i < bytes; ++i) write[i] = 'x';  // past the end on purpose
+  return write[0] + write[15];
 }
 
 }  // namespace
