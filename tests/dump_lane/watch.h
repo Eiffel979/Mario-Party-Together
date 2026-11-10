@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -202,11 +203,10 @@ class Watcher {
     }
     seen_ = true;
     if (o_.dump_frame != 0 && frame == o_.dump_frame) {
-      bool ok = false;
-      if (std::FILE* f = std::fopen(o_.dump_path.string().c_str(), "wb")) {
-        ok = std::fwrite(reinterpret_cast<const void*>(kArenaBase), 1, o_.arena_bytes, f) == o_.arena_bytes;
-        ok = std::fclose(f) == 0 && ok;
-      }
+      std::ofstream out(o_.dump_path, std::ios::binary | std::ios::trunc);
+      out.write(reinterpret_cast<const char*>(kArenaBase), static_cast<std::streamsize>(o_.arena_bytes));
+      out.close();
+      const bool ok = static_cast<bool>(out);
       std::printf("dump-arena frame %llu: %s\n", static_cast<unsigned long long>(frame), ok ? "written" : "FAILED");
     }
     if (o_.find_frame != 0 && frame == o_.find_frame) {
