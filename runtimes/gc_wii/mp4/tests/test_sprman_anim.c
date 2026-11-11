@@ -144,6 +144,17 @@ void mtxTransCat(Mtx mtx, float x, float y, float z) {
   (void)z;
   unreached("mtxTransCat");
 }
+/* HuSprAnimKill's, the GX layer's only functions sprman.c calls. Defined here so the test links
+ * without a renderer: the GX layer's own definitions write to its FIFO, and the FIFO's command
+ * processor needs one. */
+void GXDestroyTexObj(GXTexObj *obj) {
+  (void)obj;
+  unreached("GXDestroyTexObj");
+}
+void GXDestroyTlutObj(GXTlutObj *obj) {
+  (void)obj;
+  unreached("GXDestroyTlutObj");
+}
 u32 minimumVcount = 1;
 
 int main(void) {
