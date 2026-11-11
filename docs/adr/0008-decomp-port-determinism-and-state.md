@@ -64,6 +64,7 @@ Cross-platform identity is a **Phase 1 exit requirement** (D5): the same replay 
     - **Arena at a fixed virtual address,** reserved early at `boot()`. `boot()` fails with a clear `Result` if the address is unavailable.
     - **Game module at a fixed base** *(the base and the reasons for it: amendment of 2026-11-07, "Module words", point 1)*. The SDK layer is linked into the game module (both are built with the same Clang flags, rule 4), so game code, SDK code and their data share one base. Function pointers stored in the arena (process entry points, object callbacks, overlay hooks) then stay valid. On **Windows**, the module is linked with a fixed image base and no dynamic base, and `boot()` checks that it was loaded at that base. On **Linux**, `dlopen` cannot choose an address, so either the module is linked as **non-PIE at a fixed address** and mapped there by our own loader, or it is **relocated on load** to the fixed base. P1-16 picks one.
     - **Nothing in the arena points into host memory** outside the module and the arena: no host heap, CRT objects or host-runtime code.
+    - **Stack guard values** *(added 2026-11-10; see "Stack guard values in save states")*. Equal addresses are not enough. A suspended frame also holds the compiler's stack guard value, which is made per module load on Windows and per process on Linux. A fresh process therefore needs the Phase 2 decision of that amendment before it can load such a frame.
     - P1-16 demonstrates this on both OSes by milestone **M1**. If it fails, **E5 narrows to in-process save states** (save, destroy the runtime, create a fresh runtime in the same process, load), and the fresh-process case moves to the Phase 2 ADR that closes §10.
 
 ## Answered by P1-01
@@ -719,4 +720,59 @@ When both are done, E3c may be run for acceptance without another ruling. E3c ru
   - Then finding 1, from `main` after #79, with the gate rerun of point 2 (M4-15 in `docs/phases/phase-1.md`).
 - **qa-reviewer:** reviews PR #79 against the conditions above and point 3. Whether the Linux compile-only job should fail the run once it is green again is qa-reviewer's call.
 - **architect:** `docs/phases/phase-1.md` records the status on M4-03, adds finding 1 as M4-15 and makes it a dependency of M4-13 (same commit as this amendment).
+- **No core contract change.** `kCoreContractVersion`, the module ABI version and the save-state layout are unchanged.
+
+## Stack guard values in save states (architect, 2026-11-10)
+### Context
+M4-03 found this while probing soft locks with `--party-save-at` and `--party-resume` (`docs/titles/mp4.md` §21 "M4-03"). It is not fixed.
+- **What happens.** A state saved in one process and resumed in another can fail fast with 0xC0000409 when a game function that was suspended at the save returns.
+- **Why.** Coroutine stacks live in the arena (§1, §7) and a save state holds the arena as it is (§10). A game process that sleeps is suspended in the middle of its functions, so their frames are in the state. The compiler's stack guard writes a value into each guarded frame on entry and checks it on return. That value does not come from the arena:
+  - **Windows (`/GS`):** the module's `__security_cookie`, made anew every time the module is loaded, mixed with the frame's stack address. The stack address is the same in every process, because the stacks are in the arena. The cookie is not.
+  - **Linux (stack protector):** one canary for the whole process, made by the C library at process start and read through the thread pointer. Every module shares it.
+
+  A frame saved under one value and checked against another fails, although nothing overran.
+- **§11 missed it.** §11 lists what must be equal in two processes, and every entry is an address. This is a value that is made per process and stored in a frame.
+- **Where it matters.** Any save state that is loaded where the guard value differs: a fresh process (the original E5, `--party-resume`) and, in Phase 2, a netplay resync from a state and joining from the host's state.
+- **Phase 1 today.** E5 is already narrowed to in-process (`docs/phases/phase-1.md` §10, M4-D), and the fresh-process case is already a Phase 2 item (§11 there). `--party-resume` is documented as diagnosis only. No shell feature loads a state that another process wrote.
+- **One thing found by reading, not by a run.** The narrowed E5 is "save, destroy the runtime, create a fresh runtime in the same process, load". Destroying the last `Mp4Runtime` unloads the game module (`runtimes/gc_wii/mp4/host/src/module_loader.h`), and the fresh runtime loads it again. On Windows a reload makes a new cookie. So the in-process round trip may fail the same way when a guarded frame is suspended at the save. Whether it does depends on the frame it saves at. On Linux the canary belongs to the process, so a reload does not change it.
+
+### Decision
+**1. Fresh-process save states with stack guards are a Phase 2 item.** They are decided in the ADR that closes the §10 exception, with the rest of the fresh-process case (M4-D). Nothing is fixed for it in Phase 1.
+- **Why.** No Phase 1 exit criterion loads a state in another process. The fixes that work (below) all touch how the game module is built or what a save state holds, which is exactly what the §10 ADR decides. A Phase 1 patch would pick one of its candidates early, without the netplay requirements on the table.
+- **Until then:** `--party-resume` stays diagnosis only, and no shell, netplay or UI feature loads a state made by another process. A clean refusal of such a state (a `Result` failure instead of a fail-fast) is part of the Phase 2 work. It is not needed in Phase 1, because no shipped path can reach it.
+
+**2. One check in Phase 1: the in-process round trip must survive a module reload.** Owner: runtime-gc-wii, reviewed by qa-reviewer (M4-16 in `docs/phases/phase-1.md`).
+- Run the E5 round trip as M4-D words it (save, destroy the runtime so that the module unloads, create a fresh runtime, load, continue) at a frame where a guarded game function is suspended. A frame at which `--party-resume` failed fast is such a frame.
+- If it passes, record in `mp4.md` why (for example, the cookie is the same after a reload), with the run.
+- If it fails, E5 is not met as narrowed. runtime-gc-wii proposes the smallest change that keeps the guard value the same for the life of the process, for example not unloading the module between runtimes, and brings it to architect before building it. It must not need a core contract change, and it must not close off the Phase 2 choice.
+
+**3. Owners for the Phase 2 item.**
+- **architect:** the ADR and the choice.
+- **runtime-gc-wii:** the mechanism for MP4, and for every later decomp port, since they all save raw stacks under this ADR.
+- **netplay:** the consumer. It says which loads it needs: resync, join in progress, same build only or more.
+- **qa-reviewer:** a fresh-process round-trip test on each OS that saves at a frame with a suspended guarded function.
+
+**4. Candidates the Phase 2 ADR must weigh.** None is chosen here.
+- **(i) A fixed guard value for the game module.** On Windows the module's cookie is a build constant. On Linux the module is built to read its guard from its own global instead of the thread pointer, because the process-wide canary cannot be fixed for one module. Overruns are still caught, and the M4-04 crash reports keep working. The cost: the value is no longer secret, so the guard only catches accidents. That matters once peers' inputs and states reach the module. Saving the cookie in the state and setting it on load is a variant with one more problem: module frames that are live during the load were made with the old value.
+- **(ii) No stack guard in the game module, with overruns caught elsewhere.** For example an AddressSanitizer run of the sweep in the dump lane. The cost: shipped builds lose the fail-fast that found the bugs behind patches 0022 and 0023, and M4-04's reports have nothing to report there. A check of each coroutine stack's lowest bytes at a switch catches a whole-stack overflow, not an overrun inside a frame.
+- **(iii) Do not send raw stacks at all.** This is §10's candidate (c): recover by re-simulating from inputs, or by reloading a state only where it was made. A semantic serializer (§10 (b)) cannot do it alone, because a sleeping game process has no state other than its stack. This is the only candidate that also removes return addresses and frame layout from what peers exchange.
+- **(iv) Rewrite the guard values on load.** Find every guarded frame in every saved stack and re-key it. The compilers do not publish where a frame keeps its guard, so this means walking suspended stacks with unwind data and guessing the slot. It is the most fragile candidate and is listed to be rejected with a reason.
+
+**5. What else the Phase 2 ADR must answer, because this finding shows §11's list was incomplete.**
+- **An audit of per-process values,** not only addresses, in suspended frames and saved registers. It includes frames of code we do not build: if a switch can ever happen under a C library function that called back into game code, that frame carries the library's own guard value, which no candidate above can fix.
+- **Trust.** A state from another machine is untrusted input. Raw stacks hold return addresses and the arena holds function pointers, so loading a peer's raw state runs what the peer chose. The ADR must say how a state from the host is checked, or must not send raw states between machines. This weighs for (iii) between machines whatever is chosen for one machine.
+
+**6. Linux has the same problem.** A fresh process gets a new canary, and a saved guarded frame fails in `__stack_chk_fail` when its function returns. It has not been seen, because the module has not run on Linux (M4-U2). The shape differs from Windows in two ways that candidates (i) and (iv) must handle: the value belongs to the process and not to the module, and it is stored as it is, not mixed with the stack address.
+
+### Alternatives
+- **Fix it in Phase 1 with a fixed cookie.** Rejected: no Phase 1 criterion needs it, it weakens the guard for every build, and it would settle part of the §10 ADR ahead of the netplay requirements.
+- **Turn `/GS` off for the game module now.** Rejected: the guard found two real overruns in full-party runs, and the Phase 1 crash reports are built on it.
+- **Widen E5 back to fresh-process and fix this to meet it.** Rejected: M4-D narrowed E5 because the Linux fixed base was not shown by M1, and that reason has not changed.
+- **Record it only in `mp4.md`.** Rejected: it applies to every title that saves raw stacks under this ADR, and it changes what §11 has to list.
+
+### Consequences
+- **§11** gains a line that points here.
+- **runtime-gc-wii:** the check of point 2 (M4-16). In `docs/titles/mp4.md`: §21's "`--party-resume` and `/GS`" bullet cites this amendment instead of "reported to the coordinator", and §11's fresh-process paragraph adds the stack guard value to what a fresh process needs.
+- **architect:** `docs/phases/phase-1.md` gains ruling M4-I, item M4-16 and the Phase 2 note (same commit as this amendment). The Phase 2 ADR that closes §10 takes points 3 to 6 as input.
+- **netplay:** nothing to do in Phase 1. It must not plan resync or join-in-progress on loading a raw state from another process or machine until that ADR exists.
 - **No core contract change.** `kCoreContractVersion`, the module ABI version and the save-state layout are unchanged.
