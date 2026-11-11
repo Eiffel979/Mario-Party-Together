@@ -137,7 +137,9 @@ mpt_dump_lane --boot mp4 --verify-replay FILE
   state hash and party digest. Run it in a separate process for the E3 check. Replays of your own
   runs stay outside the repository unless they are fixtures (below).
 - `--party-board N` picks another board on mentDll's wheel, inside the `--party-wheel` window
-  (frames since mentDll started). Only the default board has been validated.
+  (frames since mentDll started). The run fails if the party read names another board. All six
+  boards have been played to `finished` on seeds 1 to 3 (`docs/titles/mp4.md` §21, M4-03); board 5
+  needs `--party-unlock-bowser`.
 - Diagnosis: `--party-save-at N FILE` saves the state before frame N, and `--party-resume FILE`
   goes on from it (no replay, not evidence). State files hold game memory: keep them outside the
   repository. Resume in the same build only, and expect a `/GS` fail-fast (0xC0000409) in a game
