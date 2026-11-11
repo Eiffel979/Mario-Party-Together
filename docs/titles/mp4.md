@@ -1371,7 +1371,7 @@ These are the pins on `main` when this checklist was written. If the lock files 
 | musyx | `86851a3a8d51788d166ea42d137b49526f570400` | same |
 | aurora | `514339438178ef2bed1b14e5149d90ece0c6e0cc` | same |
 | Dawn | `13abc3bc8ea2d3c2050f9e77a12d012108ceee24` | `runtimes/gc_wii/gx/dawn.lock` |
-| Party Board patch set | 0001 to 0028 (`runtimes/gc_wii/mp4/patches/partyboard/`) | covered by the build ID |
+| Party Board patch set | every patch in `runtimes/gc_wii/mp4/patches/partyboard/` at the commit in row 6 (0001 to 0034 as of M4-03) | covered by the build ID |
 
 The build manifest's `sources` list comes from `decomp.lock` only (Party Board, musyx, aurora). Dawn (`dawn.lock`) and aurora's GX pin (`runtimes/gc_wii/gx/aurora.lock`, the same aurora commit) are not in that list, but both are hashed into the build ID.
 
