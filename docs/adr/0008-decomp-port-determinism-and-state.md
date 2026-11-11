@@ -661,3 +661,62 @@ runtime-gc-wii did the follow-up of "Gate status after the implementation" on `m
 - **qa-reviewer:** reviews this PR against point 1's conditions and point 4's caller check. For M4-03, checks the crash record, the seed-2 gate run, and the msm-region DMA check and its test.
 - **architect:** M4-03's "Closed by" in `docs/phases/phase-1.md` gains the seed-2 crash, the seed-2 gate and the msm-region DMA check (same commit as this amendment).
 - **No core contract change.** `kCoreContractVersion`, the module ABI version and the save-state layout are unchanged.
+
+## Gate status after M4-03 (architect, 2026-11-10)
+### Context
+runtime-gc-wii did M4-03 (PR #79; `docs/titles/mp4.md` §11, §20 and §21 "M4-03"; Party Board patches 0032–0034), from `main` after #77 and #76, as "Gate status after the writer fixes" asked. architect checked the run logs and the code against points 2 and 3 of that amendment, not only the report. All of it is on Windows:
+- **The seed-2 crash is found and fixed.** Party Board's `HuSprAnimRead` converted an anim file in place on every read and left no mark, so a second read of the same file swapped it back and read far past it. Patch 0032 marks the file on the first read, and later reads share the first conversion, as the console shares the relocated file. It is a port bug, not a layout word. The synthetic test `mp4_sprman_anim` reads a hand-made anim file four times and fails without the patch.
+- **The layout gate, ON against OFF,** over the full 20-turn party with a checkpoint every 10 frames:
+
+  | Seed | Both lanes | `finished` at frame | Printed checkpoints | Final frame and hash |
+  |---|---|---|---|---|
+  | 1 | exit 0 | 250,789 | 250, identical | 250,790, `df121039386e9397` |
+  | 2 | exit 0 | 272,239 | 272, identical | 272,240, `036db6e228961154` |
+
+  The two lanes' logs differ only in diagnostic lines: host addresses, timings and the save state's size (4,128 bytes larger under the ON probe).
+- **Heap module counts.** `module_code_interior`, `module_cxx`, `module_misaligned`, `module_raw` and `module_unknown` are 0 at every checkpoint of both lanes on both seeds (25,079 and 27,224 checkpoints).
+- **Notes for every hit.** The gate runs did not record notes. architect ran seed 2 once more on the OFF build with a note for every module hit, every 60 frames: exit 0, `finished` at 272,239, the gate's hashes at all 45 printed checkpoints, the five counts 0 at 4,538 checkpoints, and 3,843 distinct notes. Every note is a named symbol (3,454) or a string literal's text (389).
+- **The regression set passes:** the seed-1 gate above; rodata against OFF, seeds 1–5, identical; `--perturb`, 0 failed; `--conformance`, 0 problems, with the deep-hash coverage self-test at 72 of 72; and the M4-01 replay verifies in two processes.
+- **Hashes are re-recorded** in the same change: M1 seed 1 `6a4787b9d62c797b` (was `7722e010cc2f09b1`), the M4-01 replay `7c843ad641d303eb` (was `43198e9219fd8f37`). The move is put down to patch 0032 by what it writes and by showing that patches 0033 and 0034 do not move the M1 hash, not by a run with patch 0032 alone.
+- **The msm-region check exists.** `SdkConfig::aram_guards` holds ranges that the MP4 module supplies at boot. The SDK's DMA path faults the step ("ARAM msm region: …") on any transfer that overlaps one, in either direction, from `ARStartDMA` or `ARQPostRequest`. Synthetic tests trigger it in each direction through each entry point. It did not fire in any gate or sweep run.
+- **The sweep:** 18 of 18 parties (6 boards, 3 seeds, 20 turns) reach `finished` with exit 0 and no crash report.
+
+Two things are not done:
+- **Finding 1** of "Gate status after the implementation" (msm's block header is larger on PC than its sizing assumes) is still open. `mp4.md` §11 says so.
+- **Linux.** The module has still not run on Linux (M4-U2). At `ccf01d2` the Linux compile-only job also failed to link the new `mp4_sprman_anim` test. That job may fail without failing the CI run, so the run read as a success.
+
+### Decision
+**1. The layout gate is met on Windows for seeds 1 and 2.**
+- Point 2 of "Gate status after the writer fixes" is met: the crash record and fix, the seed-2 gate over the full party, the counts with notes, and the regression set with re-recorded hashes. Point 3's check is in place in both directions.
+- "Module words" and "Stale heap bytes" are complete **on Windows**. Nothing in the docs, a PR or a commit says the gate is met without "on Windows": no run here says anything about Linux.
+- M4-03's conditions from this ADR are met. M4-03 closes when PR #79 merges after qa review.
+
+**2. E3c is still not run for acceptance.** Two things come first, and neither is new:
+- **Finding 1 is fixed.** "Gate status after the implementation" says it must be fixed before E3c is run for acceptance, and that stands. The fix changes how msm's heap is laid out, so it may move hashes. Its PR therefore reruns the layout gate on seeds 1 and 2 and the regression set, and re-records hashes if they move. It goes next, from `main` after #79.
+- **The Linux lane exists** (M4-U2, M4-13). It is on hold until the user reports WSL2 ready.
+
+When both are done, E3c may be run for acceptance without another ruling. E3c runs for diagnosis stay fine at any time.
+
+**3. The patch 0032 test must build and pass on Linux too.**
+- A synthetic test that one platform cannot link is only half a regression test. The condition "a synthetic regression test where the code can be built without game material" is met on Windows and **open on Linux** until the Linux job links `mp4_sprman_anim`, and then until the test has run there.
+- The link fix belongs to M4-03 (runtime-gc-wii). Running the test waits for the Linux lane with everything else.
+- qa-reviewer reads the Linux job's log at review, not only the run's colour, for as long as that job may fail without failing the run.
+
+**4. What counts as evidence for the counts.** A `--hash-items` file holds the list of the run's **last** checkpoint only. The evidence that a count is 0 at every checkpoint is the total and the maximum that the log prints, and the evidence for "notes for every hit" is a run with `--note-module-hits`. Records of a gate run cite those, not the file alone.
+
+**5. The hash attribution is accepted as written.** The rule is that hashes are re-recorded on purpose, in the same change, with the reason. Elimination plus what patch 0032 writes is reason enough. `mp4.md` keeps saying "by elimination".
+
+### Alternatives
+- **Call the gate met without a note run.** Rejected: the amendment asked for notes, the counts alone do not show that each hit is a real pointer, and the run is cheap.
+- **Run E3c for acceptance now and fix finding 1 afterwards.** Rejected: the fix may move hashes, so an accepted cross-platform trail would be recorded and then moved, and the earlier amendment already rules it out.
+- **Ask for a run with patch 0032 alone before accepting the new hashes.** Rejected: it would need a build without patches 0033 and 0034 for a statement nobody doubts.
+- **Hold PR #79 until Linux has run.** Rejected: the Linux lane is on hold by the user's ruling, and the gate was defined on one platform so that it would not wait for the other.
+
+### Consequences
+- **runtime-gc-wii:**
+  - In `docs/titles/mp4.md` (its file): §20 cites this amendment for the gate status, says "on Windows" where it says the gate is met, records the note run above or one of its own, and words the item-file sentences as point 4 does. §20's line on how the two lanes' logs differ also names the save state's size. §11 says that the msm header overrun blocks E3c acceptance.
+  - The Linux link fix for `mp4_sprman_anim`, in M4-03.
+  - Then finding 1, from `main` after #79, with the gate rerun of point 2 (M4-15 in `docs/phases/phase-1.md`).
+- **qa-reviewer:** reviews PR #79 against the conditions above and point 3. Whether the Linux compile-only job should fail the run once it is green again is qa-reviewer's call.
+- **architect:** `docs/phases/phase-1.md` records the status on M4-03, adds finding 1 as M4-15 and makes it a dependency of M4-13 (same commit as this amendment).
+- **No core contract change.** `kCoreContractVersion`, the module ABI version and the save-state layout are unchanged.
