@@ -243,13 +243,13 @@ jobs:
   # a module compile failure does not hide the main build's result.
   # Every cache step here is restore-only: this job never saves a cache, so nothing it fetches
   # (Party Board in particular) or builds is ever cached.
-  # continue-on-error until the first Linux build of mp4_game is green; then remove it so the job
-  # becomes required.
+  # A failure here fails the run (no continue-on-error): with it, PR #79's link failure of
+  # mp4_sprman_anim read as a green run for four commits while the module tests and the
+  # no-host-math/services link checks were skipped on Linux.
   mp4-module:
     name: MP4 game module, compile-only (ubuntu-24.04)
     needs: compliance
     runs-on: ubuntu-24.04
-    continue-on-error: true
     timeout-minutes: 45
     env:
       MPT_VCPKG_DIR: ${{ github.workspace }}/../vcpkg
