@@ -121,6 +121,12 @@ mpt_dump_lane --boot mp4 --verify-replay FILE
   the title, on the instruction screen and on the final ranking, pulls the stick and mashes A in minigames, and pulses A
   everywhere else. The default menu choices give Toad's Midway Madness, 20 turns, player 1 human
   and three COM players (mentDll asks for at least one human player).
+- Stall policy: after 18,000 frames with no party change (the longest normal stretch is 10,480) the
+  autopilot also pulses B and moves the stick in a 720-frame cycle: 264 frames turning it clockwise,
+  then a row-by-row sweep of a 192 by 96 pixel box. A human seat needs the stick in the lottery,
+  which has no time limit: the turning cranks its ball game and the sweep rubs off its scratch
+  ticket. B is for a menu that only B leaves; no run is known to need it. A run that never stalls
+  is unchanged.
 - The oracle is `Session::director()`: exit 0 only once its phase is `finished`. The run fails on a
   halt or fault, on a soft lock (`--watchdog`, default 36,000 frames with no party change) or when
   `--frames` (default 1,000,000) runs out.
@@ -131,10 +137,19 @@ mpt_dump_lane --boot mp4 --verify-replay FILE
   state hash and party digest. Run it in a separate process for the E3 check. Replays of your own
   runs stay outside the repository unless they are fixtures (below).
 - `--party-board N` picks another board on mentDll's wheel, inside the `--party-wheel` window
-  (frames since mentDll started). Only the default board has been validated.
+  (frames since mentDll started). The run fails if the party read names another board. All six
+  boards have been played to `finished` on seeds 1 to 3 (`docs/titles/mp4.md` §21, M4-03); board 5
+  needs `--party-unlock-bowser`.
 - Diagnosis: `--party-save-at N FILE` saves the state before frame N, and `--party-resume FILE`
   goes on from it (no replay, not evidence). State files hold game memory: keep them outside the
-  repository.
+  repository. Resume in the same build only, and expect a `/GS` fail-fast (0xC0000409) in a game
+  function that was suspended at the save: its frame's stack cookie was made with the saving
+  process's `__security_cookie`, which differs in every process (`docs/titles/mp4.md`, M4-03).
+- Diagnosis: `--press` also works in party mode and adds its buttons on top of the autopilot (to probe
+  a soft lock).
+- `--party-unlock-bowser` boots with `MPT_MP4_BOOT_UNLOCK_BOWSERS_GNARLY_PARTY`
+  (`Mp4Runtime::setTestGameplayFlags`), so `--party-board 5` can reach Bowser's Gnarly Party. No replay
+  records the flag, so the lane refuses it with `--replay`, and such a run is diagnosis only.
 
 ## Diagnosis: arena watches (`watch.h`, MP4)
 

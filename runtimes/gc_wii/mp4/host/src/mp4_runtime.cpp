@@ -77,7 +77,7 @@ Result Mp4Runtime::boot(const VerifiedDump& dump, const RuntimeConfig& config) {
   boot.abi_version = MPT_MP4_ABI_VERSION;
   boot.seed = config.seed;
   boot.disc_root = disc.c_str();
-  boot.flags = kGameplayFlags | (debug_hooks_ ? MPT_MP4_BOOT_DEBUG_HOOKS : 0u) |
+  boot.flags = kGameplayFlags | test_gameplay_flags_ | (debug_hooks_ ? MPT_MP4_BOOT_DEBUG_HOOKS : 0u) |
                (debug_hooks_ && note_module_hits_ ? MPT_MP4_BOOT_DEBUG_NOTE_MODULE_HITS : 0u);
   boot.internal_scale = config.internal_scale == 0 ? 1 : config.internal_scale;
   boot.audio_output = 1;

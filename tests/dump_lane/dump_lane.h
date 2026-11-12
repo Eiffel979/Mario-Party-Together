@@ -171,10 +171,16 @@ struct PartyScript {
   std::int32_t board = 0;
   // No input before this frame (the boot logos).
   std::uint64_t boot_wait = 900;
-  // The wheel's window in mentDll, as frames since mentDll started (measured on seed 1; see
-  // docs/titles/mp4.md section 21). Outside it the autopilot never presses a direction.
+  // The wheel's window in mentDll, as frames since mentDll started (kBoardWheelFrom by default with
+  // --party-board; see docs/titles/mp4.md, M4-03). Outside it the autopilot never pulls the stick.
   std::uint64_t wheel_from = 0, wheel_to = 0;
 };
+
+// The first frame of mentDll (frames since it started) at which the board wheel takes the stick, with
+// the autopilot's A pulses before it (measured on seeds 1 and 2; docs/titles/mp4.md, M4-03).
+inline constexpr std::uint64_t kBoardWheelFrom = 1448;
+// Frames between the autopilot's stick pulses on the wheel, one move each.
+inline constexpr std::uint64_t kBoardWheelPulse = 60;
 
 // mentDll's wheel order: position -> GWSystem.board (mentDll main.c, fn_1_99CC); it starts at
 // position 2. Returns the signed number of moves from the default to `board`, or 0 if not listed.
@@ -185,6 +191,17 @@ inline int board_wheel_moves(std::int32_t board) {
   return 0;
 }
 
+// Frames with no party change (phase, overlay or turn) after which the autopilot also pulses B.
+inline constexpr std::uint64_t kPartyStallFrames = 18000;
+// The stall's stick cycle (party_autopilot): kStallTurn frames of turning the stick, kStallCorner
+// frames toward the top left corner, then rows of kStallRow frames to the end of the cycle. The box
+// is 192 pixels wide (24 frames at 8 pixels) and 96 high (12 one-frame steps down, 13 rows); 40
+// frames on the diagonal cross it from any corner, and the cycle leaves room for 16 rows.
+inline constexpr std::uint64_t kStallCycle = 720;
+inline constexpr std::uint64_t kStallTurn = 264;
+inline constexpr std::uint64_t kStallCorner = 40;
+inline constexpr std::uint64_t kStallRow = 26;
+
 // Player 1's pad for the step of `frame`, given the key and frames since its last change as of the
 // step before. The autopilot:
 //   - presses nothing before boot_wait;
@@ -194,7 +211,9 @@ inline int board_wheel_moves(std::int32_t board) {
 //     frames on, 2 off) with the stick released. Mashing alone soft-locks a human seat in Reversal of
 //     Fortune (m444), whose plunger only fires once the stick has pulled it back;
 //   - otherwise pulses A (4 frames every 30) on menus, setup, the board and the results;
-//   - on mentDll's board wheel window, holds the direction toward script.board instead.
+//   - on mentDll's board wheel window, pulls the stick toward script.board instead;
+//   - after kPartyStallFrames with no party change, also pulses B and moves the stick: it turns it
+//     clockwise, then sweeps a box row by row, in turn.
 inline PadState party_autopilot(const PartyScript& script, std::uint64_t frame, const PartyKey& key,
                                 std::uint64_t since_change) {
   PadState pad;
@@ -217,16 +236,53 @@ inline PadState party_autopilot(const PartyScript& script, std::uint64_t frame, 
   }
   if (overlay == "mentDll" && key.phase == PartyPhase::none && script.board != 0 &&
       since_change >= script.wheel_from && since_change < script.wheel_to) {
-    // One 4-frame direction pulse per 30 frames, one per move: the wheel takes a held direction once
-    // it has been idle for 21 frames, then waits again, so each pulse moves it exactly one board. No A
-    // is pressed in the window.
+    // One 4-frame stick pulse per kBoardWheelPulse frames, one per move: the wheel takes a held direction
+    // once it has been idle for 21 frames and its board models have settled (measured: 30 frames is too
+    // short), then waits again, so each pulse moves it exactly one board. It
+    // reads the stick (|x| >= 50) or HuPadBtn's d-pad bits, but Party Board's pad.c masks the d-pad out
+    // of HuPadBtn, so only the stick moves it. No A is pressed in the window.
     const int moves = board_wheel_moves(script.board);
     const std::uint64_t in_window = since_change - script.wheel_from;
     const std::uint64_t pulses = static_cast<std::uint64_t>(moves < 0 ? -moves : moves);
-    if (in_window / 30 < pulses && in_window % 30 < 4) pad.buttons |= moves < 0 ? kButtonDpadLeft : kButtonDpadRight;
+    if (in_window / kBoardWheelPulse < pulses && in_window % kBoardWheelPulse < 4) pad.stick_x = moves < 0 ? -32767 : 32767;
     return pad;
   }
   if (since_change >= 30 && since_change % 30 < 4) pad.buttons |= kButtonA;
+  // A stall (M4-03): after kPartyStallFrames with no party change, B also pulses (4 frames every 60,
+  // between the A pulses), for a menu that A alone would loop in and only B leaves. It was added for
+  // the seed-2 soft locks before they were traced to the lottery (below); no run is known to need it.
+  // The longest normal stretch seen is 10,480 frames, so runs that never stall are unchanged, and the
+  // watchdog still catches a real lock.
+  if (since_change >= kPartyStallFrames && since_change % 60 >= 45 && since_change % 60 < 49) pad.buttons |= kButtonB;
+  // The same stall also moves the stick, for the lottery's two games (board/lottery.c), which wait on
+  // a human seat's stick with no time limit and which nothing else on the board leaves:
+  //   - the ball game (ExecBallGame) until the stick has cranked its handle one full turn. It counts
+  //     a sample only when an axis is past 57.6, the sample differs from the last one and the angle
+  //     grew, so the stick turns clockwise through up, right, down and left, two frames each;
+  //   - the scratch ticket (ExecScratchTicket) until the hand, which moves 8 pixels a frame toward
+  //     the stick inside a 192 by 96 box, has rubbed off all but 300 of the ticket's pixels. The
+  //     stick sends the hand to the top left corner, then sweeps it across row by row.
+  // The two alternate in a kStallCycle-frame cycle (kStallTurn frames of turning, then the sweep).
+  if (since_change >= kPartyStallFrames) {
+    const std::uint64_t in_cycle = (since_change - kPartyStallFrames) % kStallCycle;
+    if (in_cycle < kStallTurn) {
+      constexpr std::int16_t kTurn[4][2] = {{0, 32767}, {32767, 0}, {0, -32767}, {-32767, 0}};
+      const auto& dir = kTurn[(in_cycle / 2) % 4];
+      pad.stick_x = dir[0];
+      pad.stick_y = dir[1];
+    } else if (in_cycle < kStallTurn + kStallCorner) {
+      pad.stick_x = -32767;  // up and left, to the corner
+      pad.stick_y = 32767;
+    } else {
+      // Rows of kStallRow frames: across (right on even rows, left on odd ones), then one frame down.
+      const std::uint64_t in_sweep = in_cycle - kStallTurn - kStallCorner;
+      if (in_sweep % kStallRow == kStallRow - 1) {
+        pad.stick_y = -32767;
+      } else {
+        pad.stick_x = (in_sweep / kStallRow) % 2 == 0 ? 32767 : -32767;
+      }
+    }
+  }
   return pad;
 }
 

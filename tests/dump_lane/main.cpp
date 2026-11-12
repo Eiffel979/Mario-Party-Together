@@ -111,6 +111,7 @@ struct BootOptions {
   std::uint32_t perturb_samples = 32;  // sampled bytes per checkpoint with --perturb
   std::filesystem::path hash_items;    // --hash-items FILE: state_hash's parts at the last checkpoint
   bool note_module_hits = false;       // --note-module-hits: with --hash-items, a note per module hit
+  bool unlock_bowser = false;          // --party-unlock-bowser: Bowser's Gnarly Party on the wheel (diagnosis)
   bool frame_times = false;            // --frame-times: with --party, steady-state frame times
   bool conformance = false;            // --conformance: the runtime conformance suite instead of a boot run
   std::uint64_t save_load_diff = 0;    // --save-load-diff N: where a resumed run first differs, by hash item
@@ -577,14 +578,22 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
   // trail is the same as without them.
   mpt::TitleRegistry hooked;
   const bool items_wanted = !options.hash_items.empty();
-  if (items_wanted) {
+  // --party-unlock-bowser (the M4-03 sweep): the sixth board needs a gameplay boot flag, which no replay
+  // records, so such a run is diagnosis only.
+  const bool hooked_wanted = items_wanted || options.unlock_bowser;
+  if (options.unlock_bowser && !options.replay_out.empty()) {
+    std::printf("dump lane: --party-unlock-bowser is diagnosis only; a replay cannot record the unlock\n");
+    return 2;
+  }
+  if (hooked_wanted) {
     const mpt::Result added = hooked.add(
         mpt::TitleId::mp4,
         [&registry, &options]() {
           std::unique_ptr<mpt::ITitleRuntime> r = registry.createRuntime(mpt::TitleId::mp4);
           if (auto* m = dynamic_cast<mpt::mp4::Mp4Runtime*>(r.get())) {
-            m->setDebugHooks(true);
+            m->setDebugHooks(!options.hash_items.empty());
             m->setNoteModuleHits(options.note_module_hits);
+            if (options.unlock_bowser) m->setTestGameplayFlags(MPT_MP4_BOOT_UNLOCK_BOWSERS_GNARLY_PARTY);
           }
           return r;
         },
@@ -594,7 +603,7 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
       return 1;
     }
   }
-  auto started = mpt::Session::start(items_wanted ? hooked : registry, config);
+  auto started = mpt::Session::start(hooked_wanted ? hooked : registry, config);
   if (mpt::Result* failure = std::get_if<mpt::Result>(&started)) {
     std::printf("dump lane: session: %s\n", failure->error().c_str());
     return 1;
@@ -674,6 +683,8 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
     mpt::InputFrame in;
     in.frame = f;
     in.pads[0] = mpt::dump_lane::party_autopilot(options.script, f, tracker.key(), tracker.sinceChange());
+    // Diagnosis: --press adds buttons on top of the autopilot (to probe a soft lock, with --party-resume).
+    in.pads[0].buttons |= scripted_pad(options, f).buttons;
     const auto step_t0 = std::chrono::steady_clock::now();
     const mpt::Result stepped = session->step(in);
     if (options.frame_times) frame_clock.step(std::chrono::steady_clock::now() - step_t0, mp4);
@@ -693,6 +704,13 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
     raw.struct_size = sizeof raw;
     if (mp4 != nullptr) mp4->readParty(raw);
     tracker.observe(f + 1, {party.phase, raw.overlay_name, party.turn});
+    // The board the party really plays (M4-03): once a party is in progress, the module's board read
+    // must be the one asked for, or the run fails (a wheel window that missed would play board 0).
+    if (mp4 != nullptr && (raw.flags & MPT_MP4_PARTY_IN_PROGRESS) != 0 && raw.board != options.script.board) {
+      failure = "played board " + std::to_string(raw.board) + ", not --party-board " +
+                std::to_string(options.script.board);
+      break;
+    }
     mpt::dump_lane::crash_note_party(phase_name(party.phase), raw.overlay_name, raw.board, party.turn, party.max_turns);
     // The Director's phase and the module's raw read, whenever either changes (the evidence for the
     // end-of-party flags, docs/titles/mp4.md section 21).
@@ -787,6 +805,9 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
     if (!same && failure.empty()) failure = "the end-of-run save state did not round-trip";
   }
 
+  // The last state, for sweep tables (M4-03): the frame and hash the run stopped at.
+  std::printf("dump lane: final frame %llu hash %016llx\n", static_cast<unsigned long long>(session->frame()),
+              static_cast<unsigned long long>(session->runtime().stateHash()));
   const mpt::Replay replay = recorder.finish();
   if (!options.replay_out.empty() && !resumed) {
     const std::vector<std::byte> bytes = mpt::encode_replay(replay);
@@ -1125,8 +1146,19 @@ int main(int argc, char** argv) {
       }
     } else if (arg == "--party") {
       boot_options.party = true;
+    } else if (arg == "--party-unlock-bowser") {
+      boot_options.unlock_bowser = true;
     } else if (arg == "--party-board" && has_value) {
       boot_options.script.board = static_cast<std::int32_t>(std::strtol(argv[++i], nullptr, 10));
+      if (boot_options.script.wheel_to == 0) {
+        // The measured window (docs/titles/mp4.md, M4-03): the wheel takes the stick from frame 1,448
+        // of mentDll on; one kBoardWheelPulse slot per move, then 30 frames before A confirms.
+        // --party-wheel (after --party-board) overrides it.
+        const int moves = mpt::dump_lane::board_wheel_moves(boot_options.script.board);
+        boot_options.script.wheel_from = mpt::dump_lane::kBoardWheelFrom;
+        boot_options.script.wheel_to = mpt::dump_lane::kBoardWheelFrom + 30u +
+            mpt::dump_lane::kBoardWheelPulse * static_cast<std::uint64_t>(moves < 0 ? -moves : moves);
+      }
     } else if (arg == "--party-wheel" && has_value) {
       // FROM:TO, frames since mentDll started
       const std::string w = argv[++i];
@@ -1168,7 +1200,8 @@ int main(int argc, char** argv) {
       std::printf("usage: mpt_dump_lane [--boot <title> [--frames N] [--every N] [--seed S] [--perturb [--perturb-samples N]]\n"
                   "                     [--hash-items FILE [--note-module-hits]] [--conformance] [--save-load-diff N]\n"
                   "                     [--press button@frame[+frames][,...]]... [--capture DIR [--capture-every N]]\n"
-                  "                     [--party [--party-board N] [--party-wheel FROM:TO] [--watchdog N] [--replay FILE]\n"
+                  "                     [--party [--party-board N [--party-unlock-bowser]] [--party-wheel FROM:TO]\n"
+                  "                              [--watchdog N] [--replay FILE]\n"
                   "                              [--hash-items FILE [--note-module-hits]] [--frame-times]\n"
                   "                              [--party-save-at N FILE] [--party-resume FILE]\n"
                   "                              [--watch-word OFF,...] [--find-word VALUE@FRAME]\n"

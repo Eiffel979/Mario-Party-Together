@@ -83,6 +83,17 @@ struct SdkConfig {
   // SDK's manifest and every engine hashing through hashGamePointer/hashGameFunction use it; unset or
   // 0, they keep the presence sentinels. A plain function, so no host pointer is kept for it.
   std::uint64_t (*pointer_id)(const void* p) = nullptr;
+  // ARAM ranges that no DMA may touch, in either direction (ARStartDMA and ARQPostRequest, main RAM to
+  // ARAM and ARAM to main RAM). A transfer whose ARAM range [addr, addr + length) overlaps one faults
+  // the runtime with "<label>: ...". A per-title constant: a title guards ARAM it leaves out of its
+  // state hash because nothing on PC uses it, so any traffic there is a port bug (MP4: msm's region,
+  // ADR 0008, "Gate status after the writer fixes", point 3). Empty ranges are refused by create().
+  struct AramGuard {
+    std::uint32_t begin = 0;  // inclusive
+    std::uint32_t end = 0;    // exclusive
+    std::string label;
+  };
+  std::vector<AramGuard> aram_guards;
 };
 
 enum class StepStatus : std::uint8_t {

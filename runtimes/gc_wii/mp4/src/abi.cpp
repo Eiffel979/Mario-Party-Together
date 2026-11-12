@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "aram_checks.h"
 #include "copy_trap.h"
 #include "module_symbols.h"
 #include "mpt/core/input.h"
@@ -23,6 +24,7 @@
 #include "mpt/gc/musyx_engine.h"
 #include "mpt/gc/sdk.h"
 #include "mpt/gx/renderer.h"
+#include "mpt_gc/ar.h"
 #include "mpt_mp4_port.h"
 #include "mpt_mp4_reads.h"
 #include "mpt_mp4_rel.h"
@@ -210,6 +212,13 @@ bool boot(MptMp4Game& game, std::optional<mpt::SaveMedia> card, std::string& err
   mpt::gx::reset_game_visible_state();
   sc.state_regions.push_back(mpt::gx::game_visible_state());
   sc.pointer_id = &modulePointerId;  // stable function and module-data IDs in the SDK's manifest
+  // msm's ARAM region takes no DMA in either direction (ADR 0008, "Gate status after the writer fixes",
+  // point 3; aram_checks.h): the SDK faults the step with "ARAM msm region: ...".
+  {
+    const mpt::mp4::AramRange msm = mpt::mp4::msmRegion(AR_RESERVED_BYTES /* ARGetBaseAddress() */,
+                                                        mpt_mp4_armem_floor());
+    sc.aram_guards.push_back({msm.begin, msm.end, mpt::mp4::kMsmRegionLabel});
+  }
   for (auto r : gameStateRegions()) sc.state_regions.push_back(r);
 
   mpt::gc::MusyxEngine::reset();
@@ -385,29 +394,13 @@ std::vector<ArmemBlock> armemBlocks(const MptMp4Game& game) {
   return out;
 }
 
-// The ARAM alias check (finding 2): HuARMalloc's blocks lie in [HU_AMEM_BASE, ARAM's end), above the
-// SDK's ARAlloc range and apart from each other. Below HU_AMEM_BASE is the console's msm region
-// (msmSysInit checks that msm's ARAM fits there); on PC it is unused (MUSY_TARGET_PC). Empty when they
-// do; a fault otherwise, which fails the run.
+// The ARAM alias check (finding 2, aram_checks.h): HuARMalloc's blocks above the SDK's ARAlloc range,
+// at or above HU_AMEM_BASE and apart from each other. Empty when they are; a fault otherwise.
 std::string aramAlias(const MptMp4Game& game) {
   std::uint32_t addr[kArmemBlocksMax], size[kArmemBlocksMax];
   const std::int32_t n = mpt_mp4_armem_in_use(addr, size, kArmemBlocksMax);
-  if (n < 0 || n > kArmemBlocksMax) return "ARAM alias check: HuARMalloc's block list is broken";
-  const std::uint64_t floor = mpt_mp4_armem_floor();
-  const std::uint64_t top = game.sdk->aramInUse().size();
-  const std::uint64_t end = game.sdk->aram().size();
-  if (top > floor)
-    return "ARAM alias check: the SDK's ARAlloc range ends at " + std::to_string(top) +
-           ", above HuARMalloc's floor " + std::to_string(floor);
-  std::uint64_t prev_end = floor;
-  for (std::int32_t i = 0; i < n; ++i) {
-    const std::uint64_t a = addr[i], e = a + size[i];
-    if (a < prev_end || e > end)
-      return "ARAM alias check: HuARMalloc block [" + std::to_string(a) + ", " + std::to_string(e) +
-             ") overlaps msm's ARAM, the SDK's ARAlloc range or another block";
-    prev_end = e;
-  }
-  return {};
+  return mpt::mp4::aramAliasCheck(addr, size, n, kArmemBlocksMax, mpt_mp4_armem_floor(),
+                                  game.sdk->aramInUse().size(), game.sdk->aram().size());
 }
 
 MptMp4StepResult step(MptMp4Game* game, const MptMp4InputFrame* input) {

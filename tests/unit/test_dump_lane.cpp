@@ -4,6 +4,8 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -205,9 +207,61 @@ TEST_CASE("dump lane: the party autopilot moves mentDll's board wheel only in it
     return dump_lane::party_autopilot(script, 5000 + since, {PartyPhase::none, "mentDll", 0}, since);
   };
   CHECK(pad(480).buttons == kButtonA);  // before the window: the A pulses
-  CHECK(pad(500).buttons == kButtonDpadRight);
-  CHECK(pad(504).buttons == 0);
-  CHECK(pad(530).buttons == 0);  // one move only
+  // The stick, not the d-pad: Party Board's HuPadBtn masks the d-pad out, and the wheel reads |x| >= 50.
+  CHECK(pad(500).buttons == 0);
+  CHECK(pad(500).stick_x == 32767);
+  CHECK(pad(504).stick_x == 0);
+  CHECK(pad(530).stick_x == 0);  // one move only
   CHECK(pad(690).buttons == 0);  // no A inside the window
   CHECK(pad(720).buttons == kButtonA);
+  // A stall: B pulses too, between the A pulses, only after kPartyStallFrames.
+  {
+    const dump_lane::PartyScript none{};
+    auto board = [&](std::uint64_t since) {
+      return dump_lane::party_autopilot(none, 90000 + since, {PartyPhase::board, "w01Dll", 3}, since);
+    };
+    CHECK(board(dump_lane::kPartyStallFrames - 15).buttons == 0);
+    CHECK(board(dump_lane::kPartyStallFrames + 45).buttons == kButtonB);
+    CHECK(board(dump_lane::kPartyStallFrames + 60).buttons == kButtonA);
+    CHECK(board(dump_lane::kPartyStallFrames + 50).buttons == 0);
+    // The stall also moves the stick, and never before it: first it turns it clockwise (up, right,
+    // down, left, two frames a direction), for the lottery's handle.
+    CHECK(board(dump_lane::kPartyStallFrames - 1).stick_x == 0);
+    CHECK(board(dump_lane::kPartyStallFrames - 1).stick_y == 0);
+    const std::uint64_t at = dump_lane::kPartyStallFrames;
+    constexpr int kWant[4][2] = {{0, 32767}, {32767, 0}, {0, -32767}, {-32767, 0}};
+    for (std::uint64_t i = 0; i < dump_lane::kStallTurn; ++i) {
+      CHECK(board(at + i).stick_x == kWant[(i / 2) % 4][0]);
+      CHECK(board(at + i).stick_y == kWant[(i / 2) % 4][1]);
+    }
+    // Then it sweeps the scratch ticket's box: the hand moves 8 pixels a frame toward the stick,
+    // clamped to x 192..384 and y 192..288 (y down), and rubs a square around itself. From any start
+    // the sweep must visit every point of the box's 8 pixel grid.
+    for (const auto& start : {std::pair{384.0, 288.0}, std::pair{320.0, 240.0}, std::pair{192.0, 192.0}}) {
+      double x = start.first, y = start.second;
+      bool seen[25][13] = {};
+      for (std::uint64_t i = dump_lane::kStallTurn; i < dump_lane::kStallCycle; ++i) {
+        const PadState p = board(at + i);
+        const double sx = p.stick_x, sy = -static_cast<double>(p.stick_y);
+        const double len = std::sqrt(sx * sx + sy * sy);
+        REQUIRE(len > 0.0);
+        x = std::clamp(x + 8.0 * sx / len, 192.0, 384.0);
+        y = std::clamp(y + 8.0 * sy / len, 192.0, 288.0);
+        if (i + 1 >= dump_lane::kStallTurn + dump_lane::kStallCorner)  // from the corner on
+          seen[static_cast<int>((x - 192.0) / 8.0 + 0.5)][static_cast<int>((y - 192.0) / 8.0 + 0.5)] = true;
+      }
+      int missed = 0;
+      for (const auto& column : seen)
+        for (const bool cell : column) missed += cell ? 0 : 1;
+      CHECK(missed == 0);
+    }
+    // The cycle repeats.
+    CHECK(board(at + dump_lane::kStallCycle).stick_y == 32767);
+    CHECK(board(at + dump_lane::kStallCycle + 2).stick_x == 32767);
+  }
+  script.board = 1;  // two moves left
+  CHECK(pad(500).stick_x == -32767);
+  CHECK(pad(530).stick_x == 0);
+  CHECK(pad(500 + dump_lane::kBoardWheelPulse).stick_x == -32767);
+  CHECK(pad(500 + 2 * dump_lane::kBoardWheelPulse).stick_x == 0);
 }

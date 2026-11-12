@@ -1,0 +1,77 @@
+Apply order 0033 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+hsfdraw, EnvelopeExec, m442Dll: inverse matrices that reach game memory start as zero, not uninitialised stack, on MPT_PC
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+M4-03, the MTXInverse audit (the patch 0029 pattern; docs/titles/mp4.md section 20). MTXInverse and
+MTXInvXpose return 0 and leave the output untouched when the matrix is singular, which a model or a
+bone scaled to 0 makes it. Of the pin's call sites, three put an output that may be uninitialised
+into game memory:
+- hsfdraw.c objMesh, the billboard paths: mtx is set first only on the non-envelope path of a
+  model whose transform is applied, and MTXConcat stores it into DrawObjData's matrix and, by
+  MTXCopy, the object's constant data.
+- EnvelopeExec.c SetEnvelop, the multi-weight loop: sp170 is set first only by the single-weight
+  loop, and MTXMultVec takes the normals through it into the envelope's normal buffer (sp110 is
+  cleared with it: the dual-weight path's inverse of a unit-scale matrix sets it every time, but
+  it costs nothing to be sure).
+- m442Dll main.c fn_1_5EDC, a model hook: MTXConcat stores spC into the hook's matrix, which is
+  DrawObjData's.
+On PC the stale stack holds host frames, so these bytes would differ by code layout and run (the
+layout gate's seed 1 writer, patch 0029, was the same shape). Every other site either inverts a
+camera matrix (never singular), writes a persistent or already-set matrix, or only loads the result
+into GX (normal and texture matrices, not game state); the list is in docs/titles/mp4.md. Locals are
+zeroed at entry, so a path that set them first behaves as before. Unconditional on PC.
+
+diff --git a/src/REL/m442Dll/main.c b/src/REL/m442Dll/main.c
+index 824ba8b..e5d0641 100644
+--- a/src/REL/m442Dll/main.c
++++ b/src/REL/m442Dll/main.c
+@@ -1736,6 +1736,12 @@ void fn_1_5EDC(HU3DMODEL *model, float (*mtx)[4])
+     M442MainWork *var_r31;
+     s32 var_r30;
+ 
++#ifdef MPT_PC
++    /* MTXInverse leaves spC untouched when the hook's matrix is singular (the model scaled to 0), and
++     * the MTXConcat below stores it into the draw object's matrix, which is game memory: stale stack
++     * (host frames on PC) otherwise. It is zero instead. */
++    memset(spC, 0, sizeof(spC));
++#endif
+     var_r31 = model->hookData;
+     MTXInverse(mtx, spC);
+     spC[0][3] = spC[1][3] = spC[2][3] = 0.0f;
+diff --git a/src/game/EnvelopeExec.c b/src/game/EnvelopeExec.c
+index d2ecd86..105a0ed 100644
+--- a/src/game/EnvelopeExec.c
++++ b/src/game/EnvelopeExec.c
+@@ -225,6 +225,14 @@ static void SetEnvelop(HSFCENV *arg0) {
+     Mtx sp80;
+     Mtx sp50;
+ 
++#ifdef MPT_PC
++    /* The normal matrices: MTXInvXpose leaves them untouched when a bone matrix is singular (a bone
++     * scaled to 0), and the multi-weight loop then multiplies the model's normals by them into the
++     * envelope's normal buffer, reading stale stack (host frames on PC) when no single-weight vertex
++     * set them first. They are zero instead. */
++    memset(sp170, 0, sizeof(sp170));
++    memset(sp110, 0, sizeof(sp110));
++#endif
+     var_r27 = arg0->singleData;
+     for (i = 0; i < arg0->singleCount; i++, var_r27++) {
+         temp_r18 = var_r27->normal;
+diff --git a/src/game/hsfdraw.c b/src/game/hsfdraw.c
+index 213237e..43124d5 100755
+--- a/src/game/hsfdraw.c
++++ b/src/game/hsfdraw.c
+@@ -211,6 +211,13 @@ static void objMesh(HU3DMODEL *modelP, HSFOBJECT *objPtr) {
+     float z;
+     HSFBUFFER *faceBuf;
+ 
++#ifdef MPT_PC
++    /* A billboard's MTXInverse leaves mtx untouched when its matrix is singular (a model scaled to 0),
++     * and the MTXConcat after it then stores mtx into the draw object's and the constant data's
++     * matrices. Only the non-envelope path sets mtx first; elsewhere it held stale stack (host frames
++     * on PC). It is zero instead. */
++    memset(mtx, 0, sizeof(mtx));
++#endif
+     faceBuf = objPtr->mesh.face;
+     faceData = faceBuf->data;
+     drawObj = &DrawObjData[DrawObjIdx];

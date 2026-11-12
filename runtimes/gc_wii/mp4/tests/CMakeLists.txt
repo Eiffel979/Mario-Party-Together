@@ -47,3 +47,16 @@ set_source_files_properties("${MPT_MP4_PB}/src/game/EnvelopeExec.c"
                             TARGET_DIRECTORY mpt_mp4_envelope_tests PROPERTIES COMPILE_OPTIONS "${MPT_MP4_NOWARN}")
 target_compile_options(mpt_mp4_envelope_tests PRIVATE ${MPT_MP4_WARN_FLAGS})
 add_test(NAME mp4_envelope COMMAND mpt_mp4_envelope_tests)
+
+# A second HuSprAnimRead of one anim file shares the first conversion (patch 0032, the M4-03 seed 2
+# crash in byteswap_animbankdata): sprman.c and byteswap.cpp from the patched pin on a hand-made
+# big-endian anim file (no dump). No renderer (mpt::gx) on the link line, like the tests above: the
+# test stubs the two GX calls sprman.c makes, and the rest is the frontend's MTX. Listing the renderer
+# archive ahead of the frontend's also fails under GNU ld, which reads each archive once.
+add_executable(mpt_mp4_sprman_anim_tests test_sprman_anim.c "${MPT_MP4_PB}/src/game/sprman.c"
+                                         $<TARGET_OBJECTS:mpt_mp4_byteswap>)
+target_link_libraries(mpt_mp4_sprman_anim_tests PRIVATE mpt_mp4_game_flags)
+set_source_files_properties("${MPT_MP4_PB}/src/game/sprman.c"
+                            TARGET_DIRECTORY mpt_mp4_sprman_anim_tests PROPERTIES COMPILE_OPTIONS "${MPT_MP4_NOWARN}")
+target_compile_options(mpt_mp4_sprman_anim_tests PRIVATE ${MPT_MP4_WARN_FLAGS})
+add_test(NAME mp4_sprman_anim COMMAND mpt_mp4_sprman_anim_tests)

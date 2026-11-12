@@ -1,5 +1,6 @@
 // DVD over a synthetic in-memory file source, and ARAM/ARQ (E10, ADR 0007 §4).
 #include <cstring>
+#include <string>
 
 #include "harness.h"
 #include "mpt/gc/file_source.h"
@@ -247,6 +248,104 @@ TEST_CASE("ARAM DMA outside ARAM is a fault") {
   }};
   auto sdk = boot(g);
   CHECK(step(*sdk) == StepStatus::faulted);
+}
+
+// SdkConfig::aram_guards (ADR 0008, "Gate status after the writer fixes", point 3: MP4's msm region). A
+// transfer that overlaps a guarded range faults in either direction, by DMA or by ARQ, with the guard's
+// label first; transfers that end at the range or start at its end do not, and nothing is copied.
+namespace {
+
+constexpr u32 kGuardBegin = 0x10000, kGuardEnd = 0x20000;
+
+SdkConfig guardedConfig() {
+  SdkConfig cfg;
+  cfg.aram_guards.push_back({kGuardBegin, kGuardEnd, "ARAM test region"});
+  return cfg;
+}
+
+void expectGuardFault(Game& g, const char* direction) {
+  auto sdk = boot(g, guardedConfig());
+  CHECK(step(*sdk) == StepStatus::faulted);
+  CHECK(sdk->fault().rfind("ARAM test region: ", 0) == 0);
+  CHECK(sdk->fault().find(direction) != std::string::npos);
+  // Nothing reached the guarded range.
+  bool zero = true;
+  for (u32 i = kGuardBegin; i < kGuardEnd; ++i) zero = zero && sdk->aram()[i] == std::byte{0};
+  CHECK(zero);
+}
+
+}  // namespace
+
+TEST_CASE("ARAM guard: transfers next to the guarded range pass") {
+  bool ok = true;
+  Game g{[&] {
+    static std::byte src[64], dst[64];
+    std::memset(src, 0x5C, sizeof src);
+    ARInit(nullptr, 0);
+    ARStartDMA(ARAM_DIR_MRAM_TO_ARAM, reinterpret_cast<uintptr_t>(src), kGuardBegin - 64, 64);  // ends at begin
+    ARStartDMA(ARAM_DIR_MRAM_TO_ARAM, reinterpret_cast<uintptr_t>(src), kGuardEnd, 64);         // starts at end
+    ARStartDMA(ARAM_DIR_ARAM_TO_MRAM, reinterpret_cast<uintptr_t>(dst), kGuardEnd, 64);
+    ARStartDMA(ARAM_DIR_MRAM_TO_ARAM, reinterpret_cast<uintptr_t>(src), kGuardBegin, 0);  // nothing to move
+    ok = std::memcmp(src, dst, sizeof dst) == 0;
+  }};
+  auto sdk = boot(g, guardedConfig());
+  CHECK(step(*sdk) == StepStatus::halted);
+  CHECK(ok);
+}
+
+TEST_CASE("ARAM guard: main RAM to ARAM into the guarded range faults (DMA)") {
+  Game g{[] {
+    static std::byte b[64];
+    std::memset(b, 0xA5, sizeof b);
+    ARInit(nullptr, 0);
+    ARStartDMA(ARAM_DIR_MRAM_TO_ARAM, reinterpret_cast<uintptr_t>(b), kGuardBegin - 32, 64);  // straddles begin
+  }};
+  expectGuardFault(g, "main RAM to ARAM");
+}
+
+TEST_CASE("ARAM guard: ARAM to main RAM from the guarded range faults (DMA)") {
+  Game g{[] {
+    static std::byte b[64];
+    ARInit(nullptr, 0);
+    ARStartDMA(ARAM_DIR_ARAM_TO_MRAM, reinterpret_cast<uintptr_t>(b), kGuardEnd - 32, 64);  // straddles end
+  }};
+  expectGuardFault(g, "ARAM to main RAM");
+}
+
+TEST_CASE("ARAM guard: main RAM to ARAM into the guarded range faults (ARQ)") {
+  Game g{[] {
+    static std::byte b[256];
+    static ARQRequest req;
+    std::memset(b, 0xA5, sizeof b);
+    ARQInit();
+    ARQPostRequest(&req, 1, ARQ_TYPE_MRAM_TO_ARAM, ARQ_PRIORITY_HIGH, reinterpret_cast<uintptr_t>(b),
+                   kGuardBegin + 0x100, sizeof b, nullptr);
+  }};
+  expectGuardFault(g, "main RAM to ARAM");
+}
+
+TEST_CASE("ARAM guard: ARAM to main RAM from the guarded range faults (ARQ)") {
+  Game g{[] {
+    static std::byte b[256];
+    static ARQRequest req;
+    ARQInit();
+    ARQPostRequest(&req, 1, ARQ_TYPE_ARAM_TO_MRAM, ARQ_PRIORITY_HIGH, kGuardBegin, reinterpret_cast<uintptr_t>(b),
+                   sizeof b, nullptr);
+  }};
+  expectGuardFault(g, "ARAM to main RAM");
+}
+
+TEST_CASE("ARAM guard: create() refuses an empty, unlabelled or out-of-range guard") {
+  Game g{[] {}};
+  std::unique_ptr<Sdk> sdk;
+  for (const SdkConfig::AramGuard& bad : {SdkConfig::AramGuard{0x100, 0x100, "empty"},
+                                          SdkConfig::AramGuard{0x200, 0x100, "backwards"},
+                                          SdkConfig::AramGuard{0x100, 0x200, ""},
+                                          SdkConfig::AramGuard{0x100, (16u << 20) + 1, "past ARAM"}}) {
+    SdkConfig cfg;
+    cfg.aram_guards.push_back(bad);
+    CHECK_FALSE(Sdk::create(cfg, &gameMain, &g, sdk).ok());
+  }
 }
 
 // ABI v1.4 memory_use's I/O counts (qa, #72): every DVD read and every non-empty ARAM transfer counts
