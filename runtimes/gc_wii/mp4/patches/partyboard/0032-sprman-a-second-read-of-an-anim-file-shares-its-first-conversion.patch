@@ -39,7 +39,7 @@ diff --git a/src/game/sprman.c b/src/game/sprman.c
 index 7d05778..9b77e81 100644
 --- a/src/game/sprman.c
 +++ b/src/game/sprman.c
-@@ -230,6 +230,25 @@ ANIMDATA *HuSprAnimRead(void *data)
+@@ -230,6 +230,30 @@ ANIMDATA *HuSprAnimRead(void *data)
          anim->useNum++;
          return anim;
      }
@@ -51,7 +51,12 @@ index 7d05778..9b77e81 100644
 +     * offset (RoundItemInit's four Hu3DAnimCreate on one file: an access violation in
 +     * byteswap_animbankdata). The first read leaves a mark and the converted ANIMDATA in the file's
 +     * header, which nothing reads after conversion; a later read shares that ANIMDATA as the console
-+     * does. The mark's first half is bankNum and patNum on disc, which are never negative. */
++     * does. The mark's first half is bankNum and patNum on disc, which are never negative.
++     * The mark stays when the last kill frees the shared ANIMDATA (Hu3DAnimKill, HuSprAnimKill),
++     * which only see the ANIMDATA. A read after that cannot happen in code that works on the
++     * console: there the ANIMDATA is the file, and the last kill frees the file itself, so reading
++     * the same buffer again is already a use after free. Every HuData read decodes into a new
++     * buffer, whose header the decode overwrites, so a new read of the file never finds a mark. */
 +    {
 +        u32 mark;
 +        memcpy(&mark, data, sizeof(mark));
@@ -65,7 +70,7 @@ index 7d05778..9b77e81 100644
      anim = HuMemDirectMalloc(HEAP_DATA, sizeof(ANIMDATA));
      byteswap_animdata(data, anim);
      anim->valid = ANIM_DATA_ALLOCATION_VALID;
-@@ -293,6 +312,15 @@ ANIMDATA *HuSprAnimRead(void *data)
+@@ -293,6 +317,15 @@ ANIMDATA *HuSprAnimRead(void *data)
          bmp->data = (void *)((uintptr_t)bmp->data+(uintptr_t)data);
      }
      anim->useNum = 0;
