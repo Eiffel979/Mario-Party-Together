@@ -1215,6 +1215,12 @@ int main(int argc, char** argv) {
   }
   // A party needs far more than the boot check's 600 frames: a 20-turn party is about 150,000.
   if (boot_options.party && !frames_given) boot_options.frames = 1'000'000;
+  // --party-unlock-bowser acts only on a --party run's boot (party_run), so anywhere else it would be
+  // ignored without a word. A replay never records the unlock, so --verify-replay cannot use it either.
+  if (boot_options.unlock_bowser && (!boot_options.party || !boot_options.verify_replay.empty())) {
+    std::printf("dump lane: --party-unlock-bowser needs --party and cannot go with --verify-replay\n");
+    return 2;
+  }
   const std::string dump_dir_env = environment("MPT_DUMP_DIR");
   if (dump_dir_env.empty()) {
     std::puts("dump lane: MPT_DUMP_DIR is not set, skipping (manual local lane, ADR 0006)");
