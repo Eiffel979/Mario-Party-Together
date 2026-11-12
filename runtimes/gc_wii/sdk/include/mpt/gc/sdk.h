@@ -88,6 +88,12 @@ struct SdkConfig {
   // the runtime with "<label>: ...". A per-title constant: a title guards ARAM it leaves out of its
   // state hash because nothing on PC uses it, so any traffic there is a port bug (MP4: msm's region,
   // ADR 0008, "Gate status after the writer fixes", point 3). Empty ranges are refused by create().
+  // Two SDK writes to ARAM do not pass the guard: ARAlloc's memset of the block it returns and
+  // mpt_gc_ARClear (a title allocator's own blocks, MP4's HuARMalloc above its floor). Both write zeros
+  // only and move no bytes between main RAM and ARAM, so a guarded range they reach still holds the
+  // zeros it held at boot, which is what leaving it out of the hash relies on. The guard is on DMA
+  // because DMA is the only way a game's bytes get into or out of ARAM. (MP4 calls ARAlloc nowhere:
+  // msmSysInit takes its skipARInit path, audio.c.)
   struct AramGuard {
     std::uint32_t begin = 0;  // inclusive
     std::uint32_t end = 0;    // exclusive
