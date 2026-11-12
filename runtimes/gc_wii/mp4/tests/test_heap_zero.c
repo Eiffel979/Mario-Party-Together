@@ -73,9 +73,8 @@ static void testHuMem(void) {
 
 static void testMsm(void) {
   /* msm places blocks by its own policy, so fill the start of the heap through allocations, free
-   * them all and check what comes back: every byte it returns there held the pattern before. (Not to
-   * the heap's end: msm's PC block header is 48 bytes where its layout assumes 32, so each block takes
-   * 16 bytes more than msm accounts for, and a full heap runs past its end; see mp4.md section 11.) */
+   * them all and check what comes back: every byte it returns there held the pattern before. (Filling
+   * to the heap's end, inside guard bytes, is test_msm_heap.c's job.) */
   enum { kMax = 64 };
   unsigned char *blocks[kMax];
   int n = 0;
