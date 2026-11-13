@@ -27,8 +27,19 @@ set(MPT_MP4_RECIPE_CORE_INCLUDE_DIR "${MPT_CORE_INCLUDE_DIR}")
 cmake_path(NORMAL_PATH MPT_MP4_RECIPE_CORE_INCLUDE_DIR)
 # Clang for the module: this compiler when it is Clang, otherwise the recipe finds it on PATH.
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-  set(MPT_MP4_RECIPE_CLANG_C "${CMAKE_C_COMPILER}")
   set(MPT_MP4_RECIPE_CLANG_CXX "${CMAKE_CXX_COMPILER}")
+  # Without the C language enabled here, CMAKE_C_COMPILER is still the preset's bare name
+  # ("clang-cl"), which the shell cannot find outside a developer prompt. Bake an absolute path:
+  # clang-cl compiles C too; elsewhere look next to the C++ compiler.
+  if(IS_ABSOLUTE "${CMAKE_C_COMPILER}")
+    set(MPT_MP4_RECIPE_CLANG_C "${CMAKE_C_COMPILER}")
+  elseif(WIN32)
+    set(MPT_MP4_RECIPE_CLANG_C "${CMAKE_CXX_COMPILER}")
+  else()
+    get_filename_component(_cxx_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    find_program(MPT_MP4_RECIPE_CLANG NAMES clang HINTS "${_cxx_dir}")
+    set(MPT_MP4_RECIPE_CLANG_C "${MPT_MP4_RECIPE_CLANG}")
+  endif()
 elseif(WIN32)
   get_filename_component(_cl_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
   find_program(MPT_MP4_RECIPE_CLANG_CL NAMES clang-cl
