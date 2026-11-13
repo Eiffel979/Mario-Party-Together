@@ -1,0 +1,92 @@
+Apply order 0035 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+msm: blocks are sized and placed with the PC header, on MPT_PC
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+ADR 0008, "Gate status after the implementation", finding 1. msmMemAlloc sized and placed every block
+for the console's 32-byte MSMBLOCK, but on a 64-bit host the header is 48 bytes (three pointers). A
+block's user area therefore started 16 bytes later than msm accounted for, each block used 16 bytes
+more than it reserved, and a heap filled close to its end ran past it into the next HuMem block.
+On PC, MSMBLOCK is padded to 64 bytes so the user area keeps the console's 32-byte alignment, a
+static assertion pins that size on every 64-bit host (LLP64 and LP64), and msmMemAlloc sizes,
+places and zeroes blocks with sizeof(MSMBLOCK). msmMemFree already found the header with base[-1].
+A request larger than the heap, or a block whose end would pass the heap's end, returns NULL.
+Changes how msm lays out its heap, so state hashes move (docs/titles/mp4.md section 11).
+
+diff --git a/src/msm/msmmem.c b/src/msm/msmmem.c
+index 58f4a01..5d0ea55 100644
+--- a/src/msm/msmmem.c
++++ b/src/msm/msmmem.c
+@@ -11,9 +11,23 @@ typedef struct MSMBlock_s {
+     u32 freeSize;
+     u32 size;
+     void* ptr;
++#ifdef MPT_PC
++    /* The header takes sizeof(MSMBLOCK) bytes and the user area behind it keeps the console's
++     * 32-byte alignment: 64 bytes on a 64-bit host (8-byte pointers on LLP64 and LP64 alike),
++     * where the console's header is 32. */
++    char pad[32];
++#else
+     char pad[12];
++#endif
+ } MSMBLOCK;
+ 
++#ifdef MPT_PC
++_Static_assert(sizeof(MSMBLOCK) == 64, "msm's PC block header is 64 bytes on every 64-bit host");
++#define MSM_HEADER ((u32)sizeof(MSMBLOCK))
++#else
++#define MSM_HEADER 0x20
++#endif
++
+ typedef struct MSMMem_s {
+     void *ptr;
+     u32 size;
+@@ -65,7 +79,13 @@ void* msmMemAlloc(u32 size) {
+     MSMBLOCK* blockPrev;
+     MSMBLOCK* blockNext;
+ 
+-    allocSize = size + 0x20;
++#ifdef MPT_PC
++    /* A request larger than the whole heap fails before allocSize can wrap. */
++    if (size > mem.size) {
++        return NULL;
++    }
++#endif
++    allocSize = size + MSM_HEADER;
+     alignOfs = allocSize & 0x1F;
+     if (alignOfs) {
+         allocSize += 0x20 - alignOfs;
+@@ -86,13 +106,19 @@ void* msmMemAlloc(u32 size) {
+     
+     freeSize = blockPrev->freeSize;
+     if (freeSize != 0) {
+-        freeSize -= 0x20;
++        freeSize -= MSM_HEADER;
+     }
+     block = (void*)((uintptr_t)blockPrev->ptr + (freeSize));
+     blockNext = blockPrev->next;
+     if ((mem.ptr > block) || ((void*)((uintptr_t)mem.ptr + (uintptr_t)mem.size) <= block)) {
+         return NULL;
+     }
++#ifdef MPT_PC
++    /* The whole block, header included, ends inside msm's heap, or there is no block. */
++    if ((uintptr_t)block + allocSize > (uintptr_t)mem.ptr + mem.size) {
++        return NULL;
++    }
++#endif
+     block->freeSize = allocSize;
+     block->size = blockPrev->size - allocSize;
+     block->ptr = (block + 1);
+@@ -109,11 +135,11 @@ void* msmMemAlloc(u32 size) {
+     }
+ #ifdef MPT_PC
+     /* ADR 0008, "Stale heap bytes": the whole block is zero when it is returned: every byte up
+-     * to where msmMemAlloc places the next block header (ptr + allocSize - 0x20), but never past the
++     * to where msmMemAlloc places the next block header (ptr + allocSize - MSM_HEADER), but never past the
+      * end of msm's heap. msm sub-allocates inside one HEAP_MUSIC block (audio.c), so HuMem's zeroing
+      * never reaches its reuse. */
+     {
+-        uintptr_t end = (uintptr_t)block->ptr + (allocSize - 0x20);
++        uintptr_t end = (uintptr_t)block->ptr + (allocSize - MSM_HEADER);
+         uintptr_t heap_end = (uintptr_t)mem.ptr + mem.size;
+         if (end > heap_end) {
+             end = heap_end;
