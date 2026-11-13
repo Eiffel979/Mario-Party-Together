@@ -106,7 +106,7 @@ class ConfigureStep final : public BuildStep {
     for (const std::string& a : config_.cmake_args) argv.push_back(a);
     argv.push_back("-DMPT_MP4_SOURCE_STATES=" + source_states(context));
     context.report(0.0, "cmake");
-    return runTool(context, {argv, {}, {}}, "Configuring the game module");
+    return runTool(context, {argv, {}, config_.env}, "Configuring the game module");
   }
 
  private:
@@ -121,7 +121,7 @@ class CompileStep final : public BuildStep {
     Tools tools;
     if (Result r = findTools(config_, tools); !r) return r;
     context.report(0.0, "mp4_game");
-    return runTool(context, {{tools.cmake, "--build", moduleBuildDir(context).string(), "--target", "mp4_game"}, {}, {}},
+    return runTool(context, {{tools.cmake, "--build", moduleBuildDir(context).string(), "--target", "mp4_game"}, {}, config_.env},
                    "Compiling the game module");
   }
 
@@ -190,7 +190,7 @@ class Mp4Recipe final : public asset_import::BuildRecipe {
   Result check_toolchain(ProcessRunner& runner, ToolchainInfo& info) const override {
     Tools tools;
     if (Result r = findTools(config_, tools); !r) return r;
-    const ProcessResult r = runner.run({{tools.c, "--version"}, {}, {}});
+    const ProcessResult r = runner.run({{tools.c, "--version"}, {}, config_.env});
     if (!r.ok()) return Result::failure(std::string(kClangC) + " --version failed. Reinstall LLVM and try again.");
     if (!parse_clang_version(r.output, info))
       return Result::failure(std::string(kClangC) + " did not report a Clang version and target.");

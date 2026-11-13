@@ -24,6 +24,9 @@ std::unique_ptr<mpt::asset_import::BuildRecipe> make_mp4_recipe() {
   for (const char* arg : kMp4RecipeCmakeArgs) config.cmake_args.emplace_back(arg);
   config.runtime_build_version = MPT_MP4_RECIPE_RUNTIME_VERSION;
   config.build_type = MPT_MP4_RECIPE_BUILD_TYPE;
+  for (const auto& kv : kMp4RecipeEnv) {
+    if (kv[0] != nullptr) config.env.emplace(kv[0], kv[1]);
+  }
   std::string error;
   return mpt::mp4::make_recipe(config, error);  // null if the source tree has no lock: --dump explains
 }

@@ -13,6 +13,7 @@
 #pragma once
 
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -49,6 +50,10 @@ struct RecipeConfig {
   std::string runtime_build_version = "mp4-module-1";
   // CMAKE_BUILD_TYPE of the module build; part of the build ID (MPT_MP4_RECIPE_BUILD_TYPE).
   std::string build_type = "Release";
+  // Environment for the tools above, added to the inherited one. On Windows the host build bakes in the
+  // developer environment it was configured in (INCLUDE, LIB, LIBPATH, PATH), so the module builds when
+  // the shell is started outside a developer prompt. Empty: inherit as is.
+  std::map<std::string, std::string> env;
 };
 
 // Fails if the source tree has no runtimes/gc_wii/mp4/decomp.lock.
