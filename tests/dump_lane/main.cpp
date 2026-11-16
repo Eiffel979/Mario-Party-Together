@@ -113,6 +113,8 @@ struct BootOptions {
   bool note_module_hits = false;       // --note-module-hits: with --hash-items, a note per module hit
   bool unlock_bowser = false;          // --party-unlock-bowser: Bowser's Gnarly Party on the wheel (diagnosis)
   bool frame_times = false;            // --frame-times: with --party, steady-state frame times
+  std::filesystem::path frame_log;     // --frame-log FILE: with --party, one line per step (implies --frame-times)
+  std::filesystem::path audio_out;     // --audio-out FILE: with --party, the game's audio as raw S16 PCM
   bool conformance = false;            // --conformance: the runtime conformance suite instead of a boot run
   std::uint64_t save_load_diff = 0;    // --save-load-diff N: where a resumed run first differs, by hash item
   // M2: scripted input on player 1 and frame captures.
@@ -517,6 +519,7 @@ struct FrameClock {
   bool booted = false;
   std::string overlay;
   std::uint64_t dvd = 0, aram = 0;
+  std::FILE* log = nullptr;  // --frame-log: "<frame> <step ms> <overlay> <dvd reads> <aram transfers>"
 
   void step(std::chrono::steady_clock::duration d, mpt::mp4::Mp4Runtime* mp4) {
     const double ms = std::chrono::duration<double, std::milli>(d).count();
@@ -535,6 +538,11 @@ struct FrameClock {
     const std::string now = raw.overlay_name;
     if (now == "bootDll") booted = true;
     const bool is_exempt = !booted || now != overlay || dvd_now != dvd || aram_now != aram;
+    if (log != nullptr) {
+      std::fprintf(log, "%llu %.3f %s %llu %llu\n", static_cast<unsigned long long>(frames - 1), ms,
+                   now.empty() ? "-" : now.c_str(), static_cast<unsigned long long>(dvd_now),
+                   static_cast<unsigned long long>(aram_now));
+    }
     overlay = now;
     dvd = dvd_now;
     aram = aram_now;
@@ -613,6 +621,36 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
   if (mp4 != nullptr) mp4->setReportSink(&print_report, nullptr);
   HashItemTally tally;
   FrameClock frame_clock;
+  std::unique_ptr<std::FILE, int (*)(std::FILE*)> frame_log(nullptr, &std::fclose);
+  if (!options.frame_log.empty()) {
+    std::FILE* f = nullptr;
+#if defined(_WIN32)
+    if (_wfopen_s(&f, options.frame_log.c_str(), L"w") != 0) f = nullptr;
+#else
+    f = std::fopen(options.frame_log.c_str(), "w");
+#endif
+    frame_log.reset(f);
+    if (!frame_log) {
+      std::printf("dump lane: cannot write %s\n", options.frame_log.string().c_str());
+      return 1;
+    }
+    frame_clock.log = frame_log.get();
+  }
+  // --audio-out: the runtime's audio, as stepped (game output: the path guard keeps it out of the repo).
+  std::unique_ptr<std::FILE, int (*)(std::FILE*)> audio_out(nullptr, &std::fclose);
+  if (!options.audio_out.empty()) {
+    std::FILE* f = nullptr;
+#if defined(_WIN32)
+    if (_wfopen_s(&f, options.audio_out.c_str(), L"wb") != 0) f = nullptr;
+#else
+    f = std::fopen(options.audio_out.c_str(), "wb");
+#endif
+    audio_out.reset(f);
+    if (!audio_out) {
+      std::printf("dump lane: cannot write %s\n", options.audio_out.string().c_str());
+      return 1;
+    }
+  }
   std::printf("dump lane: party autopilot, seed %llu, board %d, watchdog %llu frames\n",
               static_cast<unsigned long long>(options.seed), options.script.board,
               static_cast<unsigned long long>(options.watchdog));
@@ -688,6 +726,10 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
     const auto step_t0 = std::chrono::steady_clock::now();
     const mpt::Result stepped = session->step(in);
     if (options.frame_times) frame_clock.step(std::chrono::steady_clock::now() - step_t0, mp4);
+    if (audio_out && stepped) {
+      const mpt::AudioChunk chunk = session->runtime().audio();
+      if (!chunk.samples.empty()) std::fwrite(chunk.samples.data(), sizeof(std::int16_t), chunk.samples.size(), audio_out.get());
+    }
     if (!resumed && session->frame() == f + 1) {
       if (mpt::Result r = recorder.record(in, *session); !r) {
         failure = "record: " + r.error();
@@ -1126,6 +1168,11 @@ int main(int argc, char** argv) {
       return 0;
     } else if (arg == "--frame-times") {
       boot_options.frame_times = true;
+    } else if (arg == "--audio-out" && has_value) {
+      boot_options.audio_out = argv[++i];
+    } else if (arg == "--frame-log" && has_value) {
+      boot_options.frame_times = true;
+      boot_options.frame_log = argv[++i];
     } else if (arg == "--note-module-hits") {
       boot_options.note_module_hits = true;
     } else if (arg == "--perturb-samples" && has_value) {
@@ -1202,7 +1249,7 @@ int main(int argc, char** argv) {
                   "                     [--press button@frame[+frames][,...]]... [--capture DIR [--capture-every N]]\n"
                   "                     [--party [--party-board N [--party-unlock-bowser]] [--party-wheel FROM:TO]\n"
                   "                              [--watchdog N] [--replay FILE]\n"
-                  "                              [--hash-items FILE [--note-module-hits]] [--frame-times]\n"
+                  "                              [--hash-items FILE [--note-module-hits]] [--frame-times] [--frame-log FILE] [--audio-out FILE]\n"
                   "                              [--party-save-at N FILE] [--party-resume FILE]\n"
                   "                              [--watch-word OFF,...] [--find-word VALUE@FRAME]\n"
                   "                              [--watch-write OFF,...@FRAME] [--dump-arena FRAME FILE]]\n"
@@ -1258,7 +1305,9 @@ int main(int argc, char** argv) {
   // Captures (the user's game output) and the caches (an extracted disc, built modules, decomp
   // checkouts) must stay outside the repository too, and so must --hash-items (it names the game's
   // symbols).
-  const std::array<mpt::dump_lane::GuardedPath, 7> written = {{
+  const std::array<mpt::dump_lane::GuardedPath, 9> written = {{
+      {"--audio-out", boot_options.audio_out},
+      {"--frame-log", boot_options.frame_log},
       {"--party-save-at", boot_options.party_save},
       {"--dump-arena", boot_options.watch.dump_path},
       {"--capture", boot_options.capture_dir},
