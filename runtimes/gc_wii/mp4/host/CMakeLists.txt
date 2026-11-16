@@ -27,8 +27,19 @@ set(MPT_MP4_RECIPE_CORE_INCLUDE_DIR "${MPT_CORE_INCLUDE_DIR}")
 cmake_path(NORMAL_PATH MPT_MP4_RECIPE_CORE_INCLUDE_DIR)
 # Clang for the module: this compiler when it is Clang, otherwise the recipe finds it on PATH.
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-  set(MPT_MP4_RECIPE_CLANG_C "${CMAKE_C_COMPILER}")
   set(MPT_MP4_RECIPE_CLANG_CXX "${CMAKE_CXX_COMPILER}")
+  # Without the C language enabled here, CMAKE_C_COMPILER is still the preset's bare name
+  # ("clang-cl"), which the shell cannot find outside a developer prompt. Bake an absolute path:
+  # clang-cl compiles C too; elsewhere look next to the C++ compiler.
+  if(IS_ABSOLUTE "${CMAKE_C_COMPILER}")
+    set(MPT_MP4_RECIPE_CLANG_C "${CMAKE_C_COMPILER}")
+  elseif(WIN32)
+    set(MPT_MP4_RECIPE_CLANG_C "${CMAKE_CXX_COMPILER}")
+  else()
+    get_filename_component(_cxx_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    find_program(MPT_MP4_RECIPE_CLANG NAMES clang HINTS "${_cxx_dir}")
+    set(MPT_MP4_RECIPE_CLANG_C "${MPT_MP4_RECIPE_CLANG}")
+  endif()
 elseif(WIN32)
   get_filename_component(_cl_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
   find_program(MPT_MP4_RECIPE_CLANG_CL NAMES clang-cl
@@ -134,6 +145,21 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_mp4_id_inputs}
 file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/mp4_recipe_build_id.txt"
      CONTENT "${_mp4_manifest}recipe_args ${_args_hash}\n${_args_text}${_args_paths}" @ONLY)
 message(STATUS "runtimes/gc_wii/mp4/host: the recipe builds MP4 module ${MPT_MP4_RECIPE_RUNTIME_VERSION}")
+# The module build runs clang-cl, lld-link and rc, which need the MSVC developer environment (the
+# Windows SDK and CRT headers and libraries). Bake the one this build was configured in, so the shell
+# can build a module when it is started from Explorer or a plain terminal. Developer paths only, like
+# the programs above; nothing from a dump.
+set(MPT_MP4_RECIPE_ENV "")
+if(WIN32)
+  foreach(_n INCLUDE LIB LIBPATH PATH)
+    if(DEFINED ENV{${_n}})
+      set(_v "$ENV{${_n}}")
+      string(REPLACE "\\" "\\\\" _v "${_v}")
+      string(REPLACE "\"" "\\\"" _v "${_v}")
+      string(APPEND MPT_MP4_RECIPE_ENV "    {\"${_n}\", \"${_v}\"},\n")
+    endif()
+  endforeach()
+endif()
 configure_file(recipe_config.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/recipe_config.h" @ONLY)
 
 add_library(mpt_mp4_register STATIC src/register.cpp)

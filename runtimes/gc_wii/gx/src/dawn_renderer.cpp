@@ -136,6 +136,12 @@ class DawnRenderer final : public Renderer {
                     ("mpt-gx-cache-" + std::to_string(reinterpret_cast<uintptr_t>(this)));
       std::filesystem::create_directories(temp_cache_, ec);
       cache_dir_ = temp_cache_.string();
+    } else {
+      // aurora's SQLite caches open files under cachePath but never create it: without this the
+      // pipeline cache fails to open and every run compiles its shaders again.
+      std::error_code ec;
+      std::filesystem::create_directories(
+          std::filesystem::path(std::u8string(cache_dir_.begin(), cache_dir_.end())), ec);
     }
     aurora::g_config = AuroraConfig{};
     aurora::g_config.appName = "Mario Party Together";
