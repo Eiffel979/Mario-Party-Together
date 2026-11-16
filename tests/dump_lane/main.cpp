@@ -506,6 +506,18 @@ struct HashItemTally {
   }
 };
 
+// A diagnostics output file (--frame-log, --audio-out); null if it cannot be opened.
+using OutFile = std::unique_ptr<std::FILE, int (*)(std::FILE*)>;
+OutFile open_out(const std::filesystem::path& path, bool binary) {
+  std::FILE* f = nullptr;
+#if defined(_WIN32)
+  if (_wfopen_s(&f, path.c_str(), binary ? L"wb" : L"w") != 0) f = nullptr;
+#else
+  f = std::fopen(path.c_str(), binary ? "wb" : "w");
+#endif
+  return OutFile(f, &std::fclose);
+}
+
 // `--party --frame-times` (ADR 0008, "Stale heap bytes", point 5): how long each step takes, for the
 // cost of a change measured against another build. Exempt frames are chosen by game-visible events
 // only, so two builds exempt exactly the same frames: the boot frames until the first frame of
@@ -621,15 +633,9 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
   if (mp4 != nullptr) mp4->setReportSink(&print_report, nullptr);
   HashItemTally tally;
   FrameClock frame_clock;
-  std::unique_ptr<std::FILE, int (*)(std::FILE*)> frame_log(nullptr, &std::fclose);
+  OutFile frame_log(nullptr, &std::fclose);
   if (!options.frame_log.empty()) {
-    std::FILE* f = nullptr;
-#if defined(_WIN32)
-    if (_wfopen_s(&f, options.frame_log.c_str(), L"w") != 0) f = nullptr;
-#else
-    f = std::fopen(options.frame_log.c_str(), "w");
-#endif
-    frame_log.reset(f);
+    frame_log = open_out(options.frame_log, false);
     if (!frame_log) {
       std::printf("dump lane: cannot write %s\n", options.frame_log.string().c_str());
       return 1;
@@ -637,15 +643,9 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
     frame_clock.log = frame_log.get();
   }
   // --audio-out: the runtime's audio, as stepped (game output: the path guard keeps it out of the repo).
-  std::unique_ptr<std::FILE, int (*)(std::FILE*)> audio_out(nullptr, &std::fclose);
+  OutFile audio_out(nullptr, &std::fclose);
   if (!options.audio_out.empty()) {
-    std::FILE* f = nullptr;
-#if defined(_WIN32)
-    if (_wfopen_s(&f, options.audio_out.c_str(), L"wb") != 0) f = nullptr;
-#else
-    f = std::fopen(options.audio_out.c_str(), "wb");
-#endif
-    audio_out.reset(f);
+    audio_out = open_out(options.audio_out, true);
     if (!audio_out) {
       std::printf("dump lane: cannot write %s\n", options.audio_out.string().c_str());
       return 1;
@@ -905,6 +905,38 @@ int verify_replay_file(const BootOptions& options, const mpt::VerifiedDump& dump
     return 1;
   }
   mpt::Session& session = *std::get<std::unique_ptr<mpt::Session>>(started);
+  if (!options.audio_out.empty() || !options.frame_log.empty()) {
+    // Diagnostics: play the replay's inputs (no checks) and write the runtime's audio and/or a frame log,
+    // to look at what a recorded session produced, e.g. its music around a minigame's end.
+    OutFile audio_out = options.audio_out.empty() ? OutFile(nullptr, &std::fclose) : open_out(options.audio_out, true);
+    OutFile frame_log = options.frame_log.empty() ? OutFile(nullptr, &std::fclose) : open_out(options.frame_log, false);
+    if ((!options.audio_out.empty() && !audio_out) || (!options.frame_log.empty() && !frame_log)) {
+      std::printf("dump lane: cannot write the diagnostics output\n");
+      return 1;
+    }
+    auto* mp4 = dynamic_cast<mpt::mp4::Mp4Runtime*>(&session.runtime());
+    if (mp4 != nullptr) mp4->setReportSink(&print_report, nullptr);
+    FrameClock clock;
+    clock.log = frame_log.get();
+    mpt::ReplayReader reader(replay);
+    mpt::InputFrame in;
+    std::uint64_t played = 0;
+    while (played < options.frames && reader.next(in)) {
+      const auto t0 = std::chrono::steady_clock::now();
+      if (mpt::Result r = session.step(in); !r) {
+        std::printf("dump lane: step: %s\n", r.error().c_str());
+        return 1;
+      }
+      clock.step(std::chrono::steady_clock::now() - t0, mp4);
+      if (audio_out) {
+        const mpt::AudioChunk chunk = session.runtime().audio();
+        if (!chunk.samples.empty()) std::fwrite(chunk.samples.data(), sizeof(std::int16_t), chunk.samples.size(), audio_out.get());
+      }
+      ++played;
+    }
+    std::printf("dump lane: played %llu replay frames (no checks)\n", static_cast<unsigned long long>(played));
+    return 0;
+  }
   const mpt::ReplayVerification v = mpt::verify_replay(session, replay);
   const bool all = v.status && v.frames_played == replay.frame_count && v.trail.size() == replay.checkpoints.size();
   std::printf("dump lane: verify-replay played %llu of %llu frames, %zu of %zu checkpoints, last hash %016llx, "
