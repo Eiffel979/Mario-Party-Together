@@ -1,0 +1,37 @@
+Apply order 0036 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+msm: a stream refill uploads the half it just read, on MPT_PC
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+msmStreamData reads the next half of a stream's ring with DVDReadAsync and toggles bufNo after the call.
+msmStreamDvdCallback then uploads the half that bufNo names, which assumes the read completes after the
+toggle, as it always does on the console. The PC DVD layer can complete the read and run the callback
+inside DVDReadAsync, before the toggle, so every upload went to the other half: one half late. While a
+stream plays, the late upload still lands just before the voice reaches that half. At the end of a
+non-looping stream no later read uploads the last half, so the voice played that half's contents from
+two halves earlier. Every minigame's winner or draw jingle (streams 1 and 4) ended with 0.58 s of
+audio from 2.0 s before instead of its real ending. On PC, bufNo is toggled before the read is issued.
+Changes what msm uploads to the stream ring, so state hashes move (docs/titles/mp4.md section 15).
+
+diff --git a/src/msm/msmstream.c b/src/msm/msmstream.c
+index c2f0998..1e9e1ec 100644
+--- a/src/msm/msmstream.c
++++ b/src/msm/msmstream.c
+@@ -806,7 +806,18 @@ static void msmStreamData(s32 streamNo) {
+             }
+             slot->streamPos += readSize;
+             slot->readBusyF = 1;
++#ifdef MPT_PC
++            /* The read may complete, and msmStreamDvdCallback run, before DVDReadAsync returns. The
++             * callback uploads the half that bufNo names after the toggle below, as on the console,
++             * where the read always completes later. Toggle first, so the half just read is the one
++             * uploaded. Otherwise each upload lags a half behind, and a stream's last half, which no
++             * later read uploads, plays the ring's stale contents from two halves earlier. */
++            slot->bufNo ^= 1;
++            DVDReadAsync(&slot->file, dataPtr, readSize, slot->streamBaseOfs + (slot->streamPos - readSize), msmStreamDvdCallback);
++            return;
++#else
+             DVDReadAsync(&slot->file, dataPtr, readSize, slot->streamBaseOfs + (slot->streamPos - readSize), msmStreamDvdCallback);
++#endif
+         }
+     } else if (slot->firstF != 0) {
+         slot->firstF= 0;

@@ -38,6 +38,16 @@ set_source_files_properties("${MPT_MP4_PB}/src/msm/msmmem.c"
 target_compile_options(mpt_mp4_msm_heap_tests PRIVATE ${MPT_MP4_WARN_FLAGS})
 add_test(NAME mp4_msm_heap COMMAND mpt_mp4_msm_heap_tests)
 
+# A non-looping stream plays its last ring half, not stale data (patch 0036, the minigame-end jingle):
+# msmstream.c from the patched pin on a hand-made stream file, with DVD reads that complete inside
+# DVDReadAsync and a modelled MusyX stream voice (no dump).
+add_executable(mpt_mp4_msm_stream_tests test_msm_stream.c "${MPT_MP4_PB}/src/msm/msmstream.c" ../src/msm_swap.c)
+target_link_libraries(mpt_mp4_msm_stream_tests PRIVATE mpt_mp4_game_flags)
+set_source_files_properties("${MPT_MP4_PB}/src/msm/msmstream.c"
+                            TARGET_DIRECTORY mpt_mp4_msm_stream_tests PROPERTIES COMPILE_OPTIONS "${MPT_MP4_NOWARN}")
+target_compile_options(mpt_mp4_msm_stream_tests PRIVATE ${MPT_MP4_WARN_FLAGS})
+add_test(NAME mp4_msm_stream COMMAND mpt_mp4_msm_stream_tests)
+
 # HuARMalloc (patches 0028 and 0030): zeroed blocks, the console's ARAM base above msm's region, and the
 # in-use list the state hash walks. armem.c from the patched pin; its SDK calls are stubbed over the
 # test's own ARAM buffer (no dump).
