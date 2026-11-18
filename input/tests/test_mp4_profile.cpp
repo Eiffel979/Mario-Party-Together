@@ -3,6 +3,7 @@
 // Synthetic device state only.
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <fstream>
 #include <map>
 #include <ostream>  // doctest prints std::string_view through operator<<
@@ -162,6 +163,26 @@ TEST_CASE("the MP4 profile binds no reserved input") {
   };
   for (const auto& list : p.base.bindings) check(list);
   for (const auto& [id, over] : p.minigames) {
+    for (const auto& list : over.bindings) {
+      if (list) check(*list);
+    }
+  }
+}
+
+TEST_CASE("the MP4 profile binds Start and leaves the pause chord modifier Back unbound") {
+  // Back + Start is the gamepad pause chord (reserved.h): Back is held for a few
+  // frames before Start, so it must press nothing in the game.
+  const Profile p = mp4_profile();
+  const Source back{Source::Kind::pad_button, static_cast<std::uint16_t>(kHostPauseChordModifier)};
+  const Source start{Source::Kind::pad_button, static_cast<std::uint16_t>(kHostPauseChordButton)};
+  const auto& start_list = p.base.bindings[static_cast<std::size_t>(Control::start)];
+  CHECK(std::find(start_list.begin(), start_list.end(), start) != start_list.end());
+  auto check = [&](const std::vector<Source>& sources) {
+    for (const Source& s : sources) CHECK_FALSE(s == back);
+  };
+  for (const auto& list : p.base.bindings) check(list);
+  for (const auto& [id, over] : p.minigames) {
+    CAPTURE(id);
     for (const auto& list : over.bindings) {
       if (list) check(*list);
     }

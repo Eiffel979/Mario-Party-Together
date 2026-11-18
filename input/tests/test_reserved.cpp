@@ -156,3 +156,83 @@ TEST_CASE("strip_reserved clears only Esc and Guide") {
   CHECK(devices[0].keyboard.count() == 1);
   CHECK(devices[1].gamepad.buttons == (1u << static_cast<unsigned>(PadButton::south)));
 }
+
+// The Back + Start pause chord (reserved.h), as a pure function of the pressed
+// button and the same pad's state. SDL plumbing: test_sdl_pause_chord.cpp.
+namespace {
+
+GamepadState held(std::initializer_list<PadButton> buttons) {
+  GamepadState s;
+  for (PadButton b : buttons) s.set(b, true);
+  return s;
+}
+
+}  // namespace
+
+TEST_CASE("Start pressed while Back is held on the same pad is the host pause action") {
+  CHECK(kHostPauseChordModifier == PadButton::back);
+  CHECK(kHostPauseChordButton == PadButton::start);
+  CHECK(host_action_for_pad_press(PadButton::start, held({PadButton::back})) == HostAction::pause);
+  // Start is reported held by the time its own event is handled; that changes nothing.
+  CHECK(host_action_for_pad_press(PadButton::start, held({PadButton::back, PadButton::start})) == HostAction::pause);
+  // Other held buttons do not matter.
+  CHECK(host_action_for_pad_press(PadButton::start, held({PadButton::back, PadButton::south})) == HostAction::pause);
+}
+
+TEST_CASE("Start alone, Back alone and Start-then-Back are not host actions") {
+  CHECK_FALSE(host_action_for_pad_press(PadButton::start, held({})).has_value());
+  CHECK_FALSE(host_action_for_pad_press(PadButton::start, held({PadButton::start})).has_value());
+  CHECK_FALSE(host_action_for_pad_press(PadButton::back, held({})).has_value());
+  CHECK_FALSE(host_action_for_pad_press(PadButton::back, held({PadButton::back})).has_value());
+  // Back pressed second: the game has already seen Start, so this is no chord.
+  CHECK_FALSE(host_action_for_pad_press(PadButton::back, held({PadButton::start})).has_value());
+  CHECK_FALSE(host_action_for_pad_press(PadButton::back, held({PadButton::start, PadButton::back})).has_value());
+  // Any other button with Back held is not a chord either.
+  for (std::size_t b = 0; b < kPadButtonCount; ++b) {
+    const auto button = static_cast<PadButton>(b);
+    if (button == PadButton::start || button == PadButton::guide) continue;
+    CAPTURE(pad_button_name(button));
+    CHECK_FALSE(host_action_for_pad_press(button, held({PadButton::back})).has_value());
+  }
+}
+
+TEST_CASE("Guide still pauses whatever else the pad holds") {
+  CHECK(host_action_for_pad_press(PadButton::guide, held({})) == HostAction::pause);
+  CHECK(host_action_for_pad_press(PadButton::guide, held({PadButton::back})) == HostAction::pause);
+  CHECK(host_action_for_pad_press(PadButton::guide, held({PadButton::start})) == HostAction::pause);
+}
+
+TEST_CASE("Back and Start stay bindable sources and reach the frame") {
+  // Neither half of the chord is reserved on its own (only Guide and Esc are).
+  CHECK_FALSE(is_reserved(*source_from_string("button:back")));
+  CHECK_FALSE(is_reserved(*source_from_string("button:start")));
+  Profile p = builtin_default_profile();
+  p.base.bindings[static_cast<std::size_t>(Control::select)] = {*source_from_string("button:back")};
+  std::array<ResolvedProfile, kMaxPlayers> profiles;
+  profiles.fill(p.resolve());
+  DeviceSnapshot d = pad(3);
+  const PortLayout layout = port0({d.id});
+  d.gamepad.set(PadButton::back, true);
+  d.gamepad.set(PadButton::start, true);
+  std::vector<DeviceSnapshot> devices{d};
+  strip_reserved(devices);
+  CHECK(devices[0].gamepad.pressed(PadButton::back));
+  CHECK(devices[0].gamepad.pressed(PadButton::start));
+  const PadState out = map_frame(0, profiles, devices, layout).pads[0];
+  CHECK((out.buttons & kButtonStart) != 0);
+  CHECK((out.buttons & kButtonSelect) != 0);
+}
+
+TEST_CASE("the built-in default leaves the chord modifier unbound") {
+  // Holding Back to form the chord must press nothing in the game.
+  const Source back{Source::Kind::pad_button, static_cast<std::uint16_t>(kHostPauseChordModifier)};
+  const Profile& p = builtin_default_profile();
+  for (std::size_t c = 0; c < kControlCount; ++c) {
+    CAPTURE(control_name(static_cast<Control>(c)));
+    for (const Source& s : p.base.bindings[c]) CHECK_FALSE(s == back);
+  }
+  Mapper mapper;
+  DeviceSnapshot d = pad(4);
+  d.gamepad.set(PadButton::back, true);
+  CHECK(mapper.map(0, std::vector<DeviceSnapshot>{d}, port0({d.id})).pads[0].buttons == 0);
+}

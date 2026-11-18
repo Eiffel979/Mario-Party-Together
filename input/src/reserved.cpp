@@ -12,6 +12,12 @@ std::optional<HostAction> host_action_for_button(PadButton button) {
   return std::nullopt;
 }
 
+std::optional<HostAction> host_action_for_pad_press(PadButton pressed, const GamepadState& same_pad) {
+  if (const std::optional<HostAction> action = host_action_for_button(pressed)) return action;
+  if (pressed == kHostPauseChordButton && same_pad.pressed(kHostPauseChordModifier)) return HostAction::pause;
+  return std::nullopt;
+}
+
 std::optional<HostAction> host_action_for(const Source& source) {
   switch (source.kind) {
     case Source::Kind::key:

@@ -35,9 +35,12 @@ class SdlInput {
   // Feed every SDL event from the shell's poll loop. Handles gamepad add/remove.
   void handle_event(const SDL_Event& event);
 
-  // The host action this event triggers, if any: a non-repeat key-down of Esc or
-  // a gamepad button-down of Guide is HostAction::pause (reserved.h). The shell
-  // checks this before routing events, and consumes the event when it is set.
+  // The host action this event triggers, if any: a non-repeat key-down of Esc, a
+  // gamepad button-down of Guide, or a Start button-down while Back is held on the
+  // same pad is HostAction::pause (reserved.h). Back pressed while Start is held is
+  // not. The shell checks this before routing events, and consumes the event when
+  // it is set. Reads the pad's current button state (SDL_GetGamepadButton), never
+  // a clock.
   static std::optional<HostAction> host_action(const SDL_Event& event);
 
   // Reads all devices once and maps them. Call exactly once per emulated frame,

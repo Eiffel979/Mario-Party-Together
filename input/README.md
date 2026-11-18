@@ -33,12 +33,39 @@ bit in an `InputFrame`, a replay or a netplay packet:
 - The mapper ignores reserved sources even in a `Profile` built in code.
 - `SdlInput::sample` clears them from the device snapshots before mapping.
   (`snapshot()` stays raw, for the UI.)
-- The built-in default leaves `home` unbound.
+- The built-in default leaves `home` unbound, and `button:back` too (the pause
+  chord below).
 
 The shell asks `SdlInput::host_action(const SDL_Event&)`: it returns
-`HostAction::pause` for a non-repeat Esc key-down or a Guide button-down, and
-nullopt otherwise. The pure forms are `host_action_for(Source)`,
-`host_action_for_key(hid)` and `host_action_for_button(PadButton)`.
+`HostAction::pause` for a non-repeat Esc key-down, a Guide button-down, or the
+gamepad pause chord below, and nullopt otherwise. The pure forms are
+`host_action_for(Source)`, `host_action_for_key(hid)`,
+`host_action_for_button(PadButton)` and
+`host_action_for_pad_press(PadButton, const GamepadState& same_pad)`.
+
+### Gamepad pause chord: hold Back, then press Start
+Some pads never deliver Guide to the window (an XInput pad on Windows, where the
+Game Bar can take it). Every gamepad therefore also pauses with **Back held,
+then Start pressed, on the same pad**:
+- A Start button-down is the pause action only if Back is held on the pad that
+  sent it (`SDL_GetGamepadFromID(which)` + `SDL_GetGamepadButton`). Back held on
+  another pad does not count. The shell consumes that Start press, and the game
+  is paused before the next `sample()`, so the game never sees it.
+- **Start then Back is not a chord.** By the time Back goes down the game has
+  sampled Start (MP4 opens its own pause menu on it), so a host pause there would
+  open two menus. Back and Start changing within one event poll count as
+  Back-first, because the Start event already sees Back held.
+- **Neither button is reserved on its own.** A plain Start, or Back alone,
+  reaches the game; `parse_profile` accepts `button:back` and `button:start`, and
+  `sample()` does not strip them.
+- **`button:back` is the chord modifier.** It is held for some frames before
+  Start, and whatever it is bound to is pressed for those frames. Shipped title
+  profiles and the built-in default leave it unbound (tests check this); MP4 binds
+  `button:start` only. A user profile may bind Back, at that cost.
+- On resume the shell's `GameInputGate` calls `mask_held_until_release()`, so the
+  still-held Back and Start (or the Start that closed the pause screen) are masked
+  until released (below).
+- Guide works as before.
 
 ## Held-input mask (`held_mask.h`)
 Buttons held when a screen closes or pause ends must not leak into the game
@@ -172,7 +199,9 @@ c_stick_left c_stick_right` (GameCube C-stick / right stick), `trigger_l trigger
 - `button:<name>`: a gamepad button by position: `south east west north back guide
   start left_stick right_stick left_shoulder right_shoulder dpad_up dpad_down
   dpad_left dpad_right misc1 left_paddle1 right_paddle1 left_paddle2 right_paddle2
-  touchpad`. `button:guide` is host-reserved and cannot be bound.
+  touchpad`. `button:guide` is host-reserved and cannot be bound. `button:back` can
+  be bound, but it is the Back + Start pause chord's modifier, so shipped profiles
+  leave it unbound.
 - `axis:<name>+` / `axis:<name>-`: one half of a stick axis (`left_x left_y right_x
   right_y`, SDL orientation, +Y down). `axis:left_trigger` / `axis:right_trigger`.
 

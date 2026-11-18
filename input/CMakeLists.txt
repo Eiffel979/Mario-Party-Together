@@ -81,4 +81,11 @@ if(MPT_BUILD_TESTS)
   mpt_set_warnings(mpt_input_sdl_smoke)
   add_test(NAME input_sdl_smoke COMMAND mpt_input_sdl_smoke)
   set_tests_properties(input_sdl_smoke PROPERTIES PASS_REGULAR_EXPRESSION "input sdl smoke: OK")
+
+  # The Back + Start pause chord through SdlInput::host_action, on SDL virtual
+  # gamepads (synthetic state and events, headless).
+  add_executable(mpt_input_sdl_tests tests/test_sdl_pause_chord.cpp)
+  target_link_libraries(mpt_input_sdl_tests PRIVATE mpt::input_sdl doctest::doctest)
+  mpt_set_warnings(mpt_input_sdl_tests)
+  add_test(NAME input_sdl_pause_chord COMMAND mpt_input_sdl_tests)
 endif()
