@@ -143,7 +143,8 @@ ordered_json sources_json(const std::vector<Source>& sources) {
 // TFGH C-stick, K/J/L/I = A/B/X/Y, Q/E = L/R (full analog press), U = Z, Enter = Start.
 // Gamepad: positional face buttons by label on an Xbox pad, sticks pass through,
 // analog triggers with the digital click at ~90%. Esc and Guide are host-reserved
-// (reserved.h), so Home is unbound.
+// (reserved.h), so Home is unbound. Back is the first half of the Back + Start
+// pause chord (reserved.h), so it is unbound too: holding it must press nothing.
 constexpr std::string_view kBuiltinProfileJson = R"json({
   "format": "mpt.input_profile",
   "version": 1,
@@ -164,7 +165,7 @@ constexpr std::string_view kBuiltinProfileJson = R"json({
     "r": ["key:e"],
     "z": ["key:u", "button:right_shoulder"],
     "start": ["key:enter", "button:start"],
-    "select": ["key:backspace", "button:back"],
+    "select": ["key:backspace"],
     "dpad_up": ["key:up", "button:dpad_up"],
     "dpad_down": ["key:down", "button:dpad_down"],
     "dpad_left": ["key:left", "button:dpad_left"],
