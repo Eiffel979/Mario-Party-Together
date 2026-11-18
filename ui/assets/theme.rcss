@@ -59,7 +59,8 @@ p  { margin: 6dp 0; }
 .btn {
   tab-index: auto;
   focus: auto;
-  nav: auto;
+  /* No `nav`: directional focus is the launcher's own (ui/backend/focus_rml.h), because
+     RmlUi's search cannot leave or enter a scrolling list. */
   padding: 14dp 22dp;
   margin: 8dp 0;
   width: 560dp;

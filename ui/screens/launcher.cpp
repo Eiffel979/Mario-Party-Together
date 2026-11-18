@@ -21,6 +21,7 @@
 
 #include "input_sdl.h"
 #include "durable_file.h"
+#include "focus_rml.h"
 #include "mpt/asset_import/known_dumps.h"
 #include "mpt/input/sdl_input.h"
 #include "mpt/ui/model/file_browser.h"
@@ -146,6 +147,16 @@ bool is_pause_action(const SDL_Event& e) {
   // input/'s host-reserved binding (Esc, Guide; ADR 0010 §3.2), the same one the shell
   // routes with.
   return input::SdlInput::host_action(e) == input::HostAction::pause;
+}
+
+std::optional<NavDir> arrow_dir(SDL_Keycode key) {
+  switch (key) {
+    case SDLK_UP: return NavDir::up;
+    case SDLK_DOWN: return NavDir::down;
+    case SDLK_LEFT: return NavDir::left;
+    case SDLK_RIGHT: return NavDir::right;
+    default: return std::nullopt;
+  }
 }
 
 std::optional<NavDir> dpad_dir(Uint8 button) {
@@ -293,7 +304,7 @@ class Launcher final : public shell::IOverlay {
     if (import_.poll()) on_import_changed();
     take_dialog_result();
     if (flow_.has_focus()) {
-      for (NavDir dir : nav_.tick(now_ns)) send_key(rml_key(dir));
+      for (NavDir dir : nav_.tick(now_ns)) navigate(dir);
     }
 
     // Size and density follow the window: a 10-foot layout designed at 720p (ADR 0010 §5).
@@ -327,9 +338,11 @@ class Launcher final : public shell::IOverlay {
 
   // ---- Input ----
 
-  void send_key(Rml::Input::KeyIdentifier key) {
-    context_->ProcessKeyDown(key, 0);
-    context_->ProcessKeyUp(key, 0);
+  // Arrow keys, the D-pad and the left stick all step the focus here (focus_rml.h), so
+  // every focusable element of a screen is reachable, in and out of scrolling lists.
+  void navigate(NavDir dir) {
+    if (!shown_) return;
+    if (!step_focus(docs_[shown_], dir)) ensure_focus();
   }
 
   void on_key(const SDL_KeyboardEvent& key, bool down) {
@@ -340,6 +353,10 @@ class Launcher final : public shell::IOverlay {
     // A keyboard that is not seated joins with Enter or Space on the seating screen.
     if (down && !key.repeat && flow_.screen() == Screen::seating && (key.key == SDLK_RETURN || key.key == SDLK_SPACE) &&
         seating_.join(input::kKeyboardDevice)) {
+      return;
+    }
+    if (const std::optional<NavDir> dir = arrow_dir(key.key)) {
+      if (down) navigate(*dir);  // key repeat steps again
       return;
     }
     const std::optional<Rml::Input::KeyIdentifier> k = rml_key(key.key);
@@ -354,7 +371,7 @@ class Launcher final : public shell::IOverlay {
 
   void on_pad_button(const SDL_GamepadButtonEvent& b, bool down) {
     if (const std::optional<NavDir> dir = dpad_dir(b.button)) {
-      if (const std::optional<NavDir> step = nav_.dpad(*dir, down, now_ns_)) send_key(rml_key(*step));
+      if (const std::optional<NavDir> step = nav_.dpad(*dir, down, now_ns_)) navigate(*step);
       return;
     }
     if (!down) {
@@ -379,7 +396,7 @@ class Launcher final : public shell::IOverlay {
     if (a.axis == SDL_GAMEPAD_AXIS_LEFTX) stick_x_ = a.value;
     else if (a.axis == SDL_GAMEPAD_AXIS_LEFTY) stick_y_ = a.value;
     else return;
-    if (const std::optional<NavDir> step = nav_.stick(stick_x_, stick_y_, now_ns_)) send_key(rml_key(*step));
+    if (const std::optional<NavDir> step = nav_.stick(stick_x_, stick_y_, now_ns_)) navigate(*step);
   }
 
   void on_back() {
