@@ -150,7 +150,7 @@ jobs:
 
       - name: Build the GX layer and its tests
         id: build
-        run: cmake --build "$BUILD_DIR" --target mpt_gx_scenes mpt_gx_scenes_null mpt_gx_mtx_tests mpt_gc_sdk_tests mpt_gx_probes
+        run: cmake --build "$BUILD_DIR" --target mpt_gx_scenes mpt_gx_scenes_null mpt_gx_mtx_tests mpt_gc_sdk_tests mpt_gx_probes mpt_gx_frontend_tests
 
       # G-b on lavapipe, G-c (null against real), G-e (two runs), MTX goldens, the libm link check.
       - name: Test (G-b, G-c, G-e)

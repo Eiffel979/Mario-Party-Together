@@ -175,6 +175,16 @@ void scene_clear_and_quads() {
   quad_c(40, 260, 600, 440, -1.f, kRed, kGreen, kBlue, kWhite); // gouraud gradient
 }
 
+// The picture has no alpha: the console's display copy writes colour only to the XFB, so whatever alpha
+// the EFB holds (here 0 from the clear and from a draw with alpha update on) must not reach the frame
+// image. A presenter that blends with it would show black there (MP4's instruction screens and shadows).
+void scene_efb_alpha_not_in_picture() {
+  GXSetCopyClear(GXColor{0, 0, 100, 0}, GX_MAX_Z24);
+  base_state();
+  quad(40, 40, 300, 440, GXColor{200, 50, 50, 0});
+  quad(340, 40, 600, 440, GXColor{50, 200, 50, 128});
+}
+
 void scene_tev_swap_konst_s10() {
   GXSetCopyClear(GXColor{20, 20, 20, 255}, GX_MAX_Z24);
   base_state();
@@ -475,6 +485,7 @@ const std::vector<Scene>& scenes() {
       {"indirect_warp_tile", scene_indirect, {{100, 150}, {200, 300}, {400, 150}, {500, 300}}},
       {"ztexture", scene_ztexture, {{160, 240}, {480, 240}, {160, 100}}},
       {"depth_copy_ztexture", scene_depth_copy_ztexture, {{160, 240}, {480, 240}, {160, 100}}},
+      {"efb_alpha_not_in_picture", scene_efb_alpha_not_in_picture, {{20, 20}, {170, 240}, {470, 240}}},
   };
   return s;
 }

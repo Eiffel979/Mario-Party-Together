@@ -1,0 +1,26 @@
+Apply order 0018 against encounter/aurora 514339438178ef2bed1b14e5149d90ece0c6e0cc: a GX conformance fix, which has no ADR 0007 patch number.
+GXInitLightSpot: GX_SP_SHARP divides a0 by d and GX_SP_RING1 negates a0, as the Dolphin SDK does.
+Without it a sharp spot is lit far outside its cutoff (and saturates near its axis).
+Contains code from aurora (MIT; see LICENSE-aurora in this folder). Applied in order by
+runtimes/gc_wii/gx/CMakeLists.txt with `git apply`.
+
+diff --git a/lib/dolphin/gx/GXLighting.cpp b/lib/dolphin/gx/GXLighting.cpp
+--- a/lib/dolphin/gx/GXLighting.cpp
++++ b/lib/dolphin/gx/GXLighting.cpp
+@@ -56,14 +56,14 @@ void GXInitLightSpot(GXLightObj* light_, float cutoff, GXSpotFn spotFn) {
+     break;
+   case GX_SP_SHARP: {
+     const float d = (1.f - cr) * (1.f - cr);
+-    a0 = cr * (cr - 2.f);
++    a0 = cr * (cr - 2.f) / d; // the SDK divides a0 by d too: attn(cos 1) = 1, attn(cos cr) = 0
+     a1 = 2.f / d;
+     a2 = -1.f / d;
+     break;
+   }
+   case GX_SP_RING1: {
+     const float d = (1.f - cr) * (1.f - cr);
+-    a0 = 4.f * cr / d;
++    a0 = -4.f * cr / d; // the SDK negates a0: attn(cos 1) = 0, attn(cos cr) = 0
+     a1 = 4.f * (1.f + cr) / d;
+     a2 = -4.f / d;
+     break;

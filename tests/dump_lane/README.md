@@ -147,6 +147,13 @@ mpt_dump_lane --boot mp4 --verify-replay FILE
   process's `__security_cookie`, which differs in every process (`docs/titles/mp4.md`, M4-03).
 - Diagnosis: `--press` also works in party mode and adds its buttons on top of the autopilot (to probe
   a soft lock).
+- Diagnosis: `--capture DIR` also works in party mode and when playing a replay (`--verify-replay FILE`
+  with `--capture`, which plays without checks, like `--audio-out`). It writes frame N as
+  `DIR/frame_NNNNNN.png` when N is a multiple of `--capture-every` (default 1, independent of the
+  checkpoints) and lies in `[--capture-from, --capture-to]`, to look at one minigame closely. A replay
+  played this way prints the running overlay whenever it changes, to find a minigame's frames. The PNG
+  holds the frame image's four channels as the runtime returns them. Captures are your own game's
+  output: never commit them.
 - `--party-unlock-bowser` boots with `MPT_MP4_BOOT_UNLOCK_BOWSERS_GNARLY_PARTY`
   (`Mp4Runtime::setTestGameplayFlags`), so `--party-board 5` can reach Bowser's Gnarly Party. No replay
   records the flag, so the lane refuses it with `--replay`, and such a run is diagnosis only.

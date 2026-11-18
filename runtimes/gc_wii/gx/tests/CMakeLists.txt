@@ -72,6 +72,19 @@ target_compile_definitions(mpt_gx_mtx_tests PRIVATE _CRT_SECURE_NO_WARNINGS  # s
 target_compile_options(mpt_gx_mtx_tests PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${MPT_GX_WARN_FLAGS}>")
 add_test(NAME gx_mtx_golden COMMAND mpt_gx_mtx_tests)
 
+# GX front-end conformance with the Dolphin SDK, on synthetic values (aurora patches 0018 and on).
+add_executable(mpt_gx_frontend_tests test_lighting.cpp)
+# The front end and the null renderer refer to each other. GNU ld scans each archive once, so it gets a
+# rescanned group; lld-link (and MSVC's link) search every library and have no RESCAN feature.
+if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+  set(_mpt_gx_frontend_test_libs mpt_gx_frontend mpt_gx_renderer_null)
+else()
+  set(_mpt_gx_frontend_test_libs "$<LINK_GROUP:RESCAN,mpt_gx_frontend,mpt_gx_renderer_null>")
+endif()
+target_link_libraries(mpt_gx_frontend_tests PRIVATE ${_mpt_gx_frontend_test_libs} mpt::gx_math_redirect doctest::doctest)
+target_compile_options(mpt_gx_frontend_tests PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${MPT_GX_WARN_FLAGS}>")
+add_test(NAME gx_frontend_sdk_conformance COMMAND mpt_gx_frontend_tests)
+
 # The front end and MTX use no host libm transcendental or fma (ADR 0008 section 5). The SDK's
 # check is shared by every game-module library.
 get_filename_component(_mpt_gx_cc_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
