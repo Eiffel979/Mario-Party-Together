@@ -1338,55 +1338,55 @@ E1 is the full local party (Phase 1 plan §4). The user plays it and fills in th
 | # | Check | Windows (M4-11) | Linux, WSL2 (M4-14, **on hold**) |
 |---|---|---|---|
 | **Environment** | | | |
-| 1 | Date played | | on hold |
-| 2 | OS name, version and build (Linux: the distribution, kernel and WSL version) | | on hold |
-| 3 | CPU, GPU and RAM | | on hold |
-| 4 | GPU driver version | | on hold |
-| 5 | Gamepad model and how it is connected (USB or Bluetooth; Linux: forwarded with usbipd-win) | | on hold |
-| 6 | Repository commit the shell was built from (`git rev-parse --short HEAD`), and whether the tree was clean | | on hold |
-| 7 | Shell version (`<exe> --version`) | | on hold |
-| 8 | CMake preset and `MPT_GX_BACKEND` value | | on hold |
+| 1 | Date played | 2026-11-18 | on hold |
+| 2 | OS name, version and build (Linux: the distribution, kernel and WSL version) | Windows 11 Pro 10.0.26200 (build 26200) | on hold |
+| 3 | CPU, GPU and RAM | AMD Ryzen 5 3600, AMD Radeon RX 5700, 16 GB | on hold |
+| 4 | GPU driver version | 32.0.21045.16010 | on hold |
+| 5 | Gamepad model and how it is connected (USB or Bluetooth; Linux: forwarded with usbipd-win) | Logitech F710, wireless USB receiver, XInput mode | on hold |
+| 6 | Repository commit the shell was built from (`git rev-parse --short HEAD`), and whether the tree was clean | `c89eea0`, clean | on hold |
+| 7 | Shell version (`<exe> --version`) | `mario-party-together 0.0.0` | on hold |
+| 8 | CMake preset and `MPT_GX_BACKEND` value | no preset: Ninja, clang-cl, RelWithDebInfo, triplet `x64-windows-static-md`; `MPT_GX_BACKEND=dawn` | on hold |
 | **Import, through the launcher** | | | |
-| 9 | `<user_dir>` was new and empty before the launcher started | | on hold |
-| 10 | Library: "Add game dump", then your own `.iso` picked from the list, the file dialog or by dropping it on the window | | on hold |
-| 11 | The dump matched the supported MP4 entry (record the disc ID and path in your own notes only) | | on hold |
-| 12 | The build finished in the launcher, and the library lists the game | | on hold |
-| 13 | Build ID: `runtime_build_version` in `<user_dir>/cache/builds/mp4/<key>/manifest.json` (it starts with `mp4-`) | | on hold |
-| 14 | `unpinned` is `false` in that manifest. An unpinned build cannot sign off E1. | | on hold |
-| 15 | The manifest's sources match the `decomp.lock` rows of section C (Party Board, musyx, aurora). Dawn is covered by the build ID only. | | on hold |
+| 9 | `<user_dir>` was new and empty before the launcher started | yes | on hold |
+| 10 | Library: "Add game dump", then your own `.iso` picked from the list, the file dialog or by dropping it on the window | yes | on hold |
+| 11 | The dump matched the supported MP4 entry (record the disc ID and path in your own notes only) | yes | on hold |
+| 12 | The build finished in the launcher, and the library lists the game | yes | on hold |
+| 13 | Build ID: `runtime_build_version` in `<user_dir>/cache/builds/mp4/<key>/manifest.json` (it starts with `mp4-`) | `mp4-63a38f64aac1f8ea` | on hold |
+| 14 | `unpinned` is `false` in that manifest. An unpinned build cannot sign off E1. | yes | on hold |
+| 15 | The manifest's sources match the `decomp.lock` rows of section C (Party Board, musyx, aurora). Dawn is covered by the build ID only. | yes | on hold |
 | **Seats and devices (ruling M4-U1)** | | | |
-| 16 | Players screen: "Keyboard + controller, 2 computer players" chosen, then "Start the party" pressed | | on hold |
-| 17 | Seat 1 is the keyboard and seat 2 is the gamepad. Both are set to human in the game's own party setup (only the first player starts as human there). | | on hold |
-| 18 | Seats 3 and 4 are computer players, set in the game's own party setup | | on hold |
+| 16 | Players screen: "Keyboard + controller, 2 computer players" chosen, then "Start the party" pressed | yes (the gamepad could not reach "Start the party"; fixed in #84) | on hold |
+| 17 | Seat 1 is the keyboard and seat 2 is the gamepad. Both are set to human in the game's own party setup (only the first player starts as human there). | yes | on hold |
+| 18 | Seats 3 and 4 are computer players, set in the game's own party setup | yes | on hold |
 | **The party** | | | |
-| 19 | Board played: a regular party board (any of the first six in §12, not an Extra Room board). Write its content ID. | | on hold |
-| 20 | Number of turns chosen in the game's setup (at least 10) | | on hold |
-| 21 | Every turn was played, through the last minigame, the bonus stars and the final ranking | | on hold |
-| 22 | The pause overlay showed "Turn x/y", and Resume worked | | on hold |
-| 23 | Audio played through the whole party | | on hold |
-| 24 | No crash, hang, freeze or soft-lock. If you had to stop, write where in the Notes. | | on hold |
-| 25 | You did **not** quit the party before the final ranking ended, neither from the game's own pause menu nor with the launcher's "Quit to library" (see the caveat in section E) | | on hold |
-| 26 | After the final ranking, the game went back to its own mode select. You then opened the launcher's pause overlay (Escape, or the gamepad's Guide/Home button) and chose "Quit to library", without starting a new party. Not "Exit Mario Party Together". | | on hold |
-| 27 | The launcher then showed the end-of-party screen: the heading "Party finished" and the line "Turns played: N of N." | | on hold |
-| 28 | That screen also showed "Replay saved in your user folder: replays/…" | | on hold |
+| 19 | Board played: a regular party board (any of the first six in §12, not an Extra Room board). Write its content ID. | `mp4.board.shy_guys_jungle_jam` | on hold |
+| 20 | Number of turns chosen in the game's setup (at least 10) | 10 | on hold |
+| 21 | Every turn was played, through the last minigame, the bonus stars and the final ranking | yes | on hold |
+| 22 | The pause overlay showed "Turn x/y", and Resume worked | yes | on hold |
+| 23 | Audio played through the whole party | yes | on hold |
+| 24 | No crash, hang, freeze or soft-lock. If you had to stop, write where in the Notes. | yes | on hold |
+| 25 | You did **not** quit the party before the final ranking ended, neither from the game's own pause menu nor with the launcher's "Quit to library" (see the caveat in section E) | yes | on hold |
+| 26 | After the final ranking, the game went back to its own mode select. You then opened the launcher's pause overlay (Escape, or the gamepad's Guide/Home button) and chose "Quit to library", without starting a new party. Not "Exit Mario Party Together". | yes (opened with Escape; a gamepad way, Back+Start, came in #85) | on hold |
+| 27 | The launcher then showed the end-of-party screen: the heading "Party finished" and the line "Turns played: N of N." | yes | on hold |
+| 28 | That screen also showed "Replay saved in your user folder: replays/…" | yes | on hold |
 | **The replay and summary (ruling M4-C)** | | | |
-| 29 | `<user_dir>/replays/` holds `mp4-<seed>-<n>.mptr` and `mp4-<seed>-<n>.summary.txt`. Keep both. Do not move, rename or delete them, and keep `<user_dir>` as it is. | | on hold |
-| 30 | Summary `end` is `ok` | | on hold |
-| 31 | Summary `phase` is `finished` | | on hold |
-| 32 | Summary `turn` is N/N (both numbers equal, N at least 10, same as row 20) | | on hold |
-| 33 | Summary `board` (same content ID as row 19) | | on hold |
-| 34 | Summary `runtime_build` (same as row 13), `runtime_unpinned` (`false`), `seed`, `frames` and `events` | | on hold |
+| 29 | `<user_dir>/replays/` holds `mp4-<seed>-<n>.mptr` and `mp4-<seed>-<n>.summary.txt`. Keep both. Do not move, rename or delete them, and keep `<user_dir>` as it is. | yes | on hold |
+| 30 | Summary `end` is `ok` | `ok` | on hold |
+| 31 | Summary `phase` is `finished` | `finished` | on hold |
+| 32 | Summary `turn` is N/N (both numbers equal, N at least 10, same as row 20) | 10/10 | on hold |
+| 33 | Summary `board` (same content ID as row 19) | `mp4.board.shy_guys_jungle_jam` | on hold |
+| 34 | Summary `runtime_build` (same as row 13), `runtime_unpinned` (`false`), `seed`, `frames` and `events` | `mp4-63a38f64aac1f8ea`, `false`, seed 7618890121469772264, 145,228 frames, 58 events | on hold |
 | **Agent re-verification (section D)** | | | |
-| 35 | Process 1: exit code 0, `party: phase finished`, `replay OK` with the frame and checkpoint counts | | on hold |
-| 36 | Process 2: the same | | on hold |
-| 37 | The two outputs are identical (yes/no). Write the last trail line (frame and hash). | | on hold |
-| 38 | Agent and commit that ran the check | | on hold |
+| 35 | Process 1: exit code 0, `party: phase finished`, `replay OK` with the frame and checkpoint counts | exit 0, `party: phase finished, turn 10/10, 58 events`, `replay OK: 145228 frames, 2420 checkpoints` | on hold |
+| 36 | Process 2: the same | the same | on hold |
+| 37 | The two outputs are identical (yes/no). Write the last trail line (frame and hash). | yes; last trail line `145200 6929d7fa9f19ade2` | on hold |
+| 38 | Agent and commit that ran the check | coordinator (Claude), shell built from `c89eea0` | on hold |
 | **Sign-off** | | | |
-| 39 | Tester sign-off (yes/no) | | on hold |
-| 40 | qa-reviewer approval | | on hold |
+| 39 | Tester sign-off (yes/no) | yes | on hold |
+| 40 | qa-reviewer approval | yes (PR #86) | on hold |
 
 Notes (one line each, no paths or game text):
-- Windows:
+- Windows: played 2026-11-18 with the Dawn preview build. Bugs found, none blocking E1: the gamepad could not reach the Players screen's lower buttons (fixed in #84); no gamepad way to the pause overlay (Back+Start added in #85); black boxes under characters in Money Belts, a black minigame description background, and a white light blob in Right Oar Left? (rendering, being fixed); the pad lost power after its Vibration toggle and came back after its batteries were reseated (the host sends no rumble).
 - Linux:
 
 ### C. Pins to compare against (row 15)
