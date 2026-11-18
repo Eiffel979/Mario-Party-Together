@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -50,18 +51,29 @@ MptMp4Error newError() {
 
 }  // namespace
 
+// The build ID the recipe installed next to the module (mp4_game_build_id.txt, first line
+// "build_id <id>"), or empty when there is none.
+static std::string installed_build_id(const std::filesystem::path& module_dir) {
+  std::ifstream manifest(module_dir / "mp4_game_build_id.txt");
+  std::string first;
+  if (!manifest || !std::getline(manifest, first) || first.rfind("build_id ", 0) != 0) return {};
+  while (!first.empty() && (first.back() == '\r' || first.back() == ' ')) first.pop_back();
+  return first.substr(9);
+}
+
 Mp4Runtime::Mp4Runtime() = default;
 
 Mp4Runtime::~Mp4Runtime() {
   if (api_ != nullptr && game_ != nullptr) api_->destroy(game_);
-  if (holds_module_) release_module();  // the last runtime unloads the module (module_loader.h)
+  if (holds_module_) release_module();  // the module stays loaded for the process (module_loader.h)
 }
 
 Result Mp4Runtime::boot(const VerifiedDump& dump, const RuntimeConfig& config) {
   if (dump.title != TitleId::mp4) return Result::failure("Mp4Runtime: the dump is not Mario Party 4");
   std::string error;
   const MptMp4Api* api =
-      load_module(dump.build_dir / "module" / kModuleFile, static_cast<std::uintptr_t>(MPT_MP4_MODULE_BASE), error);
+      load_module(dump.build_dir / "module" / kModuleFile, static_cast<std::uintptr_t>(MPT_MP4_MODULE_BASE), error,
+                  installed_build_id(dump.build_dir / "module"));
   if (api == nullptr) return Result::failure("Mp4Runtime: " + error);
   if (holds_module_) release_module();  // a second boot: keep one hold per runtime
   holds_module_ = true;

@@ -21,9 +21,15 @@ struct Loaded {
   void* handle = nullptr;
   const MptMp4Api* api = nullptr;
   int holds = 0;
+  // The file as it was loaded: a rebuild that replaced it (possible on Linux; Windows locks the file)
+  // is refused, since this process keeps running the old image.
+  std::uintmax_t file_size = 0;
+  std::filesystem::file_time_type file_time{};
 };
 
-Loaded g_loaded;  // one module per process at a time
+Loaded g_loaded;  // one module per process, kept loaded until shutdown_module
+
+constexpr const char* kRestart = "restart Mario Party Together to use the new build";
 
 // A path for a message: UTF-8 on every platform (path::string() is the ANSI code page on Windows).
 std::string utf8(const std::filesystem::path& p) {
@@ -81,16 +87,30 @@ std::uintptr_t imageEnd([[maybe_unused]] std::uintptr_t base, [[maybe_unused]] c
 
 }  // namespace
 
-const MptMp4Api* load_module(const std::filesystem::path& path, std::uintptr_t expected_base, std::string& error) {
+const MptMp4Api* load_module(const std::filesystem::path& path, std::uintptr_t expected_base, std::string& error,
+                             const std::string& expected_build_id) {
   std::error_code ec;
   const std::filesystem::path canonical = std::filesystem::weakly_canonical(path, ec);
   if (g_loaded.api != nullptr) {
-    if (canonical == g_loaded.path) {
-      ++g_loaded.holds;
-      return g_loaded.api;
+    if (canonical != g_loaded.path) {
+      error = "another MP4 game module is already loaded in this process (" + utf8(g_loaded.path) + "); " + kRestart;
+      return nullptr;
     }
-    error = "another MP4 game module is already loaded in this process (" + utf8(g_loaded.path) + ")";
-    return nullptr;
+    const std::string loaded_id = g_loaded.api->build_id != nullptr ? g_loaded.api->build_id : "";
+    if (!expected_build_id.empty() && expected_build_id != loaded_id) {
+      error = "the MP4 game module loaded in this process is build " + loaded_id + ", not " + expected_build_id +
+              "; " + kRestart;
+      return nullptr;
+    }
+    std::error_code size_ec, time_ec;
+    const std::uintmax_t size = std::filesystem::file_size(canonical, size_ec);
+    const std::filesystem::file_time_type time = std::filesystem::last_write_time(canonical, time_ec);
+    if (size_ec || time_ec || size != g_loaded.file_size || time != g_loaded.file_time) {
+      error = "the MP4 game module " + utf8(canonical) + " changed on disk since this process loaded it; " + kRestart;
+      return nullptr;
+    }
+    ++g_loaded.holds;  // the module is kept loaded: no reload, so the same cookie (module_loader.h)
+    return g_loaded.api;
   }
   if (!std::filesystem::is_regular_file(canonical, ec)) {
     error = "no game module at " + utf8(path) + "; build the title first";
@@ -158,14 +178,36 @@ const MptMp4Api* load_module(const std::filesystem::path& path, std::uintptr_t e
     unload(handle);
     return nullptr;
   }
-  g_loaded = {canonical, handle, api, 1};
+  if (!expected_build_id.empty() && (api->build_id == nullptr || expected_build_id != api->build_id)) {
+    error = "the game module " + utf8(canonical) + " is build " + std::string(api->build_id ? api->build_id : "?") +
+            ", not " + expected_build_id + "; build the title again";
+    unload(handle);
+    return nullptr;
+  }
+  std::error_code size_ec, time_ec;
+  g_loaded = {canonical, handle, api, 1, std::filesystem::file_size(canonical, size_ec),
+              std::filesystem::last_write_time(canonical, time_ec)};
   return api;
 }
 
 void release_module() {
-  if (g_loaded.api == nullptr || --g_loaded.holds > 0) return;
+  if (g_loaded.api != nullptr && g_loaded.holds > 0) --g_loaded.holds;  // never unloads (module_loader.h)
+}
+
+bool shutdown_module(std::string& error) {
+  if (g_loaded.api == nullptr) return true;
+  if (g_loaded.holds > 0) {
+    error = "the MP4 game module is still held by " + std::to_string(g_loaded.holds) +
+            " runtime(s) at shutdown; it stays loaded";
+    return false;
+  }
   unload(g_loaded.handle);
   g_loaded = {};
+  return true;
+}
+
+std::string loaded_module_build_id() {
+  return g_loaded.api != nullptr && g_loaded.api->build_id != nullptr ? g_loaded.api->build_id : "";
 }
 
 }  // namespace mpt::mp4

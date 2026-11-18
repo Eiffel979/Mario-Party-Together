@@ -1,7 +1,9 @@
 // mpt::mp4::load_module (runtimes/gc_wii/mp4/host/src/module_loader.cpp) on stub game modules
-// (stub_module.cpp): the fixed image base on this OS, one module per process with shared holds, and
-// every rejection unloading what it loaded (#49 review). No game code and no dump, so public CI runs it.
-// It is its own executable: the loader's one-module state is per process.
+// (stub_module.cpp): the fixed image base on this OS, one module per process with shared holds, every
+// rejection unloading what it loaded (#49 review), and the module kept loaded for the process until
+// shutdown_module (ADR 0008, "Game module kept loaded for the process"). No game code and no dump, so
+// public CI runs it. It is its own executable: the loader's one-module state is per process. Every
+// case ends with the module shut down, so the next one starts with nothing loaded.
 #include <doctest/doctest.h>
 
 #include <cstdint>
@@ -28,6 +30,7 @@ namespace {
 namespace fs = std::filesystem;
 using mpt::mp4::load_module;
 using mpt::mp4::release_module;
+using mpt::mp4::shutdown_module;
 
 constexpr std::uintptr_t kBase = static_cast<std::uintptr_t>(MPT_MP4_MODULE_BASE);
 
@@ -58,9 +61,16 @@ std::string hex(std::uintptr_t v) {
 
 bool has(const std::string& text, const std::string& part) { return text.find(part) != std::string::npos; }
 
+// Releases `holds` holds and shuts the module down, as the shell does at exit.
+void shut(int holds = 1) {
+  for (int i = 0; i < holds; ++i) release_module();
+  std::string error;
+  CHECK_MESSAGE(shutdown_module(error), error);
+}
+
 }  // namespace
 
-TEST_CASE("load_module maps a v1.1 module at its fixed base and shares it until the last hold") {
+TEST_CASE("load_module maps a v1.1 module at its fixed base and shares it") {
   std::string error;
   const MptMp4Api* api = load_module(kV11, kBase, error);
   REQUIRE_MESSAGE(api != nullptr, error);
@@ -83,7 +93,75 @@ TEST_CASE("load_module maps a v1.1 module at its fixed base and shares it until 
 
   release_module();
   CHECK(mapped(kV11));  // one hold left
+  shut();
+  CHECK_FALSE(mapped(kV11));
+}
+
+TEST_CASE("the last release keeps the module loaded, and a second load reuses it without a reload") {
+  std::string error;
+  const MptMp4Api* api = load_module(kV11, kBase, error);
+  REQUIRE_MESSAGE(api != nullptr, error);
+  // A mark in the module's own data: a reload (or a second mpt_mp4_get_api) would reset it.
+  static const char kMark[] = "kept loaded";
+  const_cast<MptMp4Api*>(api)->build_id = kMark;
+  release_module();  // the last hold
+  CHECK(mapped(kV11));
+  CHECK(mpt::mp4::loaded_module_build_id() == kMark);
+  const MptMp4Api* again = load_module(kV11, kBase, error);
+  CHECK(again == api);
+  CHECK(api->build_id == kMark);  // the same image, not loaded again
+  const_cast<MptMp4Api*>(api)->build_id = "stub v1.1";
+  shut();
+  CHECK(mpt::mp4::loaded_module_build_id().empty());
+}
+
+TEST_CASE("while a module is kept loaded, another path or build ID is refused with a restart message") {
+  std::string error;
+  const MptMp4Api* api = load_module(kV11, kBase, error, "stub v1.1");
+  REQUIRE_MESSAGE(api != nullptr, error);
+  release_module();  // no hold left: still loaded
+  std::string other;
+  CHECK(load_module(kV10, kBase, other) == nullptr);
+  CHECK(has(other, "already loaded"));
+  CHECK(has(other, "restart"));
+  CHECK_FALSE(mapped(kV10));
+  std::string build;
+  CHECK(load_module(kV11, kBase, build, "stub v2") == nullptr);
+  CHECK(has(build, "is build stub v1.1, not stub v2"));
+  CHECK(has(build, "restart"));
+  CHECK(mapped(kV11));  // the refusals leave the kept module as it was
+  CHECK(load_module(kV11, kBase, error, "stub v1.1") == api);
+  shut();
+}
+
+TEST_CASE("a module whose build ID is not the expected one is refused and unloaded") {
+  std::string error;
+  CHECK(load_module(kV11, kBase, error, "mp4-other") == nullptr);
+  CHECK(has(error, "is build stub v1.1, not mp4-other"));
+  CHECK_FALSE(mapped(kV11));
+}
+
+TEST_CASE("shutdown_module unloads only when no hold is left, and a load after it works") {
+  std::string error;
+  // Before any load: nothing to do.
+  CHECK(shutdown_module(error));
+  CHECK(error.empty());
+  const MptMp4Api* api = load_module(kV11, kBase, error);
+  REQUIRE_MESSAGE(api != nullptr, error);
+  // A hold is still taken: an error, and the module stays mapped.
+  std::string held;
+  CHECK_FALSE(shutdown_module(held));
+  CHECK(has(held, "still held by 1 runtime"));
+  CHECK(mapped(kV11));
   release_module();
+  CHECK(shutdown_module(error));
+  CHECK_FALSE(mapped(kV11));
+  // A second shutdown does nothing, and the module loads again afterwards.
+  CHECK(shutdown_module(error));
+  api = load_module(kV11, kBase, error);
+  REQUIRE_MESSAGE(api != nullptr, error);
+  CHECK(mapped(kV11));
+  shut();
   CHECK_FALSE(mapped(kV11));
 }
 
@@ -96,7 +174,7 @@ TEST_CASE("a module away from its fixed base is refused and unloaded") {
   // Nothing is left held: loading it at its own base works afterwards.
   const MptMp4Api* api = load_module(kV11, kBase, error);
   REQUIRE_MESSAGE(api != nullptr, error);
-  release_module();
+  shut();
   CHECK_FALSE(mapped(kV11));
 }
 
@@ -107,7 +185,7 @@ TEST_CASE("the module base keeps the whole image below the next 4 GiB boundary")
   std::string error;
   const MptMp4Api* api = load_module(kV11, kBase, error);
   REQUIRE_MESSAGE(api != nullptr, error);
-  release_module();
+  shut();
 }
 
 TEST_CASE("a module linked at the old base is refused and unloaded") {
@@ -148,5 +226,5 @@ TEST_CASE("a missing module file is reported without loading anything") {
   // After every refusal above, the real module still loads.
   const MptMp4Api* api = load_module(kV11, kBase, error);
   REQUIRE_MESSAGE(api != nullptr, error);
-  release_module();
+  shut();
 }
