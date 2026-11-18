@@ -874,3 +874,27 @@ TEST_CASE("focus: the real launcher reaches Back below the file list by D-pad an
   tap(ui, tick, SDL_GAMEPAD_BUTTON_EAST);
   CHECK(shown_title() == "Add a game dump");
 }
+
+// The pause screen by controller (bug 6): Start resumes, as in the games, and Back alone
+// does nothing there, so holding Back and pressing Start never hands Start to the game.
+TEST_CASE("pause screen: Start resumes and Back alone does not") {
+  SdlVideo video;
+  const Replay replay = record_party();
+  const std::vector<ReplayCheckpoint> plain = play(replay, nullptr, {});
+  Harness ui(video);
+  std::string title_after_back;
+  const std::map<std::uint64_t, std::vector<SDL_Event>> script = {
+      press(50, SDL_GAMEPAD_BUTTON_GUIDE),   release(51, SDL_GAMEPAD_BUTTON_GUIDE),
+      press(60, SDL_GAMEPAD_BUTTON_BACK),    release(61, SDL_GAMEPAD_BUTTON_BACK),
+      press(70, SDL_GAMEPAD_BUTTON_BACK),  // held, then Start
+      press(72, SDL_GAMEPAD_BUTTON_START),   release(73, SDL_GAMEPAD_BUTTON_START),
+      release(74, SDL_GAMEPAD_BUTTON_BACK),
+  };
+  CHECK(play(replay, &ui, script, nullptr, [&](std::uint64_t tick) {
+          if (tick == 65) title_after_back = shown_title();
+        }) == plain);
+  CHECK(title_after_back == "Paused");
+  CHECK(ui.shell.pauses == 1);
+  CHECK(ui.shell.resumes == 1);
+  CHECK(ui.shell.stops == 0);
+}

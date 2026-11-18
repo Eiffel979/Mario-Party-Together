@@ -144,8 +144,9 @@ fs::path find_asset_root(const fs::path& requested) {
 }
 
 bool is_pause_action(const SDL_Event& e) {
-  // input/'s host-reserved binding (Esc, Guide; ADR 0010 §3.2), the same one the shell
-  // routes with.
+  // input/'s host-reserved binding (ADR 0010 §3.2), the same one the shell routes with.
+  // Whatever input/ reserves (Esc, Guide, and any gamepad combination it adds) opens the
+  // pause screen without a change here.
   return input::SdlInput::host_action(e) == input::HostAction::pause;
 }
 
@@ -385,8 +386,17 @@ class Launcher final : public shell::IOverlay {
     if (flow_.screen() == Screen::seating && seating_.join(pad)) return;
     switch (b.button) {
       case SDL_GAMEPAD_BUTTON_SOUTH: context_->ProcessKeyDown(Rml::Input::KI_RETURN, 0); break;  // confirm, by position
-      case SDL_GAMEPAD_BUTTON_EAST:                                                            // back, by position
+      case SDL_GAMEPAD_BUTTON_START:
+        // Start closes the pause screen, as in the games. The shell masks it until it is
+        // released (ADR 0010 §3.3), so the game never sees this press.
+        if (flow_.screen() == Screen::pause) resume();
+        break;
       case SDL_GAMEPAD_BUTTON_BACK:
+        // On the pause screen Back may be the first half of a Back + Start combination:
+        // resuming on it would hand the Start that follows to the game.
+        if (flow_.screen() != Screen::pause) on_back();
+        break;
+      case SDL_GAMEPAD_BUTTON_EAST:  // back, by position
       case SDL_GAMEPAD_BUTTON_GUIDE: on_back(); break;
       default: break;
     }
