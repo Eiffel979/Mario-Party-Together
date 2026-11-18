@@ -462,7 +462,7 @@ int e5_round_trip(const BootOptions& options, const mpt::VerifiedDump& dump, mpt
 #endif
   std::vector<std::pair<std::uint64_t, std::uint64_t>> straight;  // (frame, hash) at each checkpoint
   mpt::SaveState saved;
-  std::optional<std::uint64_t> cookie_before;
+  [[maybe_unused]] std::optional<std::uint64_t> cookie_before;  // Windows x64 only
 #if defined(_WIN32)
   HMODULE pin = nullptr;  // --e5-keep-module
   struct Unpin {
