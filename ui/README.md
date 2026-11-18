@@ -10,15 +10,30 @@ shell's presenter (ADR 0010). Phase 1 (P1-23, D6) has exactly these screens:
 | File list | Drives, folders and dump files (`.iso`, `.gcm`, N64 images, and the compressed containers so their specific message is shown). |
 | Import | Identify, then build progress, then "ready" or a specific rejection (E11). Cancel stops the build. |
 | Players | Each seat shows its device: "Keyboard", the controller's own name, or "Computer (CPU)". Select a device to change its seat; a new controller joins with any button. "Keyboard + controller, 2 computer players" sets up E1 in one step (ruling M4-U1). Empty seats are computer players, chosen in the game's own setup. A hint says the game may show a black screen at boot and to press START. |
-| Pause | Opened by the host pause action (Esc, or the gamepad Guide button). "Turn x/y" while a party runs (left out when the title does not report the turn count). Resume, Quit to library, Exit. |
+| Pause | Opened by the host pause action (input/'s reserved binding: Esc, or the gamepad Guide button). "Turn x/y" while a party runs (left out when the title does not report the turn count). Resume, Quit to library, Exit. By controller: South selects; East, Start or Guide resumes. Back does nothing here, so a Back + Start combination never hands its Start to the game. |
 | Party over | After a session stops (Quit to library, or by itself): "Party finished" when the Director reported `finished`, else the phase it ended in. The replay path relative to the user dir, and no other path (ruling M4-C). Back to library. |
+
+## Controller and keyboard navigation
+
+Arrow keys, the D-pad and the left stick move the focus with the launcher's own search
+(`model/` `focus_nav.h`, `backend/focus_rml.h`), not RmlUi's `nav` property. RmlUi 6.2
+searches only inside the scroll container the focus is in, and skips the children of
+every other one, so a button in a scrolling list (the Players devices, the file list)
+could never reach the buttons below it. The launcher's search stays in the current list
+while a row lies that way (the list scrolls), and otherwise searches the whole screen by
+what is on screen. Every focusable element (`tab-index: auto`) is reachable on every
+screen; `ui_overlay_replay` checks it on each real document. Do not add `nav` to the
+theme: the launcher never sends RmlUi arrow keys.
+
+South confirms and East goes back, by position. Back (Select) also goes back, except on
+the pause screen.
 
 ## Layout
 
 | Path | Contents | Depends on |
 |---|---|---|
-| `model/` | View models and flow state machines: `ImportFlow`, `Library`, `FileBrowser`, `Seating`, `LauncherFlow`, `NavRepeat`. | `core/`, `asset-import/`, `input/` (pure core). **No RmlUi, no SDL.** |
-| `backend/` | RmlUi render interface on `SDL_Renderer`, host-time system interface, UTF-8 file interface, SDL key mapping. | RmlUi, SDL3 |
+| `model/` | View models and flow state machines: `ImportFlow`, `Library`, `FileBrowser`, `Seating`, `LauncherFlow`, `NavRepeat`, `next_focus`. | `core/`, `asset-import/`, `input/` (pure core). **No RmlUi, no SDL.** |
+| `backend/` | RmlUi render interface on `SDL_Renderer`, host-time system interface, UTF-8 file interface, SDL key mapping, directional focus on RmlUi documents. | RmlUi, SDL3 |
 | `screens/` | `launcher.cpp` (the `IOverlay`) and one RML document per screen. | RmlUi, SDL3 |
 | `assets/` | `theme.rcss` (every colour and size) and the one font, `fonts/LatoLatin-Regular.ttf`, with `fonts/OFL.txt`. | - |
 | `include/mpt/ui/launcher.h` | `make_launcher(UiHost)`, which `core/shell/main.cpp` hands to `run()`. | |
@@ -43,6 +58,9 @@ launcher falls back to this source folder (developer builds).
 - The party phase, turn and replay path come only from `SessionStatus` (M4-06), never
   from a runtime.
 - The pause action is input/'s reserved binding (`SdlInput::host_action`: Esc, Guide).
+  The launcher asks only `host_action`, so a binding input/ adds (such as a Back + Start
+  combination for pads whose Guide button does not reach the game window) opens the pause
+  screen with no change here.
 - `ui_overlay_replay` (the ADR 0010 bring-up gate) plays a FakeRuntime replay with the real
   launcher, routed with the shell's own `route_event` and `GameInputGate`: paused with Esc
   or Guide, navigated with synthetic D-pad, stick and buttons, resumed with south or east.

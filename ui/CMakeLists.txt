@@ -12,6 +12,7 @@ find_package(RmlUi CONFIG REQUIRED)
 
 add_library(mpt_ui_model
   model/src/file_browser.cpp
+  model/src/focus_nav.cpp
   model/src/import_flow.cpp
   model/src/launcher_flow.cpp
   model/src/library.cpp
@@ -26,6 +27,7 @@ target_link_libraries(mpt_ui_model
 mpt_set_warnings(mpt_ui_model)
 
 add_library(mpt_ui
+  backend/focus_rml.cpp
   backend/input_sdl.cpp
   backend/render_sdl.cpp
   backend/system_sdl.cpp
@@ -58,6 +60,7 @@ if(MPT_BUILD_TESTS)
   add_executable(mpt_ui_model_tests
     tests/main.cpp
     tests/test_file_browser.cpp
+    tests/test_focus_nav.cpp
     tests/test_import_flow.cpp
     tests/test_launcher_flow.cpp
     tests/test_library.cpp
@@ -78,7 +81,8 @@ if(MPT_BUILD_TESTS)
   )
   # RmlUi too: the walkthrough reads the shown document back (M4-09).
   target_link_libraries(mpt_ui_overlay_tests PRIVATE mpt::ui mpt::shell_core RmlUi::RmlUi doctest::doctest)
-  target_include_directories(mpt_ui_overlay_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+  # backend/ too: the focus tests step real documents with focus_rml.h.
+  target_include_directories(mpt_ui_overlay_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests" "${CMAKE_CURRENT_SOURCE_DIR}/backend")
   target_compile_definitions(mpt_ui_overlay_tests PRIVATE MPT_UI_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   mpt_set_warnings(mpt_ui_overlay_tests)
   add_test(NAME ui_overlay_replay COMMAND mpt_ui_overlay_tests)
