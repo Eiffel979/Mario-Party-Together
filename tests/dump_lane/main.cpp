@@ -126,6 +126,10 @@ struct BootOptions {
   std::vector<Press> presses;
   std::filesystem::path capture_dir;  // empty: no captures
   std::uint64_t capture_every = 0;    // 0: at every checkpoint
+  // With --party: capture only frames in [capture_from, capture_to] (0: no bound), every capture_every
+  // frames (default 1), independent of the checkpoints, to look at one minigame closely.
+  std::uint64_t capture_from = 0;
+  std::uint64_t capture_to = 0;
   // M4: --party (the CPU-party autopilot) and --verify-replay FILE.
   bool party = false;
   mpt::dump_lane::PartyScript script{};
@@ -583,6 +587,23 @@ struct FrameClock {
 // media. The oracle is Session::director(): the run passes once its phase is `finished`. It fails on
 // a halt or fault, on a soft lock (no change of phase, overlay or turn for --watchdog frames) or when
 // --frames runs out first.
+//
+// With --capture DIR, a party writes frame N (frames stepped so far) as DIR/frame_NNNNNN.png when N lies
+// in [--capture-from, --capture-to] and is a multiple of --capture-every (default 1). Captures are the
+// user's own game output and stay outside the repository (path_guard.h).
+void capture_party_frame(const BootOptions& options, std::uint64_t frame, mpt::ITitleRuntime& runtime) {
+  if (options.capture_from != 0 && frame < options.capture_from) return;
+  if (options.capture_to != 0 && frame > options.capture_to) return;
+  const std::uint64_t every = options.capture_every != 0 ? options.capture_every : 1;
+  if (frame % every != 0) return;
+  const mpt::FrameOutput video = runtime.video();
+  if (video.kind != mpt::FrameOutput::Kind::cpu_rgba8) return;
+  char name[32];
+  std::snprintf(name, sizeof name, "frame_%06llu.png", static_cast<unsigned long long>(frame));
+  if (!mpt::dump_lane::write_png(options.capture_dir / name, video.width, video.height, video.pixels))
+    std::printf("dump lane: could not write capture %s\n", name);
+}
+
 int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::TitleRegistry& registry) {
   mpt::SessionConfig config;
   config.dump = dump;
@@ -741,6 +762,7 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
       failure = stepped.error();
       break;
     }
+    if (!options.capture_dir.empty()) capture_party_frame(options, f + 1, session->runtime());
     const mpt::PartySnapshot& party = session->director().party();
     MptMp4Party raw{};
     raw.struct_size = sizeof raw;
@@ -905,9 +927,11 @@ int verify_replay_file(const BootOptions& options, const mpt::VerifiedDump& dump
     return 1;
   }
   mpt::Session& session = *std::get<std::unique_ptr<mpt::Session>>(started);
-  if (!options.audio_out.empty() || !options.frame_log.empty()) {
-    // Diagnostics: play the replay's inputs (no checks) and write the runtime's audio and/or a frame log,
-    // to look at what a recorded session produced, e.g. its music around a minigame's end.
+  if (!options.audio_out.empty() || !options.frame_log.empty() || !options.capture_dir.empty()) {
+    // Diagnostics: play the replay's inputs (no checks) and write the runtime's audio, a frame log and/or
+    // captures (--capture with --capture-from/-to/-every, as in a party), to look at what a recorded
+    // session produced, e.g. its music around a minigame's end or a minigame's picture. The overlay is
+    // printed whenever it changes, to find a minigame's frames.
     OutFile audio_out = options.audio_out.empty() ? OutFile(nullptr, &std::fclose) : open_out(options.audio_out, true);
     OutFile frame_log = options.frame_log.empty() ? OutFile(nullptr, &std::fclose) : open_out(options.frame_log, false);
     if ((!options.audio_out.empty() && !audio_out) || (!options.frame_log.empty() && !frame_log)) {
@@ -921,6 +945,7 @@ int verify_replay_file(const BootOptions& options, const mpt::VerifiedDump& dump
     mpt::ReplayReader reader(replay);
     mpt::InputFrame in;
     std::uint64_t played = 0;
+    std::string overlay = "?";
     while (played < options.frames && reader.next(in)) {
       const auto t0 = std::chrono::steady_clock::now();
       if (mpt::Result r = session.step(in); !r) {
@@ -928,6 +953,16 @@ int verify_replay_file(const BootOptions& options, const mpt::VerifiedDump& dump
         return 1;
       }
       clock.step(std::chrono::steady_clock::now() - t0, mp4);
+      if (!options.capture_dir.empty()) capture_party_frame(options, session.frame(), session.runtime());
+      if (mp4 != nullptr) {
+        MptMp4Party raw{};
+        raw.struct_size = sizeof raw;
+        if (mp4->readParty(raw) && overlay != raw.overlay_name) {
+          overlay = raw.overlay_name;
+          std::printf("frame %llu overlay %s\n", static_cast<unsigned long long>(session.frame()),
+                      overlay.empty() ? "-" : overlay.c_str());
+        }
+      }
       if (audio_out) {
         const mpt::AudioChunk chunk = session.runtime().audio();
         if (!chunk.samples.empty()) std::fwrite(chunk.samples.data(), sizeof(std::int16_t), chunk.samples.size(), audio_out.get());
@@ -1275,12 +1310,17 @@ int main(int argc, char** argv) {
       boot_options.capture_dir = argv[++i];
     } else if (arg == "--capture-every" && has_value) {
       boot_options.capture_every = std::strtoull(argv[++i], nullptr, 10);
+    } else if (arg == "--capture-from" && has_value) {
+      boot_options.capture_from = std::strtoull(argv[++i], nullptr, 10);
+    } else if (arg == "--capture-to" && has_value) {
+      boot_options.capture_to = std::strtoull(argv[++i], nullptr, 10);
     } else {
       std::printf("usage: mpt_dump_lane [--boot <title> [--frames N] [--every N] [--seed S] [--perturb [--perturb-samples N]]\n"
                   "                     [--hash-items FILE [--note-module-hits]] [--conformance] [--save-load-diff N]\n"
                   "                     [--press button@frame[+frames][,...]]... [--capture DIR [--capture-every N]]\n"
                   "                     [--party [--party-board N [--party-unlock-bowser]] [--party-wheel FROM:TO]\n"
                   "                              [--watchdog N] [--replay FILE]\n"
+                  "                              [--capture DIR [--capture-every N] [--capture-from N] [--capture-to N]]\n"
                   "                              [--hash-items FILE [--note-module-hits]] [--frame-times] [--frame-log FILE] [--audio-out FILE]\n"
                   "                              [--party-save-at N FILE] [--party-resume FILE]\n"
                   "                              [--watch-word OFF,...] [--find-word VALUE@FRAME]\n"
