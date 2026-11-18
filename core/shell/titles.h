@@ -41,7 +41,8 @@ using ShellTitles = std::vector<ShellTitle>;
 void register_titles(ShellTitles& titles);
 
 // Calls each title's shutdown, last registered first. Every executable that registers real
-// titles (the shell, the dump lane) calls it once before it exits, on every exit path.
+// titles (the shell, the dump lane) calls it once before it exits, on every normal exit path
+// (a fail-fast exit runs no teardown).
 inline void shutdown_titles(const ShellTitles& titles) {
   for (auto it = titles.rbegin(); it != titles.rend(); ++it)
     if (it->shutdown) it->shutdown();

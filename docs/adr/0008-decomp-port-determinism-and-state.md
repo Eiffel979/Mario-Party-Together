@@ -813,7 +813,7 @@ M4-16 ran the check of "Stack guard values in save states", decision point 2, on
 - **Determinism:** no hash moves. The kept-loaded runs give the M1 trail. Point 3 keeps "fresh runtime" meaning what it meant before, and the reboot test checks it.
 - **Phase 2:** none of candidates (i) to (iv) is chosen. A fresh process still gets a new cookie, and the ADR that closes §10 still decides that case.
 - **Phase 5 (cross-title suspend, minigame, resume):** once loaded, each title's module stays mapped for the process at its own fixed base. The Phase 5 ADR budgets address space and memory for that. It may also add an explicit unload at points where no save state of that module can still be loaded.
-- **architect:** `core/shell/titles.h` and `core/shell/main.cpp` (separate commit on this branch); `docs/phases/phase-1.md` M4-16.
+- **architect:** `core/shell/titles.h` and `core/shell/main.cpp` (in the same commit as this amendment); `docs/phases/phase-1.md` M4-16.
 - **runtime-gc-wii:** the loader (point 2), the module reset at `create` (point 3), MP4's `shutdown` (point 4) and the dump lane's call to `shutdown_titles`, with these tests, all on Windows:
   - **E5:** `--e5-round-trip 5000 --frames 10000 --every 100`, with the module kept loaded by default. Seeds 1 and 2: 50 of 50 checkpoints, `2523e333cd8cc6cc` and `5677a93bacfda417` at frame 10,000. The lane checks that the module stayed mapped, with the same handle and cookie, across the two runtimes.
   - **`--save-load-diff`** passes.
