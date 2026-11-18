@@ -1,0 +1,61 @@
+Apply order 0037 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+msm: host sizes and the heap's start do not wrap through 32-bit types, on MPT_PC
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+qa-reviewer's #82 review. Two places where msm squeezes a 64-bit host value through a 32-bit type:
+- msmSndMalloc (patch 0001's MusyX salMalloc hook) passed MusyX's size_t to msmMemAlloc as u32, so a
+  request above 4 GiB would have wrapped to a small block. It now returns NULL for it.
+- msmMemInit aligned the heap's start and computed its size through (s32) casts of the heap pointer.
+  On a 64-bit host they drop the pointer's upper half, and the size's subtraction can overflow a signed
+  int. On MPT_PC the same two values are computed in uintptr_t: the first 32-byte aligned address at
+  or above the pointer, and the size from there to the heap's end, rounded down to 32 bytes.
+Neither changes a value MP4 reaches: MusyX's requests are far below 4 GiB, and for every heap the
+32-bit arithmetic gave the same start and size. State hashes do not move (docs/titles/mp4.md, M1).
+
+diff --git a/src/msm/msmmem.c b/src/msm/msmmem.c
+index 5d0ea55..d4f9e83 100644
+--- a/src/msm/msmmem.c
++++ b/src/msm/msmmem.c
+@@ -156,6 +156,18 @@ void msmMemInit(void* ptr, u32 size) {
+     MSMBLOCK* block;
+     s32 ofs;
+ 
++#ifdef MPT_PC
++    /* The console computes the alignment and the size through (s32) casts of 32-bit pointers. On a
++     * 64-bit host those casts drop the upper half and the subtraction below can overflow a signed int,
++     * so the same values are computed in uintptr_t: the first 32-byte aligned address at or above ptr,
++     * and the size from there to ptr + size, rounded down to 32 bytes. */
++    {
++        uintptr_t start = ((uintptr_t)ptr + 0x1F) & ~(uintptr_t)0x1F;
++        uintptr_t end = (uintptr_t)ptr + size;
++        mem.ptr = (void*)start;
++        mem.size = (u32)((end - start) & ~(uintptr_t)0x1F);
++    }
++#else
+     ofs = (s32)ptr & 0x1F;
+     switch (ofs) {
+         default:
+@@ -169,6 +181,7 @@ void msmMemInit(void* ptr, u32 size) {
+     mem.ptr = (void*)((uintptr_t)ptr + ofs);
+     ofs = (s32)ptr + size;
+     mem.size = ((ofs - (s32)mem.ptr) & ~0x1F);
++#endif
+     block = &mem.first;
+     block->freeSize = 0;
+     block->size = mem.size;
+diff --git a/src/msm/msmsys.c b/src/msm/msmsys.c
+index 6bfb4cb..f3266a8 100644
+--- a/src/msm/msmsys.c
++++ b/src/msm/msmsys.c
+@@ -798,6 +798,11 @@ void msmSysCheckInit(void)
+ #ifdef MPT_PC
+ static void *msmSndMalloc(size_t size)
+ {
++    /* MusyX asks in size_t; msm's heap sizes are u32. A request that does not fit in u32 fails
++     * instead of wrapping to a small allocation. */
++    if (size > 0xFFFFFFFFu) {
++        return NULL;
++    }
+     return msmMemAlloc((u32)size);
+ }
+ #endif
