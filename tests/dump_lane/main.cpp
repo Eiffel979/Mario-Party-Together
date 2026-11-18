@@ -114,8 +114,8 @@ struct BootOptions {
   bool note_module_hits = false;       // --note-module-hits: with --hash-items, a note per module hit
   bool unlock_bowser = false;          // --party-unlock-bowser: Bowser's Gnarly Party on the wheel (diagnosis)
   bool frame_times = false;            // --frame-times: with --party, steady-state frame times
-  std::filesystem::path frame_log;     // --frame-log FILE: with --party, one line per step (implies --frame-times)
-  std::filesystem::path audio_out;     // --audio-out FILE: with --party, the game's audio as raw S16 PCM
+  std::filesystem::path frame_log;     // --frame-log FILE: --party or --verify-replay, one line per step (implies --frame-times)
+  std::filesystem::path audio_out;     // --audio-out FILE: --party or --verify-replay, the game's audio as raw S16 PCM
   bool conformance = false;            // --conformance: the runtime conformance suite instead of a boot run
   std::uint64_t save_load_diff = 0;    // --save-load-diff N: where a resumed run first differs, by hash item
   std::uint64_t e5_round_trip = 0;     // --e5-round-trip N: save before frame N, reload the module, load, compare
@@ -1492,7 +1492,8 @@ int main(int argc, char** argv) {
                   "                              [--party-save-at N FILE] [--party-resume FILE]\n"
                   "                              [--watch-word OFF,...] [--find-word VALUE@FRAME]\n"
                   "                              [--watch-write OFF,...@FRAME] [--dump-arena FRAME FILE]]\n"
-                  "                     [--verify-replay FILE]]\n"
+                  "                     [--verify-replay FILE [--frames N] [--frame-log FILE] [--audio-out FILE]\n"
+                  "                                       [--capture DIR [--capture-every N] [--capture-from N] [--capture-to N]]]]\n"
                   "       mpt_dump_lane --layout-probe\n"
                   "       mpt_dump_lane --supervise [--crash-report FILE] <any of the above>\n"
                   "       mpt_dump_lane [--supervise [--crash-report FILE]] --crash-selftest MODULE gs|av|abort\n"
@@ -1502,6 +1503,16 @@ int main(int argc, char** argv) {
   }
   // A party needs far more than the boot check's 600 frames: a 20-turn party is about 150,000.
   if (boot_options.party && !frames_given) boot_options.frames = 1'000'000;
+  // --verify-replay's diagnostics pass (--audio-out, --frame-log, --capture) plays the whole replay
+  // unless --frames cuts it short.
+  if (!boot_options.verify_replay.empty() && !frames_given) boot_options.frames = UINT64_MAX;
+  // --audio-out and --frame-log write only in a --party run or --verify-replay's diagnostics pass;
+  // anywhere else they would be ignored without a word.
+  if ((!boot_options.audio_out.empty() || !boot_options.frame_log.empty()) && !boot_options.party &&
+      boot_options.verify_replay.empty()) {
+    std::printf("dump lane: --audio-out and --frame-log need --party or --verify-replay\n");
+    return 2;
+  }
   // --party-unlock-bowser acts only on a --party run's boot (party_run), so anywhere else it would be
   // ignored without a word. A replay never records the unlock, so --verify-replay cannot use it either.
   if (boot_options.unlock_bowser && (!boot_options.party || !boot_options.verify_replay.empty())) {

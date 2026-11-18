@@ -112,7 +112,9 @@ mpt_dump_lane --boot <title> [--frames N] [--every N] [--seed S] [--perturb]
 ```
 mpt_dump_lane --boot mp4 --party [--seed S] [--frames N] [--every N] [--watchdog N] [--replay FILE]
               [--party-board N --party-wheel FROM:TO]
-mpt_dump_lane --boot mp4 --verify-replay FILE
+              [--frame-times] [--frame-log FILE] [--audio-out FILE]
+mpt_dump_lane --boot mp4 --verify-replay FILE [--frames N] [--frame-log FILE] [--audio-out FILE]
+              [--capture DIR [--capture-every N] [--capture-from N] [--capture-to N]]
 ```
 
 - `--party` plays a whole party through a `Session` on an autopilot (`party_autopilot` in
@@ -154,6 +156,14 @@ mpt_dump_lane --boot mp4 --verify-replay FILE
   played this way prints the running overlay whenever it changes, to find a minigame's frames. The PNG
   holds the frame image's four channels as the runtime returns them. Captures are your own game's
   output: never commit them.
+- Diagnosis: `--frame-times` prints the total step time and the p99 over steady frames (the boot,
+  overlay changes and frames that complete a DVD read or an ARAM transfer are exempt). `--frame-log
+  FILE` (implies `--frame-times`) writes one line per step: the frame, its step time in ms, the
+  overlay and the DVD read and ARAM transfer counts. `--audio-out FILE` writes the game's audio as it
+  is stepped, raw interleaved S16 PCM at the runtime's sample rate and channel count. Both work in a
+  `--party` run and with `--verify-replay`, which then plays the replay without checks (like
+  `--capture`), through to its end unless `--frames N` stops it first. Anywhere else the lane refuses them (exit 2).
+  The audio is your own game's output: never commit it.
 - `--party-unlock-bowser` boots with `MPT_MP4_BOOT_UNLOCK_BOWSERS_GNARLY_PARTY`
   (`Mp4Runtime::setTestGameplayFlags`), so `--party-board 5` can reach Bowser's Gnarly Party. No replay
   records the flag, so the lane refuses it with `--replay`, and such a run is diagnosis only.
