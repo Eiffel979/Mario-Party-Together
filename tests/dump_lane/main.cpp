@@ -118,8 +118,9 @@ struct BootOptions {
   std::filesystem::path audio_out;     // --audio-out FILE: --party or --verify-replay, the game's audio as raw S16 PCM
   bool conformance = false;            // --conformance: the runtime conformance suite instead of a boot run
   std::uint64_t save_load_diff = 0;    // --save-load-diff N: where a resumed run first differs, by hash item
+  bool reboot_trail = false;           // --reboot-trail: runtimes A (seed), B (seed + 1), C (seed) in one process
   std::uint64_t e5_round_trip = 0;     // --e5-round-trip N: save before frame N, reload the module, load, compare
-  bool e5_keep_module = false;         // --e5-keep-module: with --e5-round-trip, keep the module loaded (diagnosis)
+  bool e5_reload_module = false;       // --e5-reload-module: with --e5-round-trip, reload the module (diagnosis)
   // M2: scripted input on player 1 and frame captures.
   struct Press {
     std::uint32_t buttons;
@@ -426,6 +427,58 @@ int save_load_diff(const BootOptions& options, const mpt::VerifiedDump& dump, mp
 // The run passes when every checkpoint after N has the uninterrupted run's hash. On Windows it also
 // prints the module's /GS cookie before and after the reload and how many guard words the arena holds
 // at the save (stack_guard.h): the evidence that the saved frame has suspended guarded game functions.
+// `--reboot-trail` (ADR 0008, "Game module kept loaded for the process", point 3): a fresh runtime on
+// the kept module must start as one on a freshly loaded module. In one process, runtime A boots with
+// --seed, B with --seed + 1 and C with --seed again; each steps --frames frames (no input but --press)
+// and is destroyed before the next is created, so B and C run on the module A loaded. Every checkpoint
+// is printed as "reboot <A|B|C> frame N hash H", for comparing with separate boot-mode runs (the M1
+// trail). The lane itself fails unless C's trail equals A's and B's differs from it.
+int reboot_trail(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::TitleRegistry& registry) {
+  const std::uint64_t every = options.every != 0 ? options.every : 100;
+  auto run = [&](const char* name, std::uint64_t seed, std::vector<std::uint64_t>& trail) {
+    std::unique_ptr<mpt::ITitleRuntime> runtime = registry.createRuntime(mpt::TitleId::mp4);
+    if (auto* mp4 = dynamic_cast<mpt::mp4::Mp4Runtime*>(runtime.get())) mp4->setReportSink(&print_report, nullptr);
+    mpt::RuntimeConfig config;
+    config.seed = seed;
+    if (mpt::Result r = runtime->boot(dump, config); !r) {
+      std::printf("dump lane: reboot %s: boot failed: %s\n", name, r.error().c_str());
+      return false;
+    }
+    for (std::uint64_t f = 0; f < options.frames; ++f) {
+      mpt::dump_lane::crash_note_frame(f);
+      mpt::InputFrame in;
+      in.frame = f;
+      in.pads[0] = scripted_pad(options, f);
+      runtime->stepFrame(in);
+      const mpt::RuntimeHealth h = runtime->status();
+      if (h.status != mpt::RuntimeStatus::running) {
+        std::printf("dump lane: reboot %s: frame %llu stopped: %s\n", name, static_cast<unsigned long long>(f),
+                    h.message.c_str());
+        return false;
+      }
+      if ((f + 1) % every != 0) continue;
+      const std::uint64_t hash = runtime->stateHash();
+      mpt::dump_lane::crash_note_checkpoint(f + 1, hash);
+      trail.push_back(hash);
+      std::printf("reboot %s frame %llu hash %016llx\n", name, static_cast<unsigned long long>(f + 1),
+                  static_cast<unsigned long long>(hash));
+    }
+#if defined(_WIN32) && defined(_M_X64)
+    const std::optional<std::uint64_t> cookie =
+        mpt::dump_lane::stack_guard::module_cookie(GetModuleHandleW(L"mp4_game.dll"));
+    std::printf("dump lane: reboot %s: seed %llu, module cookie %012llx\n", name, static_cast<unsigned long long>(seed),
+                static_cast<unsigned long long>(cookie.value_or(0)));
+#endif
+    return true;  // the runtime is destroyed here, before the next one is created
+  };
+  std::vector<std::uint64_t> a, b, c;
+  if (!run("A", options.seed, a) || !run("B", options.seed + 1, b) || !run("C", options.seed, c)) return 1;
+  const bool c_is_a = c == a, b_differs = b != a;
+  std::printf("dump lane: reboot: %zu checkpoints each; C %s A; B %s A: %s\n", a.size(), c_is_a ? "equals" : "DIFFERS FROM",
+              b_differs ? "differs from" : "EQUALS", c_is_a && b_differs && !a.empty() ? "PASS" : "FAIL");
+  return c_is_a && b_differs && !a.empty() ? 0 : 1;
+}
+
 int e5_round_trip(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::TitleRegistry& registry) {
   const std::uint64_t at = options.e5_round_trip;
   const std::uint64_t every = options.every != 0 ? options.every : 100;
@@ -463,14 +516,8 @@ int e5_round_trip(const BootOptions& options, const mpt::VerifiedDump& dump, mpt
   std::vector<std::pair<std::uint64_t, std::uint64_t>> straight;  // (frame, hash) at each checkpoint
   mpt::SaveState saved;
   [[maybe_unused]] std::optional<std::uint64_t> cookie_before;  // Windows x64 only
-#if defined(_WIN32)
-  HMODULE pin = nullptr;  // --e5-keep-module
-  struct Unpin {
-    HMODULE& m;
-    ~Unpin() {
-      if (m != nullptr) FreeLibrary(m);
-    }
-  } unpin{pin};
+#if defined(_WIN32) && defined(_M_X64)
+  HMODULE handle_before = nullptr;
 #endif
   {
     std::unique_ptr<mpt::ITitleRuntime> first = make();
@@ -480,6 +527,7 @@ int e5_round_trip(const BootOptions& options, const mpt::VerifiedDump& dump, mpt
         saved = first->saveState();
 #if defined(_WIN32) && defined(_M_X64)
         cookie_before = cookie_now();
+        handle_before = GetModuleHandleW(L"mp4_game.dll");
         if (cookie_before) {
           const auto guards = mpt::dump_lane::stack_guard::arena_guards(mpt::dump_lane::watch::kArenaBase, *cookie_before);
           std::printf("dump lane: e5: at frame %llu the arena holds %zu /GS guard word(s) under cookie %012llx\n",
@@ -499,37 +547,46 @@ int e5_round_trip(const BootOptions& options, const mpt::VerifiedDump& dump, mpt
           std::puts("dump lane: e5: saveState gave no data");
           return 1;
         }
-#if defined(_WIN32)
-        // --e5-keep-module (diagnosis): one more reference to the module, so destroying the runtime
-        // does not unmap it. Shows what the module reload alone changes.
-        if (options.e5_keep_module && !GetModuleHandleExW(0, L"mp4_game.dll", &pin)) {
-          std::puts("dump lane: e5: cannot take a reference to the game module");
-          return 1;
-        }
-#endif
       }
       first->stepFrame(input(f));
       if (!healthy(*first, f)) return 1;
       if ((f + 1) % every == 0) straight.emplace_back(f + 1, first->stateHash());
     }
   }
-#if defined(_WIN32)
-  if (pin != nullptr) {
-    std::puts("dump lane: e5: runtime destroyed, game module kept loaded (--e5-keep-module, diagnosis only)");
-  } else if (GetModuleHandleW(L"mp4_game.dll") != nullptr) {
-    std::puts("dump lane: e5: the game module is still loaded after the runtime was destroyed");
-    return 1;
-  } else {
-    std::puts("dump lane: e5: runtime destroyed, game module unloaded");
+  // The module stays loaded between runtimes (ADR 0008, "Game module kept loaded for the process").
+  // --e5-reload-module (diagnosis) unloads it through the title's shutdown, so the fresh runtime loads
+  // it again with a new /GS cookie: expected to fail fast when a saved guarded frame returns.
+  if (options.e5_reload_module) {
+    for (const mpt::shell::ShellTitle& t : mpt::dump_lane::shell_titles())
+      if (t.id == mpt::TitleId::mp4 && t.shutdown) t.shutdown();
+  }
+#if defined(_WIN32) && defined(_M_X64)
+  {
+    const bool loaded = GetModuleHandleW(L"mp4_game.dll") != nullptr;
+    if (loaded == options.e5_reload_module) {
+      std::printf("dump lane: e5: the game module is %s after the runtime was destroyed\n",
+                  loaded ? "still loaded" : "not loaded");
+      return 1;
+    }
+    std::printf("dump lane: e5: runtime destroyed, game module %s\n",
+                loaded ? "kept loaded" : "unloaded (--e5-reload-module, diagnosis: expect a fail-fast)");
   }
 #endif
   std::unique_ptr<mpt::ITitleRuntime> fresh = make();
   if (!fresh) return 1;
 #if defined(_WIN32) && defined(_M_X64)
-  const std::optional<std::uint64_t> cookie_after = cookie_now();
-  std::printf("dump lane: e5: module reloaded, /GS cookie %012llx (%s)\n",
-              static_cast<unsigned long long>(cookie_after.value_or(0)),
-              cookie_before && cookie_after && *cookie_before == *cookie_after ? "same as before" : "CHANGED");
+  {
+    const std::optional<std::uint64_t> cookie_after = cookie_now();
+    const bool same_handle = GetModuleHandleW(L"mp4_game.dll") == handle_before;
+    const bool same_cookie = cookie_before && cookie_after && *cookie_before == *cookie_after;
+    std::printf("dump lane: e5: fresh runtime booted, module handle %s, /GS cookie %012llx (%s)\n",
+                same_handle ? "the same" : "DIFFERENT", static_cast<unsigned long long>(cookie_after.value_or(0)),
+                same_cookie ? "same as before" : "CHANGED");
+    if (!options.e5_reload_module && (!same_handle || !same_cookie)) {
+      std::puts("dump lane: e5 FAILED: the module did not stay loaded across the two runtimes");
+      return 1;
+    }
+  }
 #endif
   if (mpt::Result r = fresh->loadState(saved); !r) {
     std::printf("dump lane: e5: loadState failed: %s\n", r.error().c_str());
@@ -1149,6 +1206,7 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir, cons
                                  : !options.verify_replay.empty() ? "verify-replay"
                                  : options.save_load_diff != 0    ? "save-load-diff"
                                  : options.e5_round_trip != 0     ? "e5-round-trip"
+                                 : options.reboot_trail           ? "reboot-trail"
                                  : options.conformance            ? "conformance"
                                                                   : "boot",
                                  options.seed);  // crash report breadcrumbs
@@ -1175,6 +1233,18 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir, cons
     return save_load_diff(options, std::get<mpt::VerifiedDump>(dump), registry);
 #else
     std::puts("dump lane: --save-load-diff needs the MP4 runtime");
+    return 1;
+#endif
+  }
+  if (options.reboot_trail) {
+#if defined(MPT_DUMP_LANE_MP4)
+    if (*title != mpt::TitleId::mp4) {
+      std::puts("dump lane: --reboot-trail runs on mp4 only for now");
+      return 1;
+    }
+    return reboot_trail(options, std::get<mpt::VerifiedDump>(dump), registry);
+#else
+    std::puts("dump lane: --reboot-trail needs the MP4 runtime");
     return 1;
 #endif
   }
@@ -1358,7 +1428,7 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir, cons
 
 }  // namespace
 
-int main(int argc, char** argv) {
+static int lane_main(int argc, char** argv) {
   // Unbuffered, so a crash still leaves everything printed before it (the boot mode is a diagnostic).
   std::setvbuf(stdout, nullptr, _IONBF, 0);
   // --supervise [--crash-report FILE]: rerun as a child and report the crashes it cannot (supervise.h).
@@ -1388,8 +1458,10 @@ int main(int argc, char** argv) {
       boot_options.save_load_diff = std::strtoull(argv[++i], nullptr, 10);
     } else if (arg == "--e5-round-trip" && has_value) {
       boot_options.e5_round_trip = std::strtoull(argv[++i], nullptr, 10);
-    } else if (arg == "--e5-keep-module") {
-      boot_options.e5_keep_module = true;
+    } else if (arg == "--reboot-trail") {
+      boot_options.reboot_trail = true;
+    } else if (arg == "--e5-reload-module") {
+      boot_options.e5_reload_module = true;
     } else if (arg == "--conformance") {
       boot_options.conformance = true;
     } else if (arg == "--hash-items" && has_value) {
@@ -1483,7 +1555,7 @@ int main(int argc, char** argv) {
     } else {
       std::printf("usage: mpt_dump_lane [--boot <title> [--frames N] [--every N] [--seed S] [--perturb [--perturb-samples N]]\n"
                   "                     [--hash-items FILE [--note-module-hits]] [--conformance] [--save-load-diff N]\n"
-                  "                     [--e5-round-trip N [--e5-keep-module]]\n"
+                  "                     [--e5-round-trip N [--e5-reload-module]] [--reboot-trail]\n"
                   "                     [--press button@frame[+frames][,...]]... [--capture DIR [--capture-every N]]\n"
                   "                     [--party [--party-board N [--party-unlock-bowser]] [--party-wheel FROM:TO]\n"
                   "                              [--watchdog N] [--replay FILE]\n"
@@ -1620,4 +1692,23 @@ int main(int argc, char** argv) {
   std::printf("dump lane: %d passed, %d failed, %d skipped\n", passed, failed, skipped);
   if (failed > 0) return 1;
   return passed == 0 ? kSkip : 0;
+}
+
+// Every normal exit goes through here: the titles release what they keep for the process (ADR 0008,
+// "Game module kept loaded for the process": MP4 unloads its game module), after every runtime of
+// lane_main is gone. A crash or fail-fast runs no teardown, as in the shell.
+int main(int argc, char** argv) {
+  const int code = lane_main(argc, argv);
+#if defined(_WIN32) && defined(_M_X64)
+  const bool was_loaded = GetModuleHandleW(L"mp4_game.dll") != nullptr;
+#endif
+  mpt::shell::shutdown_titles(mpt::dump_lane::shell_titles());
+#if defined(_WIN32) && defined(_M_X64)
+  if (was_loaded) {
+    const bool unloaded = GetModuleHandleW(L"mp4_game.dll") == nullptr;
+    std::printf("dump lane: exit: game module %s\n", unloaded ? "unloaded" : "STILL LOADED");
+    if (!unloaded && code == 0) return 1;
+  }
+#endif
+  return code;
 }

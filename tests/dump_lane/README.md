@@ -168,26 +168,35 @@ mpt_dump_lane --boot mp4 --verify-replay FILE [--frames N] [--frame-log FILE] [-
   (`Mp4Runtime::setTestGameplayFlags`), so `--party-board 5` can reach Bowser's Gnarly Party. No replay
   records the flag, so the lane refuses it with `--replay`, and such a run is diagnosis only.
 
-## E5: the save-state round trip across a module reload (MP4, M4-16)
+## E5: the in-process save-state round trip, and a fresh runtime on the kept module (MP4, M4-16)
 
 ```
-mpt_dump_lane --supervise --boot mp4 --e5-round-trip N [--frames M] [--every K] [--seed S] [--e5-keep-module]
+mpt_dump_lane --supervise --boot mp4 --e5-round-trip N [--frames M] [--every K] [--seed S] [--e5-reload-module]
+mpt_dump_lane --supervise --boot mp4 --reboot-trail [--frames M] [--every K] [--seed S]
 mpt_dump_lane [--supervise] --guard-reload-selftest STUB keep|reload
 ```
 
+The game module stays loaded for the whole process once a runtime has loaded it (ADR 0008, "Game
+module kept loaded for the process"). Every normal exit of the lane releases it through the titles'
+`shutdown` (`shell::shutdown_titles`) and prints `dump lane: exit: game module unloaded`.
+
 - `--e5-round-trip N` is E5 as narrowed (`docs/phases/phase-1.md`, M4-D): one runtime steps `--frames`
   frames with no input (or `--press`), saving the state before frame N and keeping the state hash at
-  every `--every` checkpoint. The lane then destroys it, which unloads the game module (the lane checks
-  that it is gone), boots a fresh runtime with the same seed, which loads the module again, loads the
+  every `--every` checkpoint. The lane destroys it, boots a fresh runtime with the same seed, loads the
   state and steps frames N to `--frames`. Exit 0 only if every checkpoint after N has the uninterrupted
-  run's hash. On Windows it also prints how many `/GS` guard words the arena holds at the save
+  run's hash and the module stayed loaded across the two runtimes, with the same handle and the same
+  `/GS` cookie. On Windows it also prints how many `/GS` guard words the arena holds at the save
   (`stack_guard.h`: words that are the module's cookie XOR an address next to them, i.e. suspended
-  guarded game frames) and the module's cookie before and after the reload. Use `--supervise`: a
-  guarded frame checked against a new cookie fails fast (0xC0000409), and the supervisor reports where.
-  Results: `docs/titles/mp4.md` §11, "E5 in process (M4-16)".
-- `--e5-keep-module` (diagnosis only) holds one more reference to the module while the runtime is
-  destroyed, so the module stays mapped and keeps its cookie. It separates what the module reload
-  changes from what the save state carries.
+  guarded game frames). Results: `docs/titles/mp4.md` §11, "E5 in process (M4-16)".
+- `--e5-reload-module` (diagnosis only, expected to fail fast) unloads the module between the two
+  runtimes through MP4's `shutdown`, so the fresh runtime loads it again with a new cookie. Run it under
+  `--supervise`: the saved guarded frame fails its check (0xC0000409) when it returns. It is the
+  reason the module is kept loaded.
+- `--reboot-trail` checks that a fresh runtime on the kept module starts as one on a freshly loaded
+  module: runtimes A (`--seed`), B (`--seed` + 1) and C (`--seed`) each step `--frames` frames in turn,
+  each destroyed before the next is created. It prints every checkpoint as `reboot <A|B|C> frame N hash
+  H` for comparison with separate boot-mode runs (the M1 trail), and exits 0 only if C's trail equals
+  A's and B's differs from it.
 - `--guard-reload-selftest STUB keep|reload` needs no dump: it suspends a guarded function of a synthetic
   stub (`tests/mp4_loader/guard_stub.cpp`) on a fiber, keeps or reloads the stub, and resumes it. CTest
   runs both (`dump_lane_guard_reload_keep`, `dump_lane_guard_reload_fails_fast`) on Windows x64.
