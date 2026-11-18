@@ -166,6 +166,32 @@ std::vector<std::span<std::byte>> gameStateRegions() {
   return regions;
 }
 
+// The module stays loaded for the process (ADR 0008, "Game module kept loaded for the process", point 3;
+// host/src/module_loader.h), so every create must start from what a freshly loaded module holds. The
+// game-visible module state is taken here once, at load, before any create and before any game code:
+//  - the game core's writable data and every REL's (game_data.c, rel_loader.c keep the images and
+//    restore them at boot and at each REL link);
+//  - MusyX's data and bss (MusyxEngine keeps its image and restores it at boot);
+//  - the GX layer's object ID counters, which a game advances and the next create would otherwise
+//    start from.
+// The GX front end's game-visible state is cleared at every boot, and the SDK is created anew.
+// Host-side state (aurora, Dawn, the CRT, the renderer) is not reset and holds nothing game logic reads.
+struct LoadImage {
+  bool taken = false;
+  mpt::gx::ObjectIdCounters object_ids{};
+};
+LoadImage g_load_image;
+
+bool takeLoadImage() {
+  if (g_load_image.taken) return true;
+  if (!mpt_mp4_game_data_reset()) return false;  // the first call keeps the image
+  if (!mpt_mp4_rel_init()) return false;
+  (void)mpt::gc::MusyxEngine::stateRegions();  // keeps MusyX's image
+  g_load_image.object_ids = mpt::gx::object_id_counters();
+  g_load_image.taken = true;
+  return true;
+}
+
 // A fresh boot of the game: pristine game data, the DOL blobs, the session's gameplay options, a reset
 // sound engine and renderer, and a new SDK on `card` (nullopt = a blank card).
 bool boot(MptMp4Game& game, std::optional<mpt::SaveMedia> card, std::string& error) {
@@ -278,10 +304,12 @@ MptMp4Status create(const MptMp4BootConfig* in, MptMp4Game** out, MptMp4Error* e
     setError(error, "disc: cannot read sys/main.dol");
     return MPT_MP4_ERR_DISC;
   }
-  if (!mpt_mp4_rel_init()) {
+  if (!g_load_image.taken || !mpt_mp4_rel_init()) {
     setError(error, "out of memory for the overlay table");
     return MPT_MP4_ERR_SDK;
   }
+  // As a freshly loaded module (takeLoadImage): the renderer and the boot take their IDs from here.
+  mpt::gx::set_object_id_counters(g_load_image.object_ids);
   if (!loadSymbols(why)) {
     setError(error, why);
     return MPT_MP4_ERR_SDK;
@@ -1244,5 +1272,7 @@ const MptMp4Api kApi = {
 }  // namespace
 
 extern "C" MPT_MP4_EXPORT const MptMp4Api* mpt_mp4_get_api(std::uint32_t abi_version) {
-  return abi_version == MPT_MP4_ABI_VERSION ? &kApi : nullptr;
+  if (abi_version != MPT_MP4_ABI_VERSION) return nullptr;
+  // At load, before any create (module_loader.h asks for the table once per load).
+  return takeLoadImage() ? &kApi : nullptr;
 }
