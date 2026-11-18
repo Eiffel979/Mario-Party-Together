@@ -250,6 +250,10 @@ class DawnRenderer final : public Renderer {
                       rowBytes);
         }
         readback_.Unmap();
+        // The picture is what the console's display copy puts in the XFB: colour only. The EFB's alpha is
+        // whatever the game left there (MP4 clears it to 0 and blends shadows into it) and never reaches
+        // the TV, so it must not reach a presenter that blends with it either.
+        for (size_t i = 3; i < frame_.rgba.size(); i += 4) frame_.rgba[i] = 0xFF;
       }
     });
     aurora::gfx::gpu_synchronize();

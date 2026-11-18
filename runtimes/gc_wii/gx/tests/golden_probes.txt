@@ -36,8 +36,8 @@ probe copy_tex_partial 360 30 0 60 0 255
 probe copy_tex_partial 330 5 0 60 0 255
 probe copy_tex_partial 160 360 0 0 255 255
 probe copy_tex_partial 480 360 255 0 0 255
-probe indirect_warp_tile 100 150 40 40 40 40
-probe indirect_warp_tile 200 300 40 40 40 40
+probe indirect_warp_tile 100 150 40 40 40 255
+probe indirect_warp_tile 200 300 40 40 40 255
 probe indirect_warp_tile 400 150 255 255 255 255
 probe indirect_warp_tile 500 300 255 255 255 255
 probe ztexture 160 240 255 0 0 255
@@ -46,3 +46,8 @@ probe ztexture 160 100 255 0 0 255
 probe depth_copy_ztexture 160 240 255 255 255 255
 probe depth_copy_ztexture 480 240 255 255 0 255
 probe depth_copy_ztexture 160 100 255 255 255 255
+# 2026-11-18: the frame image is opaque (the XFB has no alpha), so indirect_warp_tile's two alpha-40 probes read 255;
+# efb_alpha_not_in_picture added. Same machine, Dawn D3D12 (FXC), scale 1.
+probe efb_alpha_not_in_picture 20 20 0 0 100 255
+probe efb_alpha_not_in_picture 170 240 200 50 50 255
+probe efb_alpha_not_in_picture 470 240 50 200 50 255
