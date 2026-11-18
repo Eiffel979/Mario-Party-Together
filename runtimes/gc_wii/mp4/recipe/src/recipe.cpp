@@ -87,6 +87,11 @@ class ConfigureStep final : public BuildStep {
   explicit ConfigureStep(RecipeConfig config) : config_(std::move(config)) {}
   std::string name() const override { return "Configuring the game module"; }
   Result run(BuildContext& context) override {
+    // A module of this recipe loaded in this process stays loaded (RecipeConfig::module_in_use): building
+    // it again would replace a file in use under a running process. Refused before anything is written.
+    if (const std::string loaded = config_.module_in_use ? config_.module_in_use() : std::string(); !loaded.empty())
+      return Result::failure("MP4 game module " + loaded + " is loaded in this process, so MP4 cannot be built "
+                             "again now. Restart Mario Party Together and try again.");
     if (context.game_version != kGameVersion)
       return Result::failure("this build supports " + std::string(kGameVersion) + " only, not " + context.game_version);
     Tools tools;
@@ -188,6 +193,10 @@ class Mp4Recipe final : public asset_import::BuildRecipe {
   const SourceLock& sources() const override { return lock_; }
   bool extracts_disc() const override { return true; }
   Result check_toolchain(ProcessRunner& runner, ToolchainInfo& info) const override {
+    if (const std::string loaded = config_.module_in_use ? config_.module_in_use() : std::string();
+        !loaded.empty() && loaded != config_.runtime_build_version)
+      return Result::failure("this process has MP4 game module " + loaded + " loaded, so it cannot use build " +
+                             config_.runtime_build_version + ". Restart Mario Party Together and try again.");
     Tools tools;
     if (Result r = findTools(config_, tools); !r) return r;
     const ProcessResult r = runner.run({{tools.c, "--version"}, {}, config_.env});

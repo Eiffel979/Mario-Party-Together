@@ -13,6 +13,7 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -54,6 +55,15 @@ struct RecipeConfig {
   // developer environment it was configured in (INCLUDE, LIB, LIBPATH, PATH), so the module builds when
   // the shell is started outside a developer prompt. Empty: inherit as is.
   std::map<std::string, std::string> env;
+  // The build ID of the MP4 game module this process has loaded, or empty (the host's module loader;
+  // unset: none). The module stays loaded for the process and its file is in use (ADR 0008, "Game
+  // module kept loaded for the process", point 2), so while one is loaded the recipe refuses:
+  //  - in check_toolchain, before the cache lookup, any build of another build ID, which this process
+  //    could never load;
+  //  - in its first step, any build of the module at all (a cache miss or a forced rebuild of the loaded
+  //    ID), before the module build writes anything.
+  // A cache hit of the loaded build is not a build and goes through.
+  std::function<std::string()> module_in_use;
 };
 
 // Fails if the source tree has no runtimes/gc_wii/mp4/decomp.lock.
