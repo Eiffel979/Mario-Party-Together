@@ -27,11 +27,24 @@ struct ShellTitle {
   // Test registrations only (FakeRuntime): the dump used when --dump is not given.
   // Real titles leave it empty; their VerifiedDump comes from asset_import::make_verified.
   std::optional<VerifiedDump> synthetic_dump{};
+  // Releases what the title keeps for the life of the process, such as a game module that
+  // stays loaded between runtimes (ADR 0008, "Game module kept loaded for the process").
+  // Called once, by shutdown_titles(), after every runtime and adapter of the title is
+  // destroyed and before the process exits. It must be safe when the title never booted, and
+  // must not need SDL (it may run after SDL_Quit). Null = nothing to release.
+  std::function<void()> shutdown{};
 };
 
 using ShellTitles = std::vector<ShellTitle>;
 
 // Generated (registered_titles.cpp): registers every enabled runtime.
 void register_titles(ShellTitles& titles);
+
+// Calls each title's shutdown, last registered first. Every executable that registers real
+// titles (the shell, the dump lane) calls it once before it exits, on every exit path.
+inline void shutdown_titles(const ShellTitles& titles) {
+  for (auto it = titles.rbegin(); it != titles.rend(); ++it)
+    if (it->shutdown) it->shutdown();
+}
 
 }  // namespace mpt::shell

@@ -21,6 +21,10 @@ int main(int argc, char** argv) {
   mpt::shell::ShellTitles titles;
   mpt::shell::register_titles(titles);  // generated from the enabled runtime targets
   // The launcher (ui/, ADR 0010). run() creates it only for a windowed live run.
-  return mpt::shell::run(*options, titles,
-                         [](const mpt::shell::UiHost& host) { return mpt::ui::make_launcher(host); });
+  const int code = mpt::shell::run(*options, titles,
+                                   [](const mpt::shell::UiHost& host) { return mpt::ui::make_launcher(host); });
+  // Every session and runtime is gone once run() returns; release what titles keep for the
+  // process (ADR 0008, "Game module kept loaded for the process"), last registered first.
+  mpt::shell::shutdown_titles(titles);
+  return code;
 }
