@@ -9,6 +9,10 @@
  * msmstream.c comes from the patched pin. DVD reads complete synchronously, as ours can, and this test
  * plays MusyX's part: a voice that walks the ring and calls msm's update function the way MusyX's
  * streamHandle does. The voice must play blocks 0 to 339 in order, then only silence until msm stops it.
+ *
+ * With the argument `async` (CTest mp4_msm_stream_async) reads complete later instead, as on the
+ * console: the command block stays busy and the callback runs at the start of the voice's next update.
+ * The patch must keep that case right too: it changes when bufNo toggles, not what the callback reads.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -91,7 +95,22 @@ static void build_file(void) {
   for (unsigned k = 0; k < kBlocks; ++k) block_bytes(k, g_file + kSampleOfs + 8 * k);
 }
 
-/* ---- DVD: reads complete synchronously, inside DVDReadAsync, as the PC DVD layer may ---- */
+/* ---- DVD: reads complete synchronously, inside DVDReadAsync, as the PC DVD layer may, or (async) at
+ * the next dvd_complete(), as on the console ---- */
+static int g_async = 0;
+static struct {
+  int busy;
+  DVDFileInfo* file;
+  s32 length;
+  DVDCallback callback;
+} g_read;
+
+static void dvd_complete(void) {
+  if (!g_read.busy) return;
+  g_read.busy = 0; /* idle before the callback, which checks the command block */
+  if (g_read.callback) g_read.callback(g_read.length, g_read.file);
+}
+
 s32 DVDConvertPathToEntrynum(const char* pathPtr) {
   (void)pathPtr;
   return 1;
@@ -107,14 +126,22 @@ BOOL DVDClose(DVDFileInfo* fileInfo) {
 }
 s32 DVDGetCommandBlockStatus(const DVDCommandBlock* block) {
   (void)block;
-  return 0; /* idle: every read has completed */
+  return g_read.busy ? 1 : 0; /* busy from an async read until dvd_complete() */
 }
 BOOL DVDReadAsyncPrio(DVDFileInfo* fileInfo, void* addr, s32 length, s32 offset, DVDCallback callback, s32 prio) {
   (void)prio;
   CHECK(offset >= 0 && length >= 0 && offset + length <= kFileSize);
   if (offset < 0 || length < 0 || offset + length > kFileSize) return FALSE;
+  CHECK(!g_read.busy); /* one read at a time */
   memcpy(addr, g_file + offset, (size_t)length);
-  if (callback) callback(length, fileInfo);
+  if (g_async) {
+    g_read.busy = 1;
+    g_read.file = fileInfo;
+    g_read.length = length;
+    g_read.callback = callback;
+  } else if (callback) {
+    callback(length, fileInfo);
+  }
   return TRUE;
 }
 
@@ -211,6 +238,7 @@ static int classify(const uint8_t* b) {
 /* One MusyX update: the voice plays kStepSamples from ARAM, then msm hears where it is (streamHandle's
  * three cases for an ADPCM stream, positions rounded down to whole blocks). */
 static void voice_tick(void) {
+  dvd_complete();
   for (u32 s = 0; s < kStepSamples; s += 14) {
     const u32 block = ((g_voice.pos + s) % g_voice.size) / 14;
     if (g_nplayed < (int)(sizeof g_played / sizeof g_played[0])) g_played[g_nplayed++] = classify(g_voice.aram + 8 * block);
@@ -230,7 +258,8 @@ static void voice_tick(void) {
   if (len != 0 && g_voice.active) g_voice.last = (last + len) % size;
 }
 
-int main(void) {
+int main(int argc, char** argv) {
+  g_async = argc > 1 && strcmp(argv[1], "async") == 0;
   build_file();
   CHECK(msmStreamInit("/sound/synthetic.pdt") == 0);
   CHECK(msmStreamAmemAlloc() > 0);
@@ -240,6 +269,7 @@ int main(void) {
   memset(&param, 0, sizeof param);
   param.flag = MSM_STREAMPARAM_NONE;
   CHECK(msmStreamPlay(0, &param) >= 0);
+  dvd_complete();
   CHECK(g_voice.active);
 
   for (int t = 0; t < 2000 && g_voice.active; ++t) voice_tick();
@@ -258,6 +288,6 @@ int main(void) {
   CHECK(bad == 0);
   if (bad) fprintf(stderr, "%d of %d played blocks wrong\n", bad, g_nplayed);
 
-  if (g_failures == 0) printf("mp4_msm_stream: ok (%d blocks played)\n", g_nplayed);
+  if (g_failures == 0) printf("mp4_msm_stream: ok (%d blocks played, %s reads)\n", g_nplayed, g_async ? "async" : "synchronous");
   return g_failures == 0 ? 0 : 1;
 }

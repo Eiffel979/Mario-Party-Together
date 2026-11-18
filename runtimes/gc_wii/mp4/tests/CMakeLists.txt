@@ -47,6 +47,7 @@ set_source_files_properties("${MPT_MP4_PB}/src/msm/msmstream.c"
                             TARGET_DIRECTORY mpt_mp4_msm_stream_tests PROPERTIES COMPILE_OPTIONS "${MPT_MP4_NOWARN}")
 target_compile_options(mpt_mp4_msm_stream_tests PRIVATE ${MPT_MP4_WARN_FLAGS})
 add_test(NAME mp4_msm_stream COMMAND mpt_mp4_msm_stream_tests)
+add_test(NAME mp4_msm_stream_async COMMAND mpt_mp4_msm_stream_tests async)
 
 # HuARMalloc (patches 0028 and 0030): zeroed blocks, the console's ARAM base above msm's region, and the
 # in-use list the state hash walks. armem.c from the patched pin; its SDK calls are stubbed over the
