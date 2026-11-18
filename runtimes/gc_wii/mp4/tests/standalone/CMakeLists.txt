@@ -61,9 +61,11 @@ target_compile_options(mpt_mp4_aram_checks_tests PRIVATE ${_warn})
 add_test(NAME mp4_aram_checks COMMAND mpt_mp4_aram_checks_tests)
 
 # The copy-destination debug trap on the real GXCopyTex (null renderer), when the GX layer is built.
-if(TARGET mpt::gx)
+# It links the null renderer even when MPT_GX_BACKEND=dawn: mpt::gx would then be the Dawn renderer, and
+# on Windows the test could not start without webgpu_dawn.dll next to it (a loader dialog blocks ctest).
+if(TARGET mpt_gx_renderer_null)
   add_executable(mpt_mp4_copy_trap_tests "${_mp4}/tests/test_copy_trap.cpp" "${_mp4}/src/copy_trap.cpp")
-  target_link_libraries(mpt_mp4_copy_trap_tests PRIVATE mpt::gx)
+  target_link_libraries(mpt_mp4_copy_trap_tests PRIVATE mpt_gx_renderer_null)
   target_compile_options(mpt_mp4_copy_trap_tests PRIVATE ${_warn})
   add_test(NAME mp4_copy_trap COMMAND mpt_mp4_copy_trap_tests)
 endif()
