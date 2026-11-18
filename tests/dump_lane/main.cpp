@@ -49,6 +49,7 @@
 #include "mpt/core/title_id.h"
 #include "real_titles.h"
 #include "watch.h"
+#include "stack_guard.h"
 #include "user_dirs.h"
 #if defined(MPT_DUMP_LANE_MP4)
 #include "../conformance/conformance.h"
@@ -117,6 +118,8 @@ struct BootOptions {
   std::filesystem::path audio_out;     // --audio-out FILE: with --party, the game's audio as raw S16 PCM
   bool conformance = false;            // --conformance: the runtime conformance suite instead of a boot run
   std::uint64_t save_load_diff = 0;    // --save-load-diff N: where a resumed run first differs, by hash item
+  std::uint64_t e5_round_trip = 0;     // --e5-round-trip N: save before frame N, reload the module, load, compare
+  bool e5_keep_module = false;         // --e5-keep-module: with --e5-round-trip, keep the module loaded (diagnosis)
   // M2: scripted input on player 1 and frame captures.
   struct Press {
     std::uint32_t buttons;
@@ -411,6 +414,150 @@ int save_load_diff(const BootOptions& options, const mpt::VerifiedDump& dump, mp
     return 1;
   }
   std::printf("dump lane: the resumed run matches at all %zu checkpoints\n", straight.size());
+  return 0;
+}
+
+// `--e5-round-trip N` (E5 as narrowed by M4-D; M4-16, ADR 0008 "Stack guard values in save states",
+// point 2): the in-process save-state round trip across a module reload. One runtime steps --frames
+// frames (no input but --press), saving the state before frame N and keeping stateHash() at every
+// --every checkpoint. That runtime is then destroyed, which unloads the game module (it is the only
+// runtime in this process; the lane checks the module is gone), and a fresh runtime boots with the same
+// seed, which loads the module again. The fresh runtime loads the state and steps frames N to --frames.
+// The run passes when every checkpoint after N has the uninterrupted run's hash. On Windows it also
+// prints the module's /GS cookie before and after the reload and how many guard words the arena holds
+// at the save (stack_guard.h): the evidence that the saved frame has suspended guarded game functions.
+int e5_round_trip(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::TitleRegistry& registry) {
+  const std::uint64_t at = options.e5_round_trip;
+  const std::uint64_t every = options.every != 0 ? options.every : 100;
+  if (at >= options.frames) {
+    std::puts("dump lane: --e5-round-trip N needs N below --frames");
+    return 2;
+  }
+  auto input = [&options](std::uint64_t f) {
+    mpt::InputFrame in;
+    in.frame = f;
+    in.pads[0] = scripted_pad(options, f);
+    return in;
+  };
+  auto make = [&]() {
+    std::unique_ptr<mpt::ITitleRuntime> runtime = registry.createRuntime(mpt::TitleId::mp4);
+    if (auto* mp4 = dynamic_cast<mpt::mp4::Mp4Runtime*>(runtime.get())) mp4->setReportSink(&print_report, nullptr);
+    mpt::RuntimeConfig config;
+    config.seed = options.seed;
+    if (mpt::Result r = runtime->boot(dump, config); !r) {
+      std::printf("dump lane: boot failed: %s\n", r.error().c_str());
+      runtime.reset();
+    }
+    return runtime;
+  };
+  auto healthy = [](mpt::ITitleRuntime& r, std::uint64_t f) {
+    const mpt::RuntimeHealth h = r.status();
+    if (h.status == mpt::RuntimeStatus::running) return true;
+    std::printf("dump lane: frame %llu %s: %s\n", static_cast<unsigned long long>(f),
+                h.status == mpt::RuntimeStatus::halted ? "halted" : "faulted", h.message.c_str());
+    return false;
+  };
+#if defined(_WIN32) && defined(_M_X64)
+  auto cookie_now = []() { return mpt::dump_lane::stack_guard::module_cookie(GetModuleHandleW(L"mp4_game.dll")); };
+#endif
+  std::vector<std::pair<std::uint64_t, std::uint64_t>> straight;  // (frame, hash) at each checkpoint
+  mpt::SaveState saved;
+  std::optional<std::uint64_t> cookie_before;
+#if defined(_WIN32)
+  HMODULE pin = nullptr;  // --e5-keep-module
+  struct Unpin {
+    HMODULE& m;
+    ~Unpin() {
+      if (m != nullptr) FreeLibrary(m);
+    }
+  } unpin{pin};
+#endif
+  {
+    std::unique_ptr<mpt::ITitleRuntime> first = make();
+    if (!first) return 1;
+    for (std::uint64_t f = 0; f < options.frames; ++f) {
+      if (f == at) {
+        saved = first->saveState();
+#if defined(_WIN32) && defined(_M_X64)
+        cookie_before = cookie_now();
+        if (cookie_before) {
+          const auto guards = mpt::dump_lane::stack_guard::arena_guards(mpt::dump_lane::watch::kArenaBase, *cookie_before);
+          std::printf("dump lane: e5: at frame %llu the arena holds %zu /GS guard word(s) under cookie %012llx\n",
+                      static_cast<unsigned long long>(f), guards.size(),
+                      static_cast<unsigned long long>(*cookie_before));
+          for (std::size_t i = 0; i < guards.size() && i < 16; ++i)
+            std::printf("  guard at arena+0x%llx, keyed to arena+0x%llx\n",
+                        static_cast<unsigned long long>(guards[i].slot - mpt::dump_lane::watch::kArenaBase),
+                        static_cast<unsigned long long>(guards[i].keyed - mpt::dump_lane::watch::kArenaBase));
+        } else {
+          std::puts("dump lane: e5: cannot read the module's /GS cookie");
+        }
+#endif
+        std::printf("dump lane: e5: saved %zu bytes before frame %llu, hash %016llx\n", saved.data.size(),
+                    static_cast<unsigned long long>(f), static_cast<unsigned long long>(first->stateHash()));
+        if (saved.data.empty()) {
+          std::puts("dump lane: e5: saveState gave no data");
+          return 1;
+        }
+#if defined(_WIN32)
+        // --e5-keep-module (diagnosis): one more reference to the module, so destroying the runtime
+        // does not unmap it. Shows what the module reload alone changes.
+        if (options.e5_keep_module && !GetModuleHandleExW(0, L"mp4_game.dll", &pin)) {
+          std::puts("dump lane: e5: cannot take a reference to the game module");
+          return 1;
+        }
+#endif
+      }
+      first->stepFrame(input(f));
+      if (!healthy(*first, f)) return 1;
+      if ((f + 1) % every == 0) straight.emplace_back(f + 1, first->stateHash());
+    }
+  }
+#if defined(_WIN32)
+  if (pin != nullptr) {
+    std::puts("dump lane: e5: runtime destroyed, game module kept loaded (--e5-keep-module, diagnosis only)");
+  } else if (GetModuleHandleW(L"mp4_game.dll") != nullptr) {
+    std::puts("dump lane: e5: the game module is still loaded after the runtime was destroyed");
+    return 1;
+  } else {
+    std::puts("dump lane: e5: runtime destroyed, game module unloaded");
+  }
+#endif
+  std::unique_ptr<mpt::ITitleRuntime> fresh = make();
+  if (!fresh) return 1;
+#if defined(_WIN32) && defined(_M_X64)
+  const std::optional<std::uint64_t> cookie_after = cookie_now();
+  std::printf("dump lane: e5: module reloaded, /GS cookie %012llx (%s)\n",
+              static_cast<unsigned long long>(cookie_after.value_or(0)),
+              cookie_before && cookie_after && *cookie_before == *cookie_after ? "same as before" : "CHANGED");
+#endif
+  if (mpt::Result r = fresh->loadState(saved); !r) {
+    std::printf("dump lane: e5: loadState failed: %s\n", r.error().c_str());
+    return 1;
+  }
+  std::printf("dump lane: e5: loaded, hash %016llx\n", static_cast<unsigned long long>(fresh->stateHash()));
+  std::size_t next = 0;
+  while (next < straight.size() && straight[next].first <= at) ++next;
+  std::size_t matched = 0;
+  for (std::uint64_t f = at; f < options.frames; ++f) {
+    mpt::dump_lane::crash_note_frame(f);
+    fresh->stepFrame(input(f));
+    if (!healthy(*fresh, f)) return 1;
+    if ((f + 1) % every != 0) continue;
+    const std::uint64_t hash = fresh->stateHash();
+    mpt::dump_lane::crash_note_checkpoint(f + 1, hash);
+    if (next >= straight.size() || straight[next].first != f + 1 || straight[next].second != hash) {
+      std::printf("dump lane: e5 FAILED: frame %llu hash %016llx, the uninterrupted run had %016llx\n",
+                  static_cast<unsigned long long>(f + 1), static_cast<unsigned long long>(hash),
+                  static_cast<unsigned long long>(next < straight.size() ? straight[next].second : 0));
+      return 1;
+    }
+    ++next;
+    ++matched;
+  }
+  std::printf("dump lane: e5: PASS, %zu checkpoints after frame %llu match, frame %llu hash %016llx\n", matched,
+              static_cast<unsigned long long>(at), static_cast<unsigned long long>(options.frames),
+              static_cast<unsigned long long>(straight.empty() ? 0 : straight.back().second));
   return 0;
 }
 
@@ -1001,6 +1148,7 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir, cons
   mpt::dump_lane::crash_note_run(options.party                    ? "party"
                                  : !options.verify_replay.empty() ? "verify-replay"
                                  : options.save_load_diff != 0    ? "save-load-diff"
+                                 : options.e5_round_trip != 0     ? "e5-round-trip"
                                  : options.conformance            ? "conformance"
                                                                   : "boot",
                                  options.seed);  // crash report breadcrumbs
@@ -1027,6 +1175,18 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir, cons
     return save_load_diff(options, std::get<mpt::VerifiedDump>(dump), registry);
 #else
     std::puts("dump lane: --save-load-diff needs the MP4 runtime");
+    return 1;
+#endif
+  }
+  if (options.e5_round_trip != 0) {
+#if defined(MPT_DUMP_LANE_MP4)
+    if (*title != mpt::TitleId::mp4) {
+      std::puts("dump lane: --e5-round-trip runs on mp4 only for now");
+      return 1;
+    }
+    return e5_round_trip(options, std::get<mpt::VerifiedDump>(dump), registry);
+#else
+    std::puts("dump lane: --e5-round-trip needs the MP4 runtime");
     return 1;
 #endif
   }
@@ -1206,6 +1366,8 @@ int main(int argc, char** argv) {
     return *supervised;
   mpt::dump_lane::install_crash_report();  // a crash prints its stack (crash_report.h)
   if (const std::optional<int> selftest = mpt::dump_lane::crash_selftest_if_asked(argc, argv)) return *selftest;
+  if (const std::optional<int> selftest = mpt::dump_lane::stack_guard::guard_reload_selftest_if_asked(argc, argv))
+    return *selftest;
   BootOptions boot_options;
   bool frames_given = false;
   for (int i = 1; i < argc; ++i) {
@@ -1224,6 +1386,10 @@ int main(int argc, char** argv) {
       boot_options.perturb = true;
     } else if (arg == "--save-load-diff" && has_value) {
       boot_options.save_load_diff = std::strtoull(argv[++i], nullptr, 10);
+    } else if (arg == "--e5-round-trip" && has_value) {
+      boot_options.e5_round_trip = std::strtoull(argv[++i], nullptr, 10);
+    } else if (arg == "--e5-keep-module") {
+      boot_options.e5_keep_module = true;
     } else if (arg == "--conformance") {
       boot_options.conformance = true;
     } else if (arg == "--hash-items" && has_value) {
@@ -1317,6 +1483,7 @@ int main(int argc, char** argv) {
     } else {
       std::printf("usage: mpt_dump_lane [--boot <title> [--frames N] [--every N] [--seed S] [--perturb [--perturb-samples N]]\n"
                   "                     [--hash-items FILE [--note-module-hits]] [--conformance] [--save-load-diff N]\n"
+                  "                     [--e5-round-trip N [--e5-keep-module]]\n"
                   "                     [--press button@frame[+frames][,...]]... [--capture DIR [--capture-every N]]\n"
                   "                     [--party [--party-board N [--party-unlock-bowser]] [--party-wheel FROM:TO]\n"
                   "                              [--watchdog N] [--replay FILE]\n"
@@ -1328,7 +1495,8 @@ int main(int argc, char** argv) {
                   "                     [--verify-replay FILE]]\n"
                   "       mpt_dump_lane --layout-probe\n"
                   "       mpt_dump_lane --supervise [--crash-report FILE] <any of the above>\n"
-                  "       mpt_dump_lane [--supervise [--crash-report FILE]] --crash-selftest MODULE gs|av|abort\n");
+                  "       mpt_dump_lane [--supervise [--crash-report FILE]] --crash-selftest MODULE gs|av|abort\n"
+                  "       mpt_dump_lane [--supervise] --guard-reload-selftest STUB keep|reload\n");
       return 2;
     }
   }

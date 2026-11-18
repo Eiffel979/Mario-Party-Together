@@ -158,6 +158,30 @@ mpt_dump_lane --boot mp4 --verify-replay FILE
   (`Mp4Runtime::setTestGameplayFlags`), so `--party-board 5` can reach Bowser's Gnarly Party. No replay
   records the flag, so the lane refuses it with `--replay`, and such a run is diagnosis only.
 
+## E5: the save-state round trip across a module reload (MP4, M4-16)
+
+```
+mpt_dump_lane --supervise --boot mp4 --e5-round-trip N [--frames M] [--every K] [--seed S] [--e5-keep-module]
+mpt_dump_lane [--supervise] --guard-reload-selftest STUB keep|reload
+```
+
+- `--e5-round-trip N` is E5 as narrowed (`docs/phases/phase-1.md`, M4-D): one runtime steps `--frames`
+  frames with no input (or `--press`), saving the state before frame N and keeping the state hash at
+  every `--every` checkpoint. The lane then destroys it, which unloads the game module (the lane checks
+  that it is gone), boots a fresh runtime with the same seed, which loads the module again, loads the
+  state and steps frames N to `--frames`. Exit 0 only if every checkpoint after N has the uninterrupted
+  run's hash. On Windows it also prints how many `/GS` guard words the arena holds at the save
+  (`stack_guard.h`: words that are the module's cookie XOR an address next to them, i.e. suspended
+  guarded game frames) and the module's cookie before and after the reload. Use `--supervise`: a
+  guarded frame checked against a new cookie fails fast (0xC0000409), and the supervisor reports where.
+  Results: `docs/titles/mp4.md` §11, "E5 in process (M4-16)".
+- `--e5-keep-module` (diagnosis only) holds one more reference to the module while the runtime is
+  destroyed, so the module stays mapped and keeps its cookie. It separates what the module reload
+  changes from what the save state carries.
+- `--guard-reload-selftest STUB keep|reload` needs no dump: it suspends a guarded function of a synthetic
+  stub (`tests/mp4_loader/guard_stub.cpp`) on a fiber, keeps or reloads the stub, and resumes it. CTest
+  runs both (`dump_lane_guard_reload_keep`, `dump_lane_guard_reload_fails_fast`) on Windows x64.
+
 ## Diagnosis: arena watches (`watch.h`, MP4)
 
 ```

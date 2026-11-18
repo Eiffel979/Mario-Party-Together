@@ -136,6 +136,25 @@ else()
   target_link_libraries(mpt_dump_lane PRIVATE ${CMAKE_DL_LIBS})
 endif()
 add_dependencies(mpt_dump_lane mpt_overrun_stub)
+# The E5 module-reload check on a synthetic stub (M4-16, dump_lane/stack_guard.h): a /GS-guarded frame
+# suspended on a fiber survives the module staying loaded and fails fast after a reload (new cookie).
+# Windows x64 only; the stub is linked at a fixed base like the game module, so a reload maps it back.
+if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND COMMAND mpt_mp4_fixed_base_link)
+  add_library(mpt_guard_stub MODULE mp4_loader/guard_stub.cpp)
+  set_target_properties(mpt_guard_stub PROPERTIES PREFIX "")
+  target_compile_options(mpt_guard_stub PRIVATE /GS)
+  mpt_mp4_fixed_base_link(mpt_guard_stub BASE 0x5B9700000000)
+  mpt_set_warnings(mpt_guard_stub)
+  add_dependencies(mpt_dump_lane mpt_guard_stub)
+  add_test(NAME dump_lane_guard_reload_keep
+    COMMAND mpt_dump_lane --guard-reload-selftest "$<TARGET_FILE:mpt_guard_stub>" keep)
+  set_tests_properties(dump_lane_guard_reload_keep PROPERTIES TIMEOUT 60
+    PASS_REGULAR_EXPRESSION "cookie [0-9a-f]+ \\(same as before\\).*the guarded function returned 63")
+  add_test(NAME dump_lane_guard_reload_fails_fast
+    COMMAND ${CMAKE_COMMAND} "-DLANE=$<TARGET_FILE:mpt_dump_lane>" "-DSTUB=$<TARGET_FILE:mpt_guard_stub>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/dump_lane/guard_reload_check.cmake")
+  set_tests_properties(dump_lane_guard_reload_fails_fast PROPERTIES TIMEOUT 120)
+endif()
 set(_mpt_crash_kinds "")
 if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
   set(_mpt_crash_kinds gs av abort)
