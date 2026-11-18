@@ -1383,10 +1383,10 @@ E1 is the full local party (Phase 1 plan §4). The user plays it and fills in th
 | 38 | Agent and commit that ran the check | coordinator (Claude), shell built from `c89eea0` | on hold |
 | **Sign-off** | | | |
 | 39 | Tester sign-off (yes/no) | yes | on hold |
-| 40 | qa-reviewer approval | pending | on hold |
+| 40 | qa-reviewer approval | yes (PR #86) | on hold |
 
 Notes (one line each, no paths or game text):
-- Windows: played 2026-11-18 with the Dawn preview build. Bugs found, none blocking E1: the gamepad could not reach the Players screen's lower buttons (fixed in #84); no gamepad way to the pause overlay (Back+Start added in #85); black boxes under characters in Money Belts, a black minigame description background, and a white light blob in Right Oar Left (rendering, being fixed); the pad lost power after its Vibration toggle and came back after its batteries were reseated (the host sends no rumble).
+- Windows: played 2026-11-18 with the Dawn preview build. Bugs found, none blocking E1: the gamepad could not reach the Players screen's lower buttons (fixed in #84); no gamepad way to the pause overlay (Back+Start added in #85); black boxes under characters in Money Belts, a black minigame description background, and a white light blob in Right Oar Left? (rendering, being fixed); the pad lost power after its Vibration toggle and came back after its batteries were reseated (the host sends no rumble).
 - Linux:
 
 ### C. Pins to compare against (row 15)
