@@ -21,6 +21,7 @@ static_assert(SDL_SCANCODE_LCTRL == 224 && SDL_SCANCODE_LSHIFT == 225 && SDL_SCA
 static_assert(static_cast<std::size_t>(SDL_SCANCODE_COUNT) <= kKeyCount);
 static_assert(SDL_GAMEPAD_BUTTON_SOUTH == static_cast<int>(PadButton::south));
 static_assert(SDL_GAMEPAD_BUTTON_START == static_cast<int>(PadButton::start));
+static_assert(SDL_GAMEPAD_BUTTON_BACK == static_cast<int>(PadButton::back));
 static_assert(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER == static_cast<int>(PadButton::right_shoulder));
 static_assert(SDL_GAMEPAD_BUTTON_DPAD_RIGHT == static_cast<int>(PadButton::dpad_right));
 static_assert(SDL_GAMEPAD_BUTTON_TOUCHPAD == static_cast<int>(PadButton::touchpad));
@@ -128,7 +129,14 @@ std::optional<HostAction> SdlInput::host_action(const SDL_Event& event) {
   }
   if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
     if (static_cast<std::size_t>(event.gbutton.button) >= kPadButtonCount) return std::nullopt;
-    return host_action_for_button(static_cast<PadButton>(event.gbutton.button));
+    // The Back + Start chord needs Back's state on the pad that sent this event,
+    // and only that pad (reserved.h). An unopened pad reads as nothing held.
+    GamepadState same_pad;
+    if (SDL_Gamepad* pad = SDL_GetGamepadFromID(event.gbutton.which)) {
+      same_pad.set(kHostPauseChordModifier,
+                   SDL_GetGamepadButton(pad, static_cast<SDL_GamepadButton>(kHostPauseChordModifier)));
+    }
+    return host_action_for_pad_press(static_cast<PadButton>(event.gbutton.button), same_pad);
   }
   return std::nullopt;
 }
