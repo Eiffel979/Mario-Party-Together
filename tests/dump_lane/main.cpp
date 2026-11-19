@@ -419,14 +419,14 @@ int save_load_diff(const BootOptions& options, const mpt::VerifiedDump& dump, mp
 }
 
 // `--e5-round-trip N` (E5 as narrowed by M4-D; M4-16, ADR 0008 "Stack guard values in save states",
-// point 2): the in-process save-state round trip across a module reload. One runtime steps --frames
-// frames (no input but --press), saving the state before frame N and keeping stateHash() at every
-// --every checkpoint. That runtime is then destroyed, which unloads the game module (it is the only
-// runtime in this process; the lane checks the module is gone), and a fresh runtime boots with the same
-// seed, which loads the module again. The fresh runtime loads the state and steps frames N to --frames.
-// The run passes when every checkpoint after N has the uninterrupted run's hash. On Windows it also
-// prints the module's /GS cookie before and after the reload and how many guard words the arena holds
-// at the save (stack_guard.h): the evidence that the saved frame has suspended guarded game functions.
+// point 2, and "Game module kept loaded for the process"): the in-process save-state round trip. One
+// runtime steps --frames frames (no input but --press), saving the state before frame N and keeping
+// stateHash() at every --every checkpoint. That runtime is then destroyed; the game module stays loaded
+// for the process, and a fresh runtime boots with the same seed on it, loads the state and steps
+// frames N to --frames. The run passes when every checkpoint after N has the uninterrupted run's hash
+// and, on Windows, the module kept its handle and /GS cookie across the two runtimes. It also prints
+// how many guard words the arena holds at the save (stack_guard.h): the evidence that the saved frame
+// has suspended guarded game functions. --e5-reload-module unloads the module in between instead.
 // `--reboot-trail` (ADR 0008, "Game module kept loaded for the process", point 3): a fresh runtime on
 // the kept module must start as one on a freshly loaded module. In one process, runtime A boots with
 // --seed, B with --seed + 1 and C with --seed again; each steps --frames frames (no input but --press)
@@ -554,8 +554,10 @@ int e5_round_trip(const BootOptions& options, const mpt::VerifiedDump& dump, mpt
     }
   }
   // The module stays loaded between runtimes (ADR 0008, "Game module kept loaded for the process").
-  // --e5-reload-module (diagnosis) unloads it through the title's shutdown, so the fresh runtime loads
-  // it again with a new /GS cookie: expected to fail fast when a saved guarded frame returns.
+  // --e5-reload-module (diagnosis only, never in a gate) unloads it through the title's shutdown, so the
+  // fresh runtime loads it again with a new /GS cookie: expected to fail fast when a saved guarded frame
+  // returns. If it does not, the lane's exit calls shutdown again; shutdown_module is safe to call twice
+  // (a second call with nothing loaded does nothing, and one with a hold reports an error).
   if (options.e5_reload_module) {
     for (const mpt::shell::ShellTitle& t : mpt::dump_lane::shell_titles())
       if (t.id == mpt::TitleId::mp4 && t.shutdown) t.shutdown();
@@ -1694,15 +1696,29 @@ static int lane_main(int argc, char** argv) {
   return passed == 0 ? kSkip : 0;
 }
 
-// Every normal exit goes through here: the titles release what they keep for the process (ADR 0008,
-// "Game module kept loaded for the process": MP4 unloads its game module), after every runtime of
-// lane_main is gone. A crash or fail-fast runs no teardown, as in the shell.
+// Every exit of lane_main, a return or an exception, goes through here: the titles release what they keep
+// for the process (ADR 0008, "Game module kept loaded for the process": MP4 unloads its game module),
+// after every runtime of lane_main is gone. As in core/shell/main.cpp, a guard runs shutdown_titles,
+// and the catch-and-rethrow makes an exception unwind through it (for an exception no handler catches,
+// whether the stack unwinds before std::terminate is implementation-defined). A crash or fail-fast runs
+// no teardown, as in the shell.
 int main(int argc, char** argv) {
-  const int code = lane_main(argc, argv);
+  int code = 0;
+  [[maybe_unused]] bool was_loaded = false;
+  {
+    struct ShutdownGuard {
+      ~ShutdownGuard() { mpt::shell::shutdown_titles(mpt::dump_lane::shell_titles()); }
+    };
+    try {
+      const ShutdownGuard shutdown_guard;
+      code = lane_main(argc, argv);
 #if defined(_WIN32) && defined(_M_X64)
-  const bool was_loaded = GetModuleHandleW(L"mp4_game.dll") != nullptr;
+      was_loaded = GetModuleHandleW(L"mp4_game.dll") != nullptr;
 #endif
-  mpt::shell::shutdown_titles(mpt::dump_lane::shell_titles());
+    } catch (...) {
+      throw;  // shutdown_titles has run; the exception still ends the process as before
+    }
+  }
 #if defined(_WIN32) && defined(_M_X64)
   if (was_loaded) {
     const bool unloaded = GetModuleHandleW(L"mp4_game.dll") == nullptr;

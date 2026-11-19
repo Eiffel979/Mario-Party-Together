@@ -6,6 +6,7 @@
 // case ends with the module shut down, so the next one starts with nothing loaded.
 #include <doctest/doctest.h>
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -227,4 +228,33 @@ TEST_CASE("a missing module file is reported without loading anything") {
   const MptMp4Api* api = load_module(kV11, kBase, error);
   REQUIRE_MESSAGE(api != nullptr, error);
   shut();
+}
+
+TEST_CASE("a kept module whose file changed on disk is refused with a restart message") {
+  // A copy of the stub, so its time stamp can change without touching the build's file.
+  const fs::path dir = fs::temp_directory_path() / ("mpt_loader_changed_" + std::to_string(kBase & 0xFFFF));
+  std::error_code ec;
+  fs::create_directories(dir, ec);
+  const fs::path copy = dir / ("stub_changed" + kV11.extension().string());
+  fs::remove(copy, ec);
+  REQUIRE(fs::copy_file(kV11, copy, ec));
+  std::string error;
+  const MptMp4Api* api = load_module(copy, kBase, error);
+  REQUIRE_MESSAGE(api != nullptr, error);
+  release_module();
+  // A rebuild replaced the file (Linux allows that; Windows keeps a loaded image locked, so the time
+  // stamp change below may be refused there, and then there is nothing to check).
+  const fs::file_time_type before = fs::last_write_time(copy, ec);
+  fs::last_write_time(copy, before + std::chrono::hours(1), ec);
+  if (!ec) {
+    std::string changed;
+    CHECK(load_module(copy, kBase, changed) == nullptr);
+    CHECK(has(changed, "changed on disk"));
+    CHECK(has(changed, "restart"));
+  } else {
+    MESSAGE("the loaded file's time stamp cannot be changed here: " << ec.message());
+  }
+  shut(0);
+  CHECK_FALSE(mapped(copy));
+  fs::remove_all(dir, ec);
 }
