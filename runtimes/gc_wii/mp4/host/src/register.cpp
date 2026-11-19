@@ -49,6 +49,8 @@ void mpt_register_mp4(mpt::shell::ShellTitles& titles) {
   };
   title.recipe = &make_mp4_recipe;
   // The game module stays loaded between runtimes (module_loader.h); unload it at exit. Needs no SDL.
+  // It reports a failure on stderr and never throws: shutdown_titles runs it from the shell's
+  // noexcept shutdown guard.
   title.shutdown = [] {
     std::string error;
     if (!mpt::mp4::shutdown_module(error)) std::fprintf(stderr, "mp4: %s\n", error.c_str());

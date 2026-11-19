@@ -175,7 +175,12 @@ std::vector<std::span<std::byte>> gameStateRegions() {
 //  - the GX layer's object ID counters, which a game advances and the next create would otherwise
 //    start from.
 // The GX front end's game-visible state is cleared at every boot, and the SDK is created anew.
-// Host-side state (aurora, Dawn, the CRT, the renderer) is not reset and holds nothing game logic reads.
+// Host-side state (aurora, Dawn, the CRT, the renderer) is not reset. One part of it is known to be
+// game-visible and is neither saved nor reset here: aurora's g_gxState, whose projection and viewport
+// the game reads back (GXGetProjectionv and GXGetViewportv, in m427 and m428). A fresh boot is still
+// right, because GXInit resets it, but a loadState into a fresh runtime on the kept module keeps the
+// previous runtime's g_gxState until the game sets it again. docs/titles/mp4.md section 20 tracks
+// g_gxState for the save state and the hash manifest.
 struct LoadImage {
   bool taken = false;
   mpt::gx::ObjectIdCounters object_ids{};
