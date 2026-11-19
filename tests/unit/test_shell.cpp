@@ -402,3 +402,25 @@ TEST_CASE("the summary text is fixed key-value lines with the final party") {
   CHECK(phase_name(PartyPhase::results) == "results");
   CHECK(phase_name(PartyPhase::finished) == "finished");
 }
+
+// ADR 0008, "Game module kept loaded for the process", point 4: shutdown_titles calls each title's
+// shutdown once, last registered first, and skips titles without one (core/shell/titles.h).
+TEST_CASE("shutdown_titles calls each title's shutdown once, last registered first") {
+  std::vector<std::string> calls;
+  ShellTitles titles;
+  for (const char* name : {"first", "none", "second", "third"}) {
+    ShellTitle title = test::fake_shell_title();
+    if (std::string(name) != "none") title.shutdown = [&calls, name] { calls.emplace_back(name); };
+    titles.push_back(std::move(title));
+  }
+  shutdown_titles(titles);
+  CHECK(calls == std::vector<std::string>{"third", "second", "first"});
+
+  // No titles, or titles that keep nothing for the process: nothing to call.
+  shutdown_titles(ShellTitles{});
+  ShellTitles plain;
+  plain.push_back(test::fake_shell_title());
+  CHECK_FALSE(plain.front().shutdown);
+  shutdown_titles(plain);
+  CHECK(calls.size() == 3);
+}
