@@ -160,3 +160,35 @@ TEST_CASE("other revisions are refused") {
   CHECK_FALSE(recipe->steps().front()->run(ctx).ok());
   CHECK(runner.calls.empty());
 }
+
+TEST_CASE("a build is refused while this process has an MP4 module loaded") {
+  // ADR 0008, "Game module kept loaded for the process", point 2: the loaded module stays loaded.
+  std::string error;
+  mpt::mp4::RecipeConfig c = config();
+  std::string loaded = "mp4-test";
+  c.module_in_use = [&loaded] { return loaded; };
+  auto recipe = mpt::mp4::make_recipe(c, error);
+  REQUIRE(recipe != nullptr);
+  FakeRunner runner;
+  ToolchainInfo info;
+  // The loaded build: the toolchain check passes, so a cache hit can still use it...
+  CHECK(recipe->check_toolchain(runner, info).ok());
+  // ...but building it again is refused in the first step, before any tool runs or any file is written.
+  const fs::path out = fs::path(MPT_RECIPE_TEST_TMP) / "pinned";
+  BuildContext ctx = context_for(out, runner, true);
+  runner.calls.clear();
+  const mpt::Result configure = recipe->steps().front()->run(ctx);
+  CHECK_FALSE(configure.ok());
+  CHECK(configure.error().find("Restart") != std::string::npos);
+  CHECK(runner.calls.empty());
+  CHECK_FALSE(fs::exists(out / "module"));
+  // Another build ID is refused before the cache lookup, in check_toolchain.
+  loaded = "mp4-other";
+  const mpt::Result other = recipe->check_toolchain(runner, info);
+  CHECK_FALSE(other.ok());
+  CHECK(other.error().find("mp4-other") != std::string::npos);
+  // Nothing loaded: both pass.
+  loaded.clear();
+  CHECK(recipe->check_toolchain(runner, info).ok());
+  CHECK(recipe->steps().front()->run(ctx).ok());
+}

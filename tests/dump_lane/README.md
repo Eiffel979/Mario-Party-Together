@@ -112,7 +112,9 @@ mpt_dump_lane --boot <title> [--frames N] [--every N] [--seed S] [--perturb]
 ```
 mpt_dump_lane --boot mp4 --party [--seed S] [--frames N] [--every N] [--watchdog N] [--replay FILE]
               [--party-board N --party-wheel FROM:TO]
-mpt_dump_lane --boot mp4 --verify-replay FILE
+              [--frame-times] [--frame-log FILE] [--audio-out FILE]
+mpt_dump_lane --boot mp4 --verify-replay FILE [--frames N] [--frame-log FILE] [--audio-out FILE]
+              [--capture DIR [--capture-every N] [--capture-from N] [--capture-to N]]
 ```
 
 - `--party` plays a whole party through a `Session` on an autopilot (`party_autopilot` in
@@ -154,9 +156,50 @@ mpt_dump_lane --boot mp4 --verify-replay FILE
   played this way prints the running overlay whenever it changes, to find a minigame's frames. The PNG
   holds the frame image's four channels as the runtime returns them. Captures are your own game's
   output: never commit them.
+- Diagnosis: `--frame-times` prints the total step time and the p99 over steady frames (the boot,
+  overlay changes and frames that complete a DVD read or an ARAM transfer are exempt). `--frame-log
+  FILE` (implies `--frame-times`) writes one line per step: the frame, its step time in ms, the
+  overlay and the DVD read and ARAM transfer counts. `--audio-out FILE` writes the game's audio as it
+  is stepped, raw interleaved S16 PCM at the runtime's sample rate and channel count. Both work in a
+  `--party` run and with `--verify-replay`, which then plays the replay without checks (like
+  `--capture`), through to its end unless `--frames N` stops it first. Anywhere else the lane refuses them (exit 2).
+  The audio is your own game's output: never commit it.
 - `--party-unlock-bowser` boots with `MPT_MP4_BOOT_UNLOCK_BOWSERS_GNARLY_PARTY`
   (`Mp4Runtime::setTestGameplayFlags`), so `--party-board 5` can reach Bowser's Gnarly Party. No replay
   records the flag, so the lane refuses it with `--replay`, and such a run is diagnosis only.
+
+## E5: the in-process save-state round trip, and a fresh runtime on the kept module (MP4, M4-16)
+
+```
+mpt_dump_lane --supervise --boot mp4 --e5-round-trip N [--frames M] [--every K] [--seed S] [--e5-reload-module]
+mpt_dump_lane --supervise --boot mp4 --reboot-trail [--frames M] [--every K] [--seed S]
+mpt_dump_lane [--supervise] --guard-reload-selftest STUB keep|reload
+```
+
+The game module stays loaded for the whole process once a runtime has loaded it (ADR 0008, "Game
+module kept loaded for the process"). Every normal exit of the lane releases it through the titles'
+`shutdown` (`shell::shutdown_titles`) and prints `dump lane: exit: game module unloaded`.
+
+- `--e5-round-trip N` is E5 as narrowed (`docs/phases/phase-1.md`, M4-D): one runtime steps `--frames`
+  frames with no input (or `--press`), saving the state before frame N and keeping the state hash at
+  every `--every` checkpoint. The lane destroys it, boots a fresh runtime with the same seed, loads the
+  state and steps frames N to `--frames`. Exit 0 only if every checkpoint after N has the uninterrupted
+  run's hash and the module stayed loaded across the two runtimes, with the same handle and the same
+  `/GS` cookie. On Windows it also prints how many `/GS` guard words the arena holds at the save
+  (`stack_guard.h`: words that are the module's cookie XOR an address next to them, i.e. suspended
+  guarded game frames). Results: `docs/titles/mp4.md` §11, "E5 in process (M4-16)".
+- `--e5-reload-module` (diagnosis only, expected to fail fast) unloads the module between the two
+  runtimes through MP4's `shutdown`, so the fresh runtime loads it again with a new cookie. Run it under
+  `--supervise`: the saved guarded frame fails its check (0xC0000409) when it returns. It is the
+  reason the module is kept loaded.
+- `--reboot-trail` checks that a fresh runtime on the kept module starts as one on a freshly loaded
+  module: runtimes A (`--seed`), B (`--seed` + 1) and C (`--seed`) each step `--frames` frames in turn,
+  each destroyed before the next is created. It prints every checkpoint as `reboot <A|B|C> frame N hash
+  H` for comparison with separate boot-mode runs (the M1 trail), and exits 0 only if C's trail equals
+  A's and B's differs from it.
+- `--guard-reload-selftest STUB keep|reload` needs no dump: it suspends a guarded function of a synthetic
+  stub (`tests/mp4_loader/guard_stub.cpp`) on a fiber, keeps or reloads the stub, and resumes it. CTest
+  runs both (`dump_lane_guard_reload_keep`, `dump_lane_guard_reload_fails_fast`) on Windows x64.
 
 ## Diagnosis: arena watches (`watch.h`, MP4)
 
