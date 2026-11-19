@@ -776,3 +776,50 @@ M4-03 found this while probing soft locks with `--party-save-at` and `--party-re
 - **architect:** `docs/phases/phase-1.md` gains ruling M4-I, item M4-16 and the Phase 2 note (same commit as this amendment). The Phase 2 ADR that closes §10 takes points 3 to 6 as input.
 - **netplay:** nothing to do in Phase 1. It must not plan resync or join-in-progress on loading a raw state from another process or machine until that ADR exists.
 - **No core contract change.** `kCoreContractVersion`, the module ABI version and the save-state layout are unchanged.
+
+## Game module kept loaded for the process (architect, 2026-11-18)
+### Context
+M4-16 ran the check of "Stack guard values in save states", decision point 2, on Windows (`docs/titles/mp4.md` §11, "E5 in process (M4-16)").
+- `mpt_dump_lane --supervise --boot mp4 --e5-round-trip 5000 --frames 10000 --every 100` saves before frame 5,000 and destroys the runtime, which unloads `mp4_game.dll`. It then boots a fresh runtime, which loads the module again, loads the state and checks the checkpoints.
+- **Module reloaded: seeds 1 and 2 fail fast** (0xC0000409, `__report_gsfailure` in `mpt_rel_bootDll__BootTitleExec`). At the save, the arena holds 50 guard words of suspended frames, made with the cookie of the first load. The reload makes a new cookie.
+- **Module kept loaded: both seeds pass,** 50 of 50 checkpoints, frame 10,000 `2523e333cd8cc6cc` (seed 1) and `5677a93bacfda417` (seed 2), the M1 trail. `--save-load-diff` fails in the same way when it reloads.
+- runtime-gc-wii's proposal meets the point-2 conditions. It keeps the guard value the same for the life of the process, needs no core contract change and leaves the Phase 2 choice open.
+
+### Decision
+1. **E5 as narrowed does not require unloading the module.** "Destroy the runtime, create a fresh runtime in the same process" means the `ITitleRuntime` object and every game it holds. E5 tests that the save state carries all game state across that boundary. The game module is a process resource, like the fixed arena reservation and the fixed module base (§11), and is not part of the runtime. **But a pinned module can make E5 pass for the wrong reason:** state that the first runtime leaves in module globals would reach the second without passing through the save state. So the pin is accepted only together with point 3.
+2. **Once loaded, the game module stays loaded until the process shuts down.** `release_module()` drops a hold but never unloads. A later `load_module()` of the same path returns the same table without loading again, so the cookie, like every other per-load value, stays the same for the process.
+   - A different path, or the same path with a `build_id` that differs from the loaded one, is refused with a clear error ("restart to use the new build"). It never fails fast.
+   - On Windows the pinned file is locked. A rebuild of MP4 in a process that has loaded it is refused in the same way, before the build writes anything. Phase 1 has no flow that does this. asset-import and frontend-ui must keep it that way when they add one.
+3. **A fresh runtime on a pinned module starts exactly as it would on a freshly loaded module.** Before point 2, a reload did this for free.
+   - The module's `create` resets every byte of game-visible module state to its image at load. That state is the game and SDK globals the Clang side owns and the registration table registers. The module copies those sections at load, before any `create`, and copies them back at `create`. Anything the game reads that is neither reset this way nor in the arena is a bug.
+   - Host-side state in the module (aurora, Dawn, the CRT, the host-side object of the ABI review's point 4) is not reset. It must hold nothing that reaches game logic, as that point already requires.
+   - **Test:** the reboot test, under Consequences.
+4. **An explicit shutdown at exit, through the shell, not static teardown.** The module now unloads on purpose while the process runs, because its static teardown (aurora, Dawn threads) fails when it is left to process exit (`module_loader.h`).
+   - `core/shell/titles.h`: `ShellTitle` gains an optional `shutdown` (`std::function<void()>`). `shutdown_titles(const ShellTitles&)` calls them, last registered first. The shell's `main` calls it after `run()` returns. Every executable that registers real titles (the shell, the dump lane) calls it once, on every normal exit path.
+   - Contract of `shutdown`: it is called once, after every runtime and adapter of the title is destroyed. It is safe when the title never booted. It needs no SDL, because it runs after `SDL_Quit`.
+   - This is an additive change to the shell's registration struct. It does not touch `ITitleRuntime`, `ITitleAdapter` or the Party Director types, so `kCoreContractVersion` is unchanged. Core still never names a title.
+   - MP4's `shutdown` unloads the module when no hold remains. If a hold remains, it reports an error and leaves the module mapped, because freeing code under a live game is worse than a failed teardown at exit. A fail-fast exit (a crash, `TerminateProcess`) runs no teardown, as today.
+5. **Linux follows the same rule.** The pin does no harm there (the canary belongs to the process), and point 3 applies unchanged. The Linux E5 run waits on M4-U2.
+
+### Alternatives
+- **Write the old cookie back into the reloaded module.** Rejected. The CRT sets `__security_cookie` once, before any guarded frame, so module frames that are live on host threads during the load would fail on their own return. "Stack guard values in save states" already notes this for its variant of candidate (i). It would also put the cookie in the save state, so the cookie would no longer be secret. That is a Phase 2 decision, and this would take it early.
+- **Build the game module without `/GS`.** Rejected again, for the reasons given on 2026-11-10: the guard found the overruns behind patches 0022 and 0023, and the M4-04 crash reports rely on it.
+- **Narrow E5 further,** to "load without destroying the runtime" or to saving only at frames with no guarded function suspended. Rejected. The first no longer tests that the state carries everything. The second picks frames to fit the test, and most frames of a party have a guarded function suspended.
+- **Unload in an `atexit` handler instead of an explicit shutdown.** Rejected. It runs at a moment the shell does not choose (after `SDL_Quit`, between static destructors), and the dump lane and the tests would rely on it without saying so.
+- **A shutdown method on `ITitleRuntime`.** Rejected. The pin outlives every runtime, so it belongs to the title's registration, not to one runtime. It would also make a process concern into a core contract change.
+
+### Consequences
+- **Security:** nothing is weakened. The cookie stays secret and is still made per load, and `/GS` keeps catching overruns.
+- **Determinism:** no hash moves. The kept-loaded runs give the M1 trail. Point 3 keeps "fresh runtime" meaning what it meant before, and the reboot test checks it.
+- **Phase 2:** none of candidates (i) to (iv) is chosen. A fresh process still gets a new cookie, and the ADR that closes §10 still decides that case.
+- **Phase 5 (cross-title suspend, minigame, resume):** once loaded, each title's module stays mapped for the process at its own fixed base. The Phase 5 ADR budgets address space and memory for that. It may also add an explicit unload at points where no save state of that module can still be loaded.
+- **architect:** `core/shell/titles.h` and `core/shell/main.cpp` (in the same commit as this amendment); `docs/phases/phase-1.md` M4-16.
+- **runtime-gc-wii:** the loader (point 2), the module reset at `create` (point 3), MP4's `shutdown` (point 4) and the dump lane's call to `shutdown_titles`, with these tests, all on Windows:
+  - **E5:** `--e5-round-trip 5000 --frames 10000 --every 100`, with the module kept loaded by default. Seeds 1 and 2: 50 of 50 checkpoints, `2523e333cd8cc6cc` and `5677a93bacfda417` at frame 10,000. The lane checks that the module stayed mapped, with the same handle and cookie, across the two runtimes.
+  - **`--save-load-diff`** passes.
+  - **Reboot test:** in one process, runtime A boots with seed 1 and runs 10,000 frames, then B with seed 2, then C with seed 1, each destroyed before the next starts. A and C give the seed-1 trail and B gives the seed-2 trail, at every checkpoint, matching the M1 trail.
+  - **Loader unit tests** (`tests/mp4_loader`, stub modules): the last release keeps the module mapped; a second load returns the same table without a reload; a different path or a different `build_id` is refused while the module is pinned; `shutdown` with no hold unloads; `shutdown` with a hold reports an error and leaves the module mapped; `shutdown` before any load does nothing; a load after `shutdown` works.
+  - **Guard self-tests:** `dump_lane_guard_reload_keep` passes. `dump_lane_guard_reload_fails_fast` stays, as the record of why the module is pinned.
+  - **Exit:** after an MP4 run, the shell and the lane exit with code 0 and no hang, and the module is no longer loaded after `shutdown_titles`.
+  - `docs/titles/mp4.md` §11 records the ruling and the runs. `--e5-keep-module` becomes `--e5-reload-module`, a diagnosis mode expected to fail fast.
+- **qa-reviewer:** reviews all of the above. The conformance suite and CI stay green.
