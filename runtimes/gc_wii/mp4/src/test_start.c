@@ -52,27 +52,25 @@ int mpt_mp4_test_start(int normal) {
   if (mg < 0) return normal; /* not a minigame: the host sees bootDll and fails the run */
   const int type = mgInfoTbl[mg].type;
   const int focus = s_focus;
+  /* Seated categories (1-vs-3, 2-vs-2, Bowser, Fortune, Item) give the minigame's roles by config slot:
+   * the single seat is slot 0 (group 0), and some item minigames create only slots 0 and 1. So the pads
+   * rotate: slot i is played on pad (i + focus) % 4, and the focus pad takes slot 0. Every other category
+   * keeps slot i on pad i. Characters stay slot i's. */
+  const int seated = type == 1 || type == 2 || type == 3 || type == 5 || type == 6;
   for (int i = 0; i < 4; ++i) {
     GWPlayerCfg[i].character = (s16)i;
-    GWPlayerCfg[i].pad_idx = (s16)i;
+    GWPlayerCfg[i].pad_idx = (s16)(seated ? (i + focus) % 4 : i);
     GWPlayerCfg[i].iscom = 0;
     GWPlayerCfg[i].diff = 0;
-    switch (type) {
-      case 1: /* 1-vs-3: the solo player is group 0 (board/mg_setup.c) */
-      case 3: /* Bowser, Fortune and Item: the focus player takes the single seat */
-      case 5:
-      case 6:
-        GWPlayerCfg[i].group = (s16)(i == focus ? 0 : 1);
-        break;
-      case 2: /* 2-vs-2: the focus player and the next one (focus ^ 1) are team 0 */
-        GWPlayerCfg[i].group = (s16)((i >> 1) == (focus >> 1) ? 0 : 1);
-        break;
-      default: /* 4-player and Battle: every player on their own */
-        GWPlayerCfg[i].group = (s16)i;
-        break;
+    if (type == 2) {
+      GWPlayerCfg[i].group = (s16)(i < 2 ? 0 : 1); /* 2-vs-2: slots 0 and 1 are team 0 */
+    } else if (seated) {
+      GWPlayerCfg[i].group = (s16)(i == 0 ? 0 : 1); /* the single seat is slot 0 (board/mg_setup.c) */
+    } else {
+      GWPlayerCfg[i].group = (s16)i; /* 4-player and Battle: every player on their own */
     }
   }
-  GWSystem.player_curr = (s8)focus;
+  GWSystem.player_curr = 0; /* the focus pad's slot in a seated category */
   GWSystem.mg_next = (s16)mg;
   /* The system setup bootDll does once before any minigame can run (bootDll's
    * BootInitForSkippedSequence): characters, windows, the minigame sequence data (the start and finish
