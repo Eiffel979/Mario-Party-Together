@@ -1294,7 +1294,7 @@ struct E2Role {
 
 E2Role e2_role(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::TitleRegistry& registry,
                const mpt::dump_lane::e2::Row& row, int port, int focus,
-               const std::vector<mpt::dump_lane::e2::Control>& to_test, bool half_vs_full) {
+               const std::vector<mpt::dump_lane::e2::Control>& to_test, bool half_vs_full, bool need_end) {
   namespace e2 = mpt::dump_lane::e2;
   const BootOptions::E2& o = options.e2;
   const std::string id(row.id);
@@ -1367,7 +1367,8 @@ E2Role e2_role(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::T
               deterministic ? "equal" : "DIFFERS");
   // A minigame that waits for input (Reversal of Fortune's plunger) never ends idle. That is not a
   // failure by itself: such a row needs an injected run that ends it, and no run may halt or fault.
-  const bool idle_waits = idle.stopped.empty() && !idle.ended;
+  // A second seat only adds proofs: the first seat already showed the minigame ending (need_end false).
+  const bool idle_waits = idle.stopped.empty() && !idle.ended && need_end;
   bool any_ended = idle.ended;
   if (!idle.stopped.empty()) why = "idle run " + idle.stopped;
   else if (!deterministic) why = "idle replay differs";
@@ -1442,7 +1443,7 @@ E2Role e2_role(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::T
     }
     if (div && (!z_div || *div < *z_div)) out.proven.push_back(c);
     any_ended = any_ended || run.ended;
-    if (!idle_waits && !(quick && div) && !run.ended && run.stopped.empty() && why.empty())
+    if (need_end && !idle_waits && !(quick && div) && !run.ended && run.stopped.empty() && why.empty())
       why = std::string(e2::name(c)) + " run did not end within the cap";
   }
   if (idle_waits && !any_ended && !o.quick && why.empty()) why = "no run ended the minigame within the cap";
@@ -1470,7 +1471,7 @@ int e2_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Title
     for (int port : o.ports) {
       // First the port as the focus pad (slot 0); then, in a seated category, the controls still unproven
       // with the port in another slot. A control counts on the port if it is proven in either seat.
-      E2Role role = e2_role(options, dump, registry, row, port, e2::focus_for_port(port), row.controls, row.r_half_vs_full);
+      E2Role role = e2_role(options, dump, registry, row, port, e2::focus_for_port(port), row.controls, row.r_half_vs_full, true);
       if (role.aborted) {
         std::printf("dump lane: e2: %s\n", role.why.c_str());
         return 1;
@@ -1491,7 +1492,7 @@ int e2_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Title
       if (why.empty() && seated && !unproven().empty()) {
         const int other = row.type == 2 ? (port + 3) % 4 : (port + 1) % 4;
         focuses.push_back(other);
-        E2Role second = e2_role(options, dump, registry, row, port, other, unproven(), false);
+        E2Role second = e2_role(options, dump, registry, row, port, other, unproven(), false, false);
         if (second.aborted) {
           std::printf("dump lane: e2: %s\n", second.why.c_str());
           return 1;
