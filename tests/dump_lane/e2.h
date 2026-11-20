@@ -51,8 +51,8 @@ constexpr std::string_view name(Control c) {
     case Control::r_analog: return "R-analog";
     case Control::r_half: return "R-128";
     case Control::r_full: return "R-255";
-    case Control::z: return "Z(null)";
-    case Control::c_stick: return "C-stick(null)";
+    case Control::z: return "Z";
+    case Control::c_stick: return "C-stick";
   }
   return "?";
 }

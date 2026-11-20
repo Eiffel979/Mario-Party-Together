@@ -1403,10 +1403,12 @@ E2Role e2_role(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::T
     const E2Play* null_run = play_set(null_set);
     if (null_run == nullptr) return out;
     const std::optional<std::uint64_t> cutoff = e2::first_divergence(base->trail, null_run->trail);
+    // A null always prints as "<name>(null)", so its line never reads as a listed control's proof.
+    const std::string null_label = std::string(e2::name(null_c)) + "(null)";
     if (nulls_printed.insert(null_set).second)
       std::printf("e2 %s m%u port %d focus %d %s diverge=%s vs %s; %s\n", id.c_str(), row.number, port, focus,
-                  std::string(e2::name(null_c)).c_str(), cutoff ? ("t" + std::to_string(*cutoff)).c_str() : "none",
-                  against.c_str(), describe(*null_run).c_str());
+                  null_label.c_str(), cutoff ? ("t" + std::to_string(*cutoff)).c_str() : "none", against.c_str(),
+                  describe(*null_run).c_str());
     if (!from_start()) return out;
     const bool quick = o.quick && c != e2::Control::r_half;
     const E2Play run = e2_play(*rt, row.number, frame0, port, plan.run, o.cap, quick ? &base->trail : nullptr, o.verbose);
@@ -1415,7 +1417,7 @@ E2Role e2_role(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::T
     const bool counts = div && (!cutoff || *div < *cutoff);
     std::printf("e2 %s m%u port %d focus %d %s diverge=%s vs %s%s; %s\n", id.c_str(), row.number, port, focus,
                 std::string(e2::name(c)).c_str(), at.c_str(), against.c_str(),
-                div && !counts ? (" (not before " + std::string(e2::name(null_c)) + ")").c_str() : "",
+                div && !counts ? (" (not before " + null_label + ")").c_str() : "",
                 quick && div ? "(stopped at the divergence)" : describe(run).c_str());
     if (c == e2::Control::r_half) r_half_trail = run.trail;
     if (div && o.items) {
