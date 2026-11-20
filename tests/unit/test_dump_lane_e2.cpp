@@ -256,10 +256,18 @@ TEST_CASE("E2 null controls: one per input class, never an input the row lists")
     FAIL("no row " << id);
     return e2::rows().front();
   };
+  // Rows that list R only take the L null.
   CHECK(e2::null_for(find("mp4.minigame.mario_speedwagons"), C::r_analog) == C::l_analog);
-  CHECK(e2::null_for(find("mp4.minigame.makin_waves"), C::l_analog) == C::r_analog);
+  CHECK(e2::null_for(find("mp4.minigame.reversal_of_fortune"), C::r_analog) == C::l_analog);
   CHECK(e2::null_for(find("mp4.minigame.bowsers_bigger_blast"), C::r_half) == C::l_analog);
+  // No section 18 row lists L alone since Makin' Waves' L became the click, so a synthetic row keeps
+  // the L-only case (R null) covered.
+  const e2::Row l_only{"synthetic.l_only", 499, 0, {C::stick, C::l_analog}};
+  CHECK(e2::null_for(l_only, C::l_analog) == C::r_analog);
+  CHECK(e2::null_for(l_only, C::stick) == C::c_stick);
+  // A row that lists both triggers takes the C-stick for either.
   CHECK(e2::null_for(find("mp4.minigame.photo_finish"), C::l_analog) == C::c_stick);
+  CHECK(e2::null_for(find("mp4.minigame.photo_finish"), C::r_analog) == C::c_stick);
   // The C-stick null turns as the main stick does, on the C-stick only.
   const PadState p = e2::inject(C::c_stick, 0);
   CHECK(p.c_stick_x == 32767);
