@@ -57,9 +57,12 @@ constexpr int kGcStickMax = 72;     // cardinal full tilt of the main stick
 constexpr int kGcTriggerClampMin = 30;   // PADClamp's trigger window: raw <= 30 reads 0,
 constexpr int kGcTriggerClampMax = 180;  // raw above 180 reads as 180, then 30 is subtracted
 constexpr int kGcTriggerMax = kGcTriggerClampMax - kGcTriggerClampMin;  // 150
-// HuPadRead sets the game's own analog-L/R button bits when the clamped trigger
-// has a bit of 0xC0 set: clamped 64 and up, raw 94 and up (docs/titles/mp4.md
-// §18.1). The clamped trigger never exceeds 150, so no threshold of 192 exists.
+// HuPadRead sets the game's own analog-L/R button bits (0x4000 / 0x2000) when
+// the clamped trigger has a bit of 0xC0 set: clamped 64 and up, raw 94 and up
+// (docs/titles/mp4.md §18.1). The clamped trigger never exceeds 150, so no
+// threshold of 192 exists. No minigame reads these bits: the 0x40 / 0x20 that
+// minigames test are the digital L/R clicks. The bit is a fact check here, not
+// any row's proof.
 constexpr int kGcAnalogBitMask = 0xC0;
 constexpr int kGcAnalogBitEdge = 64;  // lowest clamped value with a 0xC0 bit set
 
@@ -338,7 +341,8 @@ void check_trigger_past(Rig& rig, Side side, int t) {
   }
 }
 
-// The game's analog-L/R bit (HuPadRead, clamped trigger & 0xC0): off at rest,
+// The game's analog-L/R bit (HuPadRead, clamped trigger & 0xC0), which no
+// minigame reads (§18.1): off at rest,
 // on for every press, and on a gamepad an analog pull turns it on at clamped 64
 // (raw 94), well before the digital click (trigger_button_threshold).
 void check_analog_bit(Rig& rig, Side side) {
@@ -625,7 +629,6 @@ enum class Need {
   digital_buttons,  // every digital GameCube button: A B X Y Z Start, D-pad, L/R clicks
   l_past_20,
   r_past_20,
-  l_analog_bit,  // HuPadRead's analog-L bit: clamped 64, raw 94
   r_past_10,
   r_saturates_140,
   l_saturates_150,
@@ -647,7 +650,6 @@ const char* need_label(Need n) {
     case Need::digital_buttons: return "digital buttons";
     case Need::l_past_20: return "L past 20";
     case Need::r_past_20: return "R past 20";
-    case Need::l_analog_bit: return "L analog bit (clamped 64, raw 94)";
     case Need::r_past_10: return "R past 10";
     case Need::r_saturates_140: return "R saturates at 140";
     case Need::l_saturates_150: return "L saturates at 150";
@@ -685,7 +687,6 @@ void check_need(Rig& rig, Need n) {
       break;
     case Need::l_past_20: check_trigger_past(rig, Side::l, 20); break;
     case Need::r_past_20: check_trigger_past(rig, Side::r, 20); break;
-    case Need::l_analog_bit: check_analog_bit(rig, Side::l); break;
     case Need::r_past_10: check_trigger_past(rig, Side::r, 10); break;
     case Need::r_saturates_140: check_trigger_saturates(rig, Side::r, 140); break;
     case Need::l_saturates_150: check_trigger_saturates(rig, Side::l, 150); break;
@@ -725,7 +726,7 @@ const std::vector<Row>& rows() {
       {"long_claw_of_the_law", "stick, A, L/R past clamped 20 (raw above 50)" DAGGER, {N::stick, N::a, N::l_past_20, N::r_past_20}},
       {"stamp_out", "stick, A" DAGGER, {N::stick, N::a}},
       {"candlelight_flight", "stick, A", {N::stick, N::a}},
-      {"makin_waves", "stick, A, L past the analog-L bit edge (clamped 64 / raw 94)" DAGGER, {N::stick, N::a, N::l_analog_bit}},
+      {"makin_waves", "stick, A, L click" DAGGER, {N::stick, N::a, N::l_click}},
       {"hide_and_go_boom", "A, B, X, Y", {N::a, N::b, N::x, N::y}},
       {"tree_stomp", "stick, A, B" DAGGER, {N::stick, N::a, N::b}},
       {"fish_n_drips", "any of A, B, X, Y, L click, R click", {N::a, N::b, N::x, N::y, N::l_click, N::r_click}},
@@ -848,3 +849,17 @@ TEST_CASE("mp4 E2 device proof covers every row of docs/titles/mp4.md section 18
 TEST_CASE("mp4 E2 device proof: keyboard") { run_rows(DeviceKind::keyboard); }
 
 TEST_CASE("mp4 E2 device proof: gamepad") { run_rows(DeviceKind::gamepad); }
+
+// Not a row proof: no minigame reads the analog-L/R bit (§18.1). This pins
+// where the game sets it, so a profile change that moves it is noticed.
+TEST_CASE("mp4 profile: the game's analog-L/R bit edge is clamped 64 / raw 94") {
+  for (DeviceKind kind : {DeviceKind::keyboard, DeviceKind::gamepad}) {
+    CAPTURE(kind == DeviceKind::keyboard ? "keyboard" : "gamepad");
+    for (std::size_t port = 0; port < kMaxPlayers; ++port) {
+      CAPTURE(port);
+      Rig rig(kind, port, "mp4.minigame.manta_rings");
+      check_analog_bit(rig, Side::l);
+      check_analog_bit(rig, Side::r);
+    }
+  }
+}

@@ -229,11 +229,12 @@ TEST_CASE("the coverage table has the E2 rows, Item rows marked not party-eligib
   }
   CHECK(expected.size() == 49);
   CHECK(eligible.size() == 44);  // the five Item minigames are not launched by any board (§18.1)
-  // §18.1 (PR #91, merge c8e6ace): the rows not fully proven on the game side.
+  // §18.1 (PR #91, merge c8e6ace; corrected at d7c1fb0): the rows not fully
+  // proven on the game side.
   const std::set<std::string> not_proven = {
       "mp4.minigame.mario_medley",      "mp4.minigame.long_claw_of_the_law", "mp4.minigame.pair_a_sailing",
       "mp4.minigame.dungeon_duos",      "mp4.minigame.balloon_of_doom",      "mp4.minigame.goombas_chip_flip",
-      "mp4.minigame.take_a_breather",   "mp4.minigame.kareening_koopa"};
+      "mp4.minigame.take_a_breather",   "mp4.minigame.kareening_koopa",      "mp4.minigame.makin_waves"};
   std::set<std::string> listed;
   int proven = 0;
   for (const auto& [id, c] : coverage) {
@@ -250,6 +251,7 @@ TEST_CASE("the coverage table has the E2 rows, Item rows marked not party-eligib
     // Sign-off cites the game-side proof and its merge, and says proven or not.
     CHECK(c[7].find("\xC2\xA7" "18.1") != std::string::npos);
     CHECK(c[7].find("PR #91, merge `c8e6ace`") != std::string::npos);
+    CHECK(c[7].find("`d7c1fb0`") != std::string::npos);  // §18.1's Makin' Waves correction
     if (not_proven.count(id) == 1) {
       CHECK(c[7].rfind("not proven: ", 0) == 0);
     } else {
@@ -261,7 +263,8 @@ TEST_CASE("the coverage table has the E2 rows, Item rows marked not party-eligib
     CHECK(overridden == (mp4_profile().minigames.count(id) == 1));
   }
   CHECK(listed == expected);
-  CHECK(proven == 41);
+  CHECK(proven == 40);
+  CHECK(not_proven.size() == 9);
 }
 
 TEST_CASE("Bowser's Bigger Blast: lshift+E holds R part-way, E commits") {
