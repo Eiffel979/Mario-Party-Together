@@ -57,11 +57,17 @@ constexpr int kGcStickMax = 72;     // cardinal full tilt of the main stick
 constexpr int kGcTriggerClampMin = 30;   // PADClamp's trigger window: raw <= 30 reads 0,
 constexpr int kGcTriggerClampMax = 180;  // raw above 180 reads as 180, then 30 is subtracted
 constexpr int kGcTriggerMax = kGcTriggerClampMax - kGcTriggerClampMin;  // 150
+// HuPadRead sets the game's own analog-L/R button bits when the clamped trigger
+// has a bit of 0xC0 set: clamped 64 and up, raw 94 and up (docs/titles/mp4.md
+// §18.1). The clamped trigger never exceeds 150, so no threshold of 192 exists.
+constexpr int kGcAnalogBitMask = 0xC0;
+constexpr int kGcAnalogBitEdge = 64;  // lowest clamped value with a 0xC0 bit set
 
 struct GcView {
   int stick_x = 0, stick_y = 0;  // after PADClamp, +Y up
   int trig_l = 0, trig_r = 0;    // after PADClamp, 0..150
   bool click_l = false, click_r = false;
+  bool analog_l = false, analog_r = false;  // the game's analog-L/R bits, set by HuPadRead
 };
 
 int scale_stick(std::int16_t v) {
@@ -108,6 +114,8 @@ GcView gc_view(const PadState& p) {
   g.click_r = tr == 255;
   g.trig_l = clamp_trigger(tl);
   g.trig_r = clamp_trigger(tr);
+  g.analog_l = (g.trig_l & kGcAnalogBitMask) != 0;
+  g.analog_r = (g.trig_r & kGcAnalogBitMask) != 0;
   g.stick_x = scale_stick(p.stick_x);
   g.stick_y = scale_stick(p.stick_y);
   clamp_stick(g.stick_x, g.stick_y, kGcStickMax, 40, 15);
@@ -229,6 +237,7 @@ std::uint32_t click_bit(Side side) { return side == Side::l ? kButtonL : kButton
 int pad_trigger(const PadState& p, Side side) { return side == Side::l ? p.trigger_l : p.trigger_r; }
 int gc_trigger(const GcView& g, Side side) { return side == Side::l ? g.trig_l : g.trig_r; }
 bool gc_click(const GcView& g, Side side) { return side == Side::l ? g.click_l : g.click_r; }
+bool gc_analog_bit(const GcView& g, Side side) { return side == Side::l ? g.analog_l : g.analog_r; }
 
 // Every way this source set has to press the L/R click: the click control's
 // own sources, and the trigger's sources held fully (a gamepad's analog
@@ -326,6 +335,43 @@ void check_trigger_past(Rig& rig, Side side, int t) {
     CHECK(sw.game.count(t + 1) == 1);
     CHECK(sw.pad.count(raw_t) == 1);
     CHECK(sw.pad.count(raw_t + 1) == 1);
+  }
+}
+
+// The game's analog-L/R bit (HuPadRead, clamped trigger & 0xC0): off at rest,
+// on for every press, and on a gamepad an analog pull turns it on at clamped 64
+// (raw 94), well before the digital click (trigger_button_threshold).
+void check_analog_bit(Rig& rig, Side side) {
+  CAPTURE(side == Side::l ? "analog-L bit" : "analog-R bit");
+  static_assert(kGcAnalogBitEdge == 64);
+  REQUIRE(clamp_trigger(raw_trigger_for(kGcAnalogBitEdge)) == kGcAnalogBitEdge);
+  REQUIRE(raw_trigger_for(kGcAnalogBitEdge) == 94);
+  REQUIRE(((kGcAnalogBitEdge - 1) & kGcAnalogBitMask) == 0);
+  REQUIRE((kGcAnalogBitEdge & kGcAnalogBitMask) != 0);
+  for (int v = kGcAnalogBitEdge; v <= kGcTriggerMax; ++v) REQUIRE((v & kGcAnalogBitMask) != 0);
+  CHECK_FALSE(gc_analog_bit(gc_view(rig.map(rig.blank())), side));
+  // The bit is "past 63" on the clamped scale.
+  check_trigger_past(rig, side, kGcAnalogBitEdge - 1);
+  for (const Source& s : click_sources(rig, side)) {
+    CAPTURE(source_to_string(s));
+    DeviceSnapshot snap = rig.blank();
+    Rig::hold(snap, s);
+    CHECK(gc_analog_bit(gc_view(rig.map(snap)), side));
+  }
+  if (rig.kind() == DeviceKind::gamepad) {
+    // Some analog pull sets the bit without the click.
+    bool bit_without_click = false;
+    for (const Source& s : rig.analog_sources(trigger_control(side))) {
+      for (std::int32_t raw = 0;; raw = std::min<std::int32_t>(raw + 8, kAxisMax)) {
+        DeviceSnapshot snap = rig.blank();
+        Rig::hold(snap, s, raw);
+        const GcView g = gc_view(rig.map(snap));
+        CHECK(gc_analog_bit(g, side) == (gc_trigger(g, side) >= kGcAnalogBitEdge));
+        if (gc_analog_bit(g, side) && !gc_click(g, side)) bit_without_click = true;
+        if (raw == kAxisMax) break;
+      }
+    }
+    CHECK(bit_without_click);
   }
 }
 
@@ -579,7 +625,7 @@ enum class Need {
   digital_buttons,  // every digital GameCube button: A B X Y Z Start, D-pad, L/R clicks
   l_past_20,
   r_past_20,
-  l_past_80,
+  l_analog_bit,  // HuPadRead's analog-L bit: clamped 64, raw 94
   r_past_10,
   r_saturates_140,
   l_saturates_150,
@@ -601,7 +647,7 @@ const char* need_label(Need n) {
     case Need::digital_buttons: return "digital buttons";
     case Need::l_past_20: return "L past 20";
     case Need::r_past_20: return "R past 20";
-    case Need::l_past_80: return "L past 80";
+    case Need::l_analog_bit: return "L analog bit (clamped 64, raw 94)";
     case Need::r_past_10: return "R past 10";
     case Need::r_saturates_140: return "R saturates at 140";
     case Need::l_saturates_150: return "L saturates at 150";
@@ -639,7 +685,7 @@ void check_need(Rig& rig, Need n) {
       break;
     case Need::l_past_20: check_trigger_past(rig, Side::l, 20); break;
     case Need::r_past_20: check_trigger_past(rig, Side::r, 20); break;
-    case Need::l_past_80: check_trigger_past(rig, Side::l, 80); break;
+    case Need::l_analog_bit: check_analog_bit(rig, Side::l); break;
     case Need::r_past_10: check_trigger_past(rig, Side::r, 10); break;
     case Need::r_saturates_140: check_trigger_saturates(rig, Side::r, 140); break;
     case Need::l_saturates_150: check_trigger_saturates(rig, Side::l, 150); break;
@@ -679,7 +725,7 @@ const std::vector<Row>& rows() {
       {"long_claw_of_the_law", "stick, A, L/R past 20/255" DAGGER, {N::stick, N::a, N::l_past_20, N::r_past_20}},
       {"stamp_out", "stick, A" DAGGER, {N::stick, N::a}},
       {"candlelight_flight", "stick, A", {N::stick, N::a}},
-      {"makin_waves", "stick, A, L past 80/255" DAGGER, {N::stick, N::a, N::l_past_80}},
+      {"makin_waves", "stick, A, L past 80/255" DAGGER, {N::stick, N::a, N::l_analog_bit}},
       {"hide_and_go_boom", "A, B, X, Y", {N::a, N::b, N::x, N::y}},
       {"tree_stomp", "stick, A, B" DAGGER, {N::stick, N::a, N::b}},
       {"fish_n_drips", "any of A, B, X, Y, L click, R click", {N::a, N::b, N::x, N::y, N::l_click, N::r_click}},
