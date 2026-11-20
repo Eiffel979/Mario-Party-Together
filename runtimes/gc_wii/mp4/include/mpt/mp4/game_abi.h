@@ -115,10 +115,12 @@ typedef struct MptMp4BootConfig {
   const uint8_t* save_media;  /* card image (SaveMedia::data) or NULL for a blank card; copied */
   size_t save_media_size;
   uint32_t save_media_format; /* SaveMedia::format_version; must match card_format() when given */
-  /* Test only (M4-07; was reserved0): 0 for a normal boot, or a direct start of one minigame,
+  /* v1.5, test only (M4-07; was reserved0): 0 for a normal boot, or a direct start of one minigame,
    * MPT_MP4_TEST_START(number, focus): bits 0..9 its number (401 for m401Dll), bits 12..13 the focus
    * player (mpt_mp4_port.h). A determinism input: the module folds it into the hashed and saved gameplay
-   * word, so a normal boot's hash and saved states are unchanged. */
+   * word, so a normal boot's hash and saved states are unchanged. create refuses any other value with
+   * MPT_MP4_ERR_ARGUMENT (a number outside 401..499, or a bit outside 0..9 and 12..13). A caller that
+   * leaves it 0 behaves as before v1.5. */
   uint32_t test_start;
   uintptr_t arena_base;     /* fixed SDK arena address for fresh-process save states, 0 = anywhere */
   const char* cache_dir;    /* UTF-8 pipeline cache directory for the GPU backend, or NULL */
