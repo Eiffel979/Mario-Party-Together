@@ -1,0 +1,109 @@
+Apply order 0040 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+m449dll: pick each racer from its own global, on MPT_PC
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+M4-07 (E2 game-side proof). Kareening Koopa keeps its two racer objects in (&lbl_1_bss_54)[0] and [1]:
+the word at 0x54 and the one after it, which on the console is lbl_1_bss_58 (the decomp names globals by
+address, and nothing else uses lbl_1_bss_58). Our compiler lays these globals out in declaration order,
+lbl_1_bss_50 after lbl_1_bss_54, so the second racer's store overwrote lbl_1_bss_50, the course object.
+The racer setup then read the course's models from a racer (model ids -1) and faulted on a null HSF root
+in Hu3DModelObjMtxGet in its first frame.
+
+On MPT_PC every (&lbl_1_bss_54)[i] goes through MPT_M449_RACER(i), which picks lbl_1_bss_54 for 0 and
+lbl_1_bss_58 for 1, the console's layout. Code only: no global is added, renamed or resized, because the
+state hash names the module's data by symbol (a first version that added an array moved the M1 trail).
+Kareening Koopa is reached from Mini-game mode and Story only, never from a party, so no replay or golden
+plays this code; state hashes do not move (docs/titles/mp4.md, M1).
+
+diff --git a/src/REL/m449Dll/main.c b/src/REL/m449Dll/main.c
+index 1986d49..9d7a44a 100644
+--- a/src/REL/m449Dll/main.c
++++ b/src/REL/m449Dll/main.c
+@@ -180,6 +180,15 @@ omObjData *lbl_1_bss_5C;
+ omObjData *lbl_1_bss_58;
+ omObjData *lbl_1_bss_54;
+ omObjData *lbl_1_bss_50;
++/* The two racers are (&lbl_1_bss_54)[0] and [1]: the word at 0x54 and the one after it, which on the console
++ * is lbl_1_bss_58 (globals are named by address; nothing else uses lbl_1_bss_58). Our compiler lays these
++ * globals out in declaration order, so [1] landed on lbl_1_bss_50, the course object. On MPT_PC the racer is
++ * picked by index from the same two globals. */
++#ifdef MPT_PC
++#define MPT_M449_RACER(i) (*((i) == 0 ? &lbl_1_bss_54 : &lbl_1_bss_58))
++#else
++#define MPT_M449_RACER(i) ((&lbl_1_bss_54)[i])
++#endif
+ s32 lbl_1_bss_4C;
+ s32 lbl_1_bss_48;
+ s32 lbl_1_bss_44;
+@@ -446,7 +455,7 @@ void fn_1_758(omObjData *var_r29)
+             },
+         };
+         var_r31 = var_r29->data;
+-        sp238 = (&lbl_1_bss_54)[1 - var_r29->work[0]]->data;
++        sp238 = MPT_M449_RACER(1 - var_r29->work[0])->data;
+         var_f29 = 0.0f;
+         var_f28 = 0.0f;
+         Hu3DModelObjPosGet(lbl_1_bss_50->model[1], lbl_1_data_E8[var_r31->unk_00], &sp2D8);
+@@ -1332,7 +1341,7 @@ void fn_1_6850(omObjData *object)
+     s32 var_r20;
+ 
+     for (var_r31 = 0; var_r31 < 2; var_r31++) {
+-        sp20[var_r31] = (&lbl_1_bss_54)[var_r31]->data;
++        sp20[var_r31] = MPT_M449_RACER(var_r31)->data;
+     }
+     lbl_1_bss_4++;
+     if (lbl_1_bss_48 == 0x3EC) {
+@@ -1445,7 +1454,7 @@ void fn_1_71A8(void)
+ 
+     var_r29 = 0;
+     for (var_r30 = 0; var_r30 < 2; var_r30++) {
+-        sp8[var_r30] = (&lbl_1_bss_54)[var_r30]->data;
++        sp8[var_r30] = MPT_M449_RACER(var_r30)->data;
+     }
+     HuWinComKeyWait(0x100, 0x100, 0x100, 0x100, REFRESH_RATE);
+     HuWinComKeyReset();
+@@ -1519,7 +1528,7 @@ void fn_1_7544(omObjData *var_r29)
+         }
+     }
+     for (var_r31 = 0; var_r31 < 2; var_r31++) {
+-        spC[var_r31] = (&lbl_1_bss_54)[var_r31]->data;
++        spC[var_r31] = MPT_M449_RACER(var_r31)->data;
+     }
+     if ((omSysExitReq != 0) && (WipeStatGet() == 0)) {
+         WipeCreate(WIPE_MODE_OUT, WIPE_TYPE_NORMAL, 60);
+@@ -1745,7 +1754,7 @@ void fn_1_8538(omObjData *var_r30)
+     var_r26 = -1;
+     var_r24 = -1;
+     var_r31 = var_r30->data;
+-    sp48 = (&lbl_1_bss_54)[1 - var_r30->work[0]]->data;
++    sp48 = MPT_M449_RACER(1 - var_r30->work[0])->data;
+     memset(var_r31, 0, sizeof(M449DllWork));
+     var_r31->unk_00 = var_r30->work[0];
+     if ((GWPlayerCfg->character == 0xC) || (GWPlayerCfg[1].character == 0xC) || (GWPlayerCfg[2].character == 0xC)
+@@ -1891,7 +1900,7 @@ void fn_1_8538(omObjData *var_r30)
+             s32 spD4[0x12] = { 0, 0, -14, 16, 46, -14, 16, 46, -50, 0, 0, -14, 16, 46, -14, 16, 46, -50 };
+             s32 sp8C[0x12] = { 0, 0, -2, -2, -2, -2, -2, -2, 0, 0, 0, -2, -2, -2, -2, -2, -2, 0 };
+             if ((lbl_1_data_0[var_r29] + 0xFF9F0000) == 0) {
+-                var_r25 = (&lbl_1_bss_54)[var_r29 == 8 ? 0 : (var_r29 == 0x11 ? 1 : 0)]->data;
++                var_r25 = MPT_M449_RACER(var_r29 == 8 ? 0 : (var_r29 == 0x11 ? 1 : 0))->data;
+                 lbl_1_data_48[var_r29] = espEntry(var_r25->unk_08 == -1 ? 0x500018 : (var_r25->unk_08 + lbl_1_data_0[var_r29]), 0, 0);
+             }
+             else {
+@@ -1976,7 +1985,7 @@ void ObjectSetup(void)
+     HuWinInit(1);
+     lbl_1_bss_50 = omAddObjEx(lbl_1_bss_38, 0x64, 3, 0, 1, fn_1_7ECC);
+     for (var_r31 = 0; var_r31 < 2; var_r31++) {
+-        var_r30 = (&lbl_1_bss_54)[var_r31] = omAddObjEx(lbl_1_bss_38, 0x65, 0x14, 4, 0, fn_1_8538);
++        var_r30 = MPT_M449_RACER(var_r31) = omAddObjEx(lbl_1_bss_38, 0x65, 0x14, 4, 0, fn_1_8538);
+         var_r30->data = HuMemDirectMallocNum(HEAP_SYSTEM, sizeof(M449DllWork), MEMORY_DEFAULT_NUM);
+         var_r30->work[0] = var_r31;
+     }
+@@ -1991,7 +2000,7 @@ void fn_1_9A38(omObjData *arg0)
+ 
+     if (WipeStatGet() == 0) {
+         for (var_r31 = 0; var_r31 < 2; var_r31++) {
+-            sp8 = (&lbl_1_bss_54)[var_r31]->data;
++            sp8 = MPT_M449_RACER(var_r31)->data;
+         }
+         if (lbl_1_data_228 >= 0) {
+             MGSeqKill(lbl_1_data_228);
