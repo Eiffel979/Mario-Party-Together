@@ -121,7 +121,8 @@ inline const std::vector<Row>& rows() {
       {"mp4.minigame.butterfly_blitz", 441, 4, {C::stick, C::a, C::b}},
       {"mp4.minigame.mario_speedwagons", 443, 0, {C::a, C::r_analog}, false,
        {C::a, C::r_analog}, "A shifts gear only once R's throttle has the car past a speed"},
-      {"mp4.minigame.reversal_of_fortune", 444, 5, {C::stick, C::a, C::r_analog}},
+      {"mp4.minigame.reversal_of_fortune", 444, 5, {C::stick, C::a, C::r_analog}, false,
+       {C::stick, C::a}, "the plunger fires only after the stick pulls it back (docs/titles/mp4.md, M4-01)"},
       {"mp4.minigame.bowser_bop", 445, 6, {C::stick, C::a}},
       {"mp4.minigame.mystic_match_em", 446, 6, {C::a, C::stick}},
       {"mp4.minigame.archaeologuess", 447, 6, {C::stick, C::a}},
@@ -245,8 +246,8 @@ inline std::optional<std::uint64_t> first_divergence(const std::vector<Checkpoin
   return std::nullopt;
 }
 
-// The focus player of a run on `port`: the seat the run's injected port drives in a single-seat
-// category. Every port is a human player whose pad is its own index, so focus = port.
+// The focus pad of a run on `port`: in a seated category the test start puts the focus pad in config
+// slot 0 (the single seat, or team 0's first player), so the port's first seat is focus = port.
 constexpr int focus_for_port(int port) { return port; }
 
 }  // namespace mpt::dump_lane::e2

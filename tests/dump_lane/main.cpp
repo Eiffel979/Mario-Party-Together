@@ -1468,9 +1468,8 @@ int e2_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Title
     if (!o.rows.empty() && std::find(o.rows.begin(), o.rows.end(), row.number) == o.rows.end()) continue;
     const std::string id(row.id);
     for (int port : o.ports) {
-      // First the port as the focus player; then, in a minigame with a single seat (1-vs-3, Bowser,
-      // Fortune, Item), the controls still unproven with the port in the other role (the next port as
-      // the focus player). A control counts on the port if it is proven in either role.
+      // First the port as the focus pad (slot 0); then, in a seated category, the controls still unproven
+      // with the port in another slot. A control counts on the port if it is proven in either seat.
       E2Role role = e2_role(options, dump, registry, row, port, e2::focus_for_port(port), row.controls, row.r_half_vs_full);
       if (role.aborted) {
         std::printf("dump lane: e2: %s\n", role.why.c_str());
@@ -1485,9 +1484,12 @@ int e2_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Title
           if (std::find(proven.begin(), proven.end(), c) == proven.end()) u.push_back(c);
         return u;
       };
-      const bool single_seat = row.type == 1 || row.type == 3 || row.type == 5 || row.type == 6;
-      if (why.empty() && single_seat && !unproven().empty()) {
-        const int other = (port + 1) % 4;
+      // Seated categories rotate pads (test_start.c): with focus F, port P plays slot (P - F) % 4. The retry
+      // puts the port in slot 3 (a team member) for 1-vs-3, Bowser, Fortune and Item, and in slot 1 (the
+      // second player of team 0) for 2-vs-2.
+      const bool seated = row.type == 1 || row.type == 2 || row.type == 3 || row.type == 5 || row.type == 6;
+      if (why.empty() && seated && !unproven().empty()) {
+        const int other = row.type == 2 ? (port + 3) % 4 : (port + 1) % 4;
         focuses.push_back(other);
         E2Role second = e2_role(options, dump, registry, row, port, other, unproven(), false);
         if (second.aborted) {

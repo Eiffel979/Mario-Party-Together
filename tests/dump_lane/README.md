@@ -213,11 +213,12 @@ the injection and the verdict; `tests/unit/test_dump_lane_e2.cpp` checks them ag
 a dump).
 
 - **Start.** For each row and port the lane boots a fresh runtime with `Mp4Runtime::setTestStart`: the
-  module does bootDll's one-time setup, seats four human players on pads 0 to 3 (the port as the focus
-  player, who takes the single seat of a 1-vs-3, Bowser, Fortune or Item minigame and leads team 0 in a
-  2-vs-2) and starts the minigame through instDll. The test start is a determinism input in the state
-  hash; no replay records it. The state is saved on the minigame's first frame and every run below starts
-  from it.
+  module does bootDll's one-time setup, seats four human players and starts the minigame through instDll.
+  In a seated category (1-vs-3, 2-vs-2, Bowser, Fortune, Item) the minigame gives roles by config slot
+  (the single seat or team 0's first player is slot 0, and some item minigames create only slots 0 and
+  1), so the pads rotate: slot i is played on pad (i + focus) % 4, with the port as the focus pad first.
+  Other categories keep slot i on pad i. The test start is a determinism input in the state hash; no
+  replay records it. The state is saved on the minigame's first frame and every run below starts from it.
 - **Runs.** Idle (every pad connected, nothing pressed) twice, whose trails must be equal; then Z as a null
   control, and each listed control on the port. A row with a context set (`e2.h`: a prompted pair, a claw
   that must first be over a target, a gear shift that needs speed) proves each control in it
@@ -232,9 +233,9 @@ a dump).
   can stay in game memory with no reaction behind it. Z runs first, and a listed control counts only
   where it diverges before Z does. `--e2-items` names the state-hash items each divergence changed.
 - **Verdict.** A control is proven on the port when its trail leaves its baseline at a checkpoint where
-  both runs are still in the minigame. In a minigame with a single seat (1-vs-3, Bowser, Fortune, Item),
-  controls still unproven with the port as the focus player are tried again with the port in the other
-  role (the next port as the focus player). Every run must end the minigame with no halt or fault within
+  both runs are still in the minigame. In a seated category, controls still unproven with the port in
+  slot 0 are tried again with the port in another seat: slot 3 (a team member) for 1-vs-3, Bowser,
+  Fortune and Item, slot 1 (team 0's second player) for 2-vs-2. Every run must end the minigame with no halt or fault within
   `--e2-cap` frames (default 36,000) and run 300 frames more; a minigame that waits for input (its idle
   run never ends, as Reversal of Fortune's plunger) passes when an injected run ends it. Bowser's Bigger
   Blast also needs R=128 and R=255 to differ from each other. After the minigame, instDll's history goes
