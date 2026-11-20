@@ -698,6 +698,87 @@ So a minigame is covered on both devices unless it needs something a key cannot 
 
 "default" means the base bindings of `input/profiles/mp4/default.json`. "override" means a `minigames` entry in that profile. `input/tests/test_mp4_profile.cpp` checks that the profile parses, binds no reserved input (Esc, Guide), and that its overrides apply. It also checks that every ID here and in the profile is in the §12 catalog, and that this table has exactly the party-eligible rows.
 
+
+### 18.1 Game-side proof (M4-07, E2)
+
+**Owner of this subsection:** runtime-gc-wii. It is M4-07's half of the joint E2 sign-off (ruling M4-E); the table above, its input columns and its Sign-off column stay input-mapping's. It sits under its own heading because `input/tests/` reads §18's table up to the next heading.
+
+**Method** (`mpt_dump_lane --boot mp4 --e2`, `tests/dump_lane/README.md` "E2"; rows, injection and verdict in `tests/dump_lane/e2.h`):
+- **Test start.** `Mp4Runtime::setTestStart` (MptMp4BootConfig `test_start`, Party Board patch 0038, `runtimes/gc_wii/mp4/src/test_start.c`) boots straight into one minigame: bootDll's one-time setup, four human players, `GWSystem.mg_next`, then instDll, which plays it as on a board (no instruction screen on a fresh card). In seated categories (1-vs-3, 2-vs-2, Bowser, Fortune, Item) slot i plays on pad (i + focus) % 4, so every port can take slot 0. It is a determinism input in the state hash and changes nothing on a normal boot: the M1 trail is unchanged (seed 1 `2523e333cd8cc6cc`, seed 2 `5677a93bacfda417` at frame 10,000, checked after every module change on this branch).
+- **Runs**, per row and port, from a save state on the minigame's first frame: idle twice (the trails must be equal), the Z null control, then each listed control on the port. Controls come in bursts, 24 frames of every 32 (buttons pulse 4 on, 4 off; the stick holds right, up, left or down; analog pulls hold raw 200, clamped 150), idle for the other 8.
+- **The check.** The state hash at the last frame of each idle gap, compared with the baseline's at the same frame while both runs are in the minigame. The gap matters: the hash covers the game's pad arrays, which copy the pad every frame. At the end of the gap they are idle again, so a difference is game state the input changed. Z marks where that stops holding (a minigame that freezes a pad copy in its objects); a control counts only where it diverges before Z. Deterministic, no wall clock: frames and hashes only.
+- **Context sets** for controls the game only acts on together or after setup (in the cells below): each control in the set is proven leave-one-out, the whole set against the set without it.
+- **Seats.** In seated categories, controls still unproven with the port in slot 0 are retried with the port in slot 3 (1-vs-3, Bowser, Fortune, Item) or slot 1 (2-vs-2).
+- **End.** Every run must end the minigame with no halt or fault within 36,000 frames and run 300 frames more. After it, instDll's history goes to resultDll, which has no party to show here and returns inside its first frame. A minigame that waits for input passes when an injected run ends it. Bowser's Bigger Blast also needs R=128 and R=255 to differ.
+
+**Run.** Branch `m4-07-e2-game-side` at `a5cb11b`, Windows 11, `windows-clang-release`, null GX backend, seed 1, Party Board `98ac07f` with patches 0001-0038, musyx `86851a3`, aurora `5143394`, 2026-11-19. `mpt_dump_lane --boot mp4 --e2 --e2-rows <list>` in four shards, Kareening Koopa alone under `--supervise`. "tN" is the first divergence in frames from the minigame's first frame (earliest to latest port where they differ).
+
+**Synthetic checks (CI, no dump).** `tests/unit/test_dump_lane_e2.cpp`: the E2 rows are this table's rows with the controls each "Inputs read" cell lists, injection is idle on every checkpoint, trigger values reach the thresholds after PADClamp, context plans differ in exactly one control, and the verdict counts only divergences inside both minigame windows. `runtimes/gc_wii/sdk/tests/test_pad_vi.cpp`: PADClamp's trigger vector over raw 0..255 and where the game's analog-L/R bit turns on.
+
+**Result: 42 of 49 rows proven** on all four ports with every listed control; **7 are not fully proven**, each with its reason in the table: Long Claw of the Law (A), Pair-a-sailing (B), Dungeon Duos (B, X, Y), Goomba's Chip Flip (L-click), Take a Breather (stick, A), Bowser Bop (a fault at its end) and Kareening Koopa (unreachable from the test start).
+
+| ID | Game side (M4-07) |
+|---|---|
+| `mp4.minigame.manta_rings` | **proven, ports 0-3.** stick t447, A t447; ends idle at t3726. |
+| `mp4.minigame.slime_time` | **proven, ports 0-3.** A t831; ends idle at t3000. |
+| `mp4.minigame.booksquirm` | **proven, ports 0-3.** stick t447; ends idle at t1207. |
+| `mp4.minigame.trace_race` | **proven, ports 0-3.** stick t447; ends idle at t2920. |
+| `mp4.minigame.mario_medley` | **proven, ports 0-3.** A t639, B t639, L-click t1311, R-click t1311; ends idle at t18907 (prompted pairs, leave-one-out over {A, B, L, R}). |
+| `mp4.minigame.avalanche` | **proven, ports 0-3.** stick t447, A t447; ends idle at t1450 (Z (null) leaves idle at t863 through a frozen pad copy; every proof is earlier). |
+| `mp4.minigame.domination` | **proven, ports 0-3.** A t447; ends idle at t1508. |
+| `mp4.minigame.paratrooper_plunge` | **proven, ports 0-3.** stick t927; ends idle at t2880. |
+| `mp4.minigame.toads_quick_draw` | **proven, ports 0-3.** stick t639, A t1023; ends idle at t13672. |
+| `mp4.minigame.three_throw` | **proven, ports 0-3.** A t511, B t511; ends idle at t2661. |
+| `mp4.minigame.photo_finish` | **proven, ports 0-3.** stick t671, A t4255, L-analog t671, R-analog t671; ends idle at t4621. |
+| `mp4.minigame.mr_blizzards_brigade` | **proven, ports 0-3.** stick t703; ends idle at t1580. |
+| `mp4.minigame.bob_omb_breakers` | **proven, ports 0-3.** stick t607, A t607, B t607, X t607, Y t607; ends idle at t5680. |
+| `mp4.minigame.long_claw_of_the_law` | **partly proven.** stick, L-analog, R-analog proven on ports 0-3 (stick t511, L-analog t511, R-analog t511); ends idle at t4581. **A not proven:** A grabs only while the claw is idle over a free target, which the turning stick never lines up (context {stick, A} tried). Needs a scripted approach to a target. |
+| `mp4.minigame.stamp_out` | **proven, ports 0-3.** stick t415, A t415; ends idle at t2705. |
+| `mp4.minigame.candlelight_flight` | **proven, ports 0-3.** stick t543, A t575; ends idle at t3092 (some controls proven with the port in its second seat). |
+| `mp4.minigame.makin_waves` | **proven, ports 0-3.** stick t447, A t447, L-analog t863; ends idle at t1253 (some controls proven with the port in its second seat). |
+| `mp4.minigame.hide_and_go_boom` | **proven, ports 0-3.** A t511, B t511, X t511, Y t511; ends idle at t1625 (some controls proven with the port in its second seat). |
+| `mp4.minigame.tree_stomp` | **proven, ports 0-3.** stick t735, A t735, B t735; ends idle at t3990 (some controls proven with the port in its second seat). |
+| `mp4.minigame.fish_n_drips` | **proven, ports 0-3.** A t543, B t543, X t543, Y t543, L-click t543, R-click t543; ends idle at t4645. |
+| `mp4.minigame.hop_or_pop` | **proven, ports 0-3.** stick t479, A t479; ends idle at t3661. |
+| `mp4.minigame.money_belts` | **proven, ports 0-3.** stick t447; ends idle at t2665. |
+| `mp4.minigame.goooooooal` | **proven, ports 0-3.** stick t543, A t511; ends idle at t2708. |
+| `mp4.minigame.blame_it_on_the_crane` | **proven, ports 0-3.** A t447, stick t447; ends idle at t4542 (some controls proven with the port in its second seat). |
+| `mp4.minigame.the_great_deflate` | **proven, ports 0-3.** A t383; ends idle at t2570. |
+| `mp4.minigame.revers_a_bomb` | **proven, ports 0-3.** stick t447, A t479; ends idle at t1788. |
+| `mp4.minigame.right_oar_left` | **proven, ports 0-3.** A t575, B t575; ends idle at t18978. |
+| `mp4.minigame.cliffhangers` | **proven, ports 0-3.** stick t479, A t479; ends idle at t18926. |
+| `mp4.minigame.team_treasure_trek` | **proven, ports 0-3.** stick t575, X t575, Y t575; ends idle at t4575. |
+| `mp4.minigame.pair_a_sailing` | **partly proven.** stick, A proven on ports 0-3 (stick t479, A t479); ends idle at t3617. **B not proven** in either seat of the team (slots 0 and 1), alone or with the stick: the module reads B only when A is up (an else branch) and only in a state the bursts do not reach. |
+| `mp4.minigame.order_up` | **proven, ports 0-3.** stick t415, A t927; ends idle at t9029. |
+| `mp4.minigame.dungeon_duos` | **partly proven.** stick, A, L-analog, R-analog proven on ports 0-3 (stick t351, A t351, L-analog t18335, R-analog t18335); ends idle at t18736. **B, X, Y not proven** in either team seat, alone or with the stick (context {stick, B, X, Y}): they act only in states the bursts do not reach. |
+| `mp4.minigame.cheep_cheep_sweep` | **proven, ports 0-3.** stick t479, A t479, B t479; ends idle at t4521. |
+| `mp4.minigame.darts_of_doom` | **proven, ports 0-3.** A t383; waits for input (no idle end); an injected run ends it. |
+| `mp4.minigame.fruits_of_doom` | **proven, ports 0-3.** stick t415, A t383; waits for input (no idle end); an injected run ends it (waits for A; leave-one-out over {stick, A}). |
+| `mp4.minigame.balloon_of_doom` | **proven, ports 0-3.** A t383, L-click t383; waits for input (no idle end); an injected run ends it (waits for A; leave-one-out over {A, L}). |
+| `mp4.minigame.chain_chomp_fever` | **proven, ports 0-3.** stick t479; ends idle at t1493. |
+| `mp4.minigame.paths_of_peril` | **proven, ports 0-3.** stick t447; ends idle at t4492. |
+| `mp4.minigame.bowsers_bigger_blast` | **proven, ports 0-3.** R-128 t575-2751, R-click t575-2751, R-255-vs-R-128 t575-2751; ends idle at t15097 (R=128 and R=255 differ (t575 to t2751 by port)). |
+| `mp4.minigame.butterfly_blitz` | **proven, ports 0-3.** stick t511, A t511, B t511; ends idle at t4774. |
+| `mp4.minigame.mario_speedwagons` | **proven, ports 0-3.** A t735, R-analog t415; ends idle at t9851 (A shifts gear once R has the car past a speed; leave-one-out over {A, R}). |
+| `mp4.minigame.reversal_of_fortune` | **proven, ports 0-3.** stick t895, A t255, R-analog t799; waits for input (no idle end); an injected run ends it (plunger: leave-one-out over {stick, A, R}). |
+| `mp4.minigame.bowser_bop` | **not proven (fault).** stick and A leave idle on ports 0 and 1 (t511), but every run on every port faults near the minigame's end (about t4,000): `OSPanic` "a process coroutine returned" (`src/libco.c`), a game process function that returns instead of ending through `HuPrcEnd`. Under the test start only; a party run of Bowser Bop has not been seen yet. Runtime follow-up (below). |
+| `mp4.minigame.mystic_match_em` | **proven, ports 0-3.** A t1055, stick t1055; ends idle at t23238. |
+| `mp4.minigame.archaeologuess` | **proven, ports 0-3.** stick t639, A t5855; ends idle at t7272 (A digs where the stick moved the player; leave-one-out over {stick, A}). |
+| `mp4.minigame.goombas_chip_flip` | **partly proven.** stick, A proven on ports 0-3 (stick t1247, A t1247); ends idle at t19612. **L-click not proven:** the module accepts L (the analog-L/L-click bit, `HuPadBtnDown & 0x140`) only in one state, as an alternative to A, which the bursts did not reach without A. (Its pad-0 L/R reads drive a debug camera.) |
+| `mp4.minigame.kareening_koopa` | **not proven (unreachable here).** The test start faults as the minigame loads (frame 12, a null model in `Hu3DModelObjMtxGet`): it needs board-side item state the test start does not set up. Reach it from a party (Item space) instead; follow-up below. |
+| `mp4.minigame.rumble_fishing` | **proven, ports 0-3.** stick t415, A t415; ends idle at t2690 (the stick reels once A has hooked a fish; leave-one-out over {stick, A}). |
+| `mp4.minigame.take_a_breather` | **not proven.** Neither the stick nor A changed game state against idle in its t1170 frames, alone or together; the module reads the stick and buttons in one state only, which the test start's run did not reach. Ends idle at t1170 with no fault on ports 0-3. |
+
+**Facts for the input columns (input-mapping's to change).** Checked against the module's code and the SDK:
+- PADClamp maps raw trigger 0..255 to 0 at or below 30, raw - 30 above it and 150 from 180 up (`test_pad_vi.cpp` pins it). Every "/255" threshold in this section is a value the game compares the **clamped 0..150** trigger against, not raw 0..255.
+- `HuPadRead` sets its own analog-L/R button bits when `trigger & 0xC0` is nonzero after PADClamp: **clamped 64 and up, raw 94 and up**. "192/255" is wrong: the clamped trigger never reaches 192 (its maximum is 150).
+- Makin' Waves: its `L > 80` read sets a flag nothing reads. L acts through the analog-L bit (clamped 64, raw 94), as an alternative to A in one player state. Goomba's Chip Flip's L is the same alternative to A, in one state.
+
+**Follow-ups (runtime-gc-wii).**
+- Bowser Bop: under the test start a game process returns instead of ending through `HuPrcEnd` near the minigame's end, and `src/libco.c` panics. Check it in a party (Item space) before fixing; if it happens there too, the process needs a defined end.
+- Kareening Koopa: reach it from a party and prove its stick there; the test start lacks the board-side item state it loads.
+- The partly proven rows need scripted inputs aimed at their states (a claw over a target, B with A up, Dungeon Duos' carry states, Chip Flip's L state, Take a Breather's input state).
+
 ---
 
 ## 19. The game module (P1-15, `runtimes/gc_wii/mp4/`)
