@@ -10,6 +10,7 @@ add_executable(mpt_unit_tests
   unit/test_determinism_harness.cpp
   unit/test_event_routing.cpp
   unit/test_dump_lane.cpp
+  unit/test_dump_lane_e2.cpp
   unit/test_dump_lane_paths.cpp
   unit/test_dump_lane_png.cpp
   unit/test_gc_disc.cpp
@@ -25,7 +26,8 @@ add_executable(mpt_unit_tests
 target_link_libraries(mpt_unit_tests PRIVATE mpt::core mpt::asset_import mpt::shell_core doctest::doctest)
 target_compile_definitions(mpt_unit_tests PRIVATE
   MPT_KNOWN_DUMPS_JSON="${MPT_KNOWN_DUMPS_JSON}"
-  MPT_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
+  MPT_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden"
+  MPT_DOCS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../docs")
 mpt_set_warnings(mpt_unit_tests)
 
 # MP4's host side (Mp4Runtime unbooted, Mp4Adapter, the ABI header) needs no game module or dump.
@@ -100,7 +102,7 @@ set_tests_properties(replay_check_rejects_non_replay PROPERTIES PASS_REGULAR_EXP
 # The dump lane (P1-20d, ADR 0006): manual and local only. Skipped (exit 77) unless
 # MPT_DUMP_DIR is set; see tests/dump_lane/README.md. Run it with: ctest -L dump
 # It plays every real title the shell registers (P1-16), building each from the dump with asset-import.
-add_executable(mpt_dump_lane dump_lane/main.cpp dump_lane/crash_report.h dump_lane/path_guard.h dump_lane/real_titles.h dump_lane/png.h dump_lane/watch.h
+add_executable(mpt_dump_lane dump_lane/main.cpp dump_lane/e2.h dump_lane/crash_report.h dump_lane/path_guard.h dump_lane/real_titles.h dump_lane/png.h dump_lane/watch.h
   dump_lane/supervise.h dump_lane/stack_chk_fail.cpp)
 target_link_libraries(mpt_dump_lane PRIVATE mpt::core mpt::asset_import mpt::shell_core)
 target_compile_definitions(mpt_dump_lane PRIVATE

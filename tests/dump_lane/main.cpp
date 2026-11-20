@@ -25,6 +25,7 @@
 // (path_guard.h). The build cache defaults to the shell's (its user cache folder), never MPT_DUMP_DIR.
 
 #include <algorithm>
+#include <cctype>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -42,6 +43,7 @@
 #include <vector>
 
 #include "dump_lane.h"
+#include "e2.h"
 #include "crash_report.h"
 #include "path_guard.h"
 #include "png.h"
@@ -146,6 +148,17 @@ struct BootOptions {
   std::filesystem::path party_resume;
   // Diagnosis (watch.h): --watch-word, --find-word and --watch-write read arena words in place.
   mpt::dump_lane::watch::Options watch;
+  // M4-07: --e2 (the E2 game-side proof, e2.h), --e2-rows N[,N...], --e2-ports P[,P...], --e2-cap N,
+  // --e2-quick.
+  struct E2 {
+    bool on = false;
+    std::vector<std::uint16_t> rows;  // minigame numbers; empty = every row
+    std::vector<int> ports{0, 1, 2, 3};
+    std::uint64_t cap = 36'000;      // frames from the minigame's first frame to its end
+    std::uint64_t start_cap = 6'000; // frames from boot to the minigame's first frame
+    bool quick = false;              // control runs stop at their first divergence (no end check)
+    bool verbose = false;            // --e2-verbose: the game's OSReport text too
+  } e2;
 };
 
 // "start@600", "a@900+10": a button, the first frame it is held, and for how many frames (default 6).
@@ -1191,6 +1204,207 @@ int verify_replay_file(const BootOptions& options, const mpt::VerifiedDump& dump
 }
 #endif
 
+#if defined(MPT_DUMP_LANE_MP4)
+// ---- E2 game-side proof (M4-07, ruling M4-E; e2.h) ---------------------------------------------------
+// `--e2`: for every docs/titles/mp4.md section 18 row (or the --e2-rows subset) and every port (or
+// --e2-ports), boot straight into the minigame with four human players (Mp4Runtime::setTestStart, the
+// port as the focus player), save the state on the minigame's first frame, and play it from there:
+//  - idle (every pad connected, nothing pressed), twice: the trails must be equal (determinism);
+//  - each listed control injected on the port, in bursts (e2::inject), and the Z null control.
+// A control is proven on the port when its trail leaves the idle trail at an idle-gap checkpoint while
+// both runs are in the minigame (e2::first_divergence). Every run must end the minigame (its overlay
+// ends, and the game runs on for 300 frames) with no halt or fault within --e2-cap frames. Bowser's Bigger Blast also
+// needs R=128 and R=255 to differ from each other. Prints one `e2` line per run and one `e2 row` verdict
+// per row and port. Exit 0 only if every row passes. Writes nothing.
+constexpr std::uint64_t kE2Settle = 300;
+
+struct E2Play {
+  std::vector<mpt::dump_lane::e2::Checkpoint> trail;
+  bool ended = false;       // the minigame's overlay gave way
+  std::uint64_t end_t = 0;  // frames since start when it did
+  std::string next;         // an overlay that held a frame after it, if any
+  std::string stopped;      // a halt or fault
+};
+
+bool e2_is_overlay(const std::string& name, std::uint16_t number) {
+  char want[16];
+  std::snprintf(want, sizeof want, "m%03udll", static_cast<unsigned>(number));
+  if (name.size() != std::strlen(want)) return false;
+  for (std::size_t i = 0; i < name.size(); ++i)
+    if (std::tolower(static_cast<unsigned char>(name[i])) != want[i]) return false;
+  return true;
+}
+
+E2Play e2_play(mpt::ITitleRuntime& rt, std::uint16_t number, std::uint64_t frame0, int port,
+               std::optional<mpt::dump_lane::e2::Control> control, std::uint64_t cap,
+               const std::vector<mpt::dump_lane::e2::Checkpoint>* stop_at_divergence_from, bool verbose) {
+  namespace e2 = mpt::dump_lane::e2;
+  E2Play out;
+  std::string last_overlay = "?";
+  for (std::uint64_t t = 0; t < cap; ++t) {
+    mpt::dump_lane::crash_note_frame(frame0 + t);
+    mpt::InputFrame in;
+    in.frame = frame0 + t;
+    for (auto& p : in.pads) p = e2::idle_pad();
+    if (control) in.pads[static_cast<std::size_t>(port)] = e2::inject(*control, t);
+    rt.stepFrame(in);
+    const mpt::RuntimeHealth h = rt.status();
+    if (h.status != mpt::RuntimeStatus::running) {
+      out.stopped = (h.status == mpt::RuntimeStatus::halted ? "halted: " : "faulted: ") + h.message;
+      return out;
+    }
+    const std::string overlay = overlay_of(rt);
+    const bool in_minigame = e2_is_overlay(overlay, number);
+    if (verbose && overlay != last_overlay) {
+      std::printf("e2 overlay t=%llu '%s'\n", static_cast<unsigned long long>(t), overlay.c_str());
+      last_overlay = overlay;
+    }
+    if (e2::is_checkpoint(t)) {
+      out.trail.push_back({t, rt.stateHash(), in_minigame});
+      if (stop_at_divergence_from != nullptr && e2::first_divergence(*stop_at_divergence_from, out.trail)) return out;
+    }
+    if (!in_minigame && !out.ended) {
+      out.ended = true;
+      out.end_t = t;
+    }
+    // After the minigame returns, instDll's history sends the game to resultDll. With the test start
+    // there is no party to show, so resultDll returns inside the frame it starts in and the overlay
+    // reads as none between frames. The run goes on for kE2Settle frames after the end with no halt
+    // or fault, and records any overlay that holds a frame.
+    if (out.ended) {
+      if (!overlay.empty() && out.next.empty()) out.next = overlay;
+      if (t >= out.end_t + kE2Settle) return out;
+    }
+  }
+  return out;
+}
+
+int e2_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::TitleRegistry& registry) {
+  namespace e2 = mpt::dump_lane::e2;
+  const BootOptions::E2& o = options.e2;
+  int rows_failed = 0, rows_passed = 0;
+  for (const e2::Row& row : e2::rows()) {
+    if (!o.rows.empty() && std::find(o.rows.begin(), o.rows.end(), row.number) == o.rows.end()) continue;
+    const std::string id(row.id);
+    for (int port : o.ports) {
+      std::string why;  // why the row fails on this port; empty = pass
+      std::size_t proven = 0;
+      std::unique_ptr<mpt::ITitleRuntime> rt = registry.createRuntime(mpt::TitleId::mp4);
+      auto* mp4 = dynamic_cast<mpt::mp4::Mp4Runtime*>(rt.get());
+      if (mp4 == nullptr) {
+        std::puts("dump lane: e2: not an Mp4Runtime");
+        return 1;
+      }
+      mp4->setTestStart(row.number, static_cast<std::uint32_t>(e2::focus_for_port(port)));
+      if (o.verbose) mp4->setReportSink(&print_report, nullptr);
+      mpt::RuntimeConfig config;
+      config.seed = options.seed;
+      if (mpt::Result r = rt->boot(dump, config); !r) {
+        std::printf("dump lane: e2: boot failed: %s\n", r.error().c_str());
+        return 1;
+      }
+      // Boot to the minigame's first frame.
+      std::uint64_t f = 0;
+      std::string seen;
+      for (; f < o.start_cap; ++f) {
+        const std::string ov = overlay_of(*rt);
+        if (!ov.empty()) seen = ov;
+        if (e2_is_overlay(ov, row.number)) break;
+        mpt::InputFrame in;
+        in.frame = f;
+        for (auto& p : in.pads) p = e2::idle_pad();
+        rt->stepFrame(in);
+        if (rt->status().status != mpt::RuntimeStatus::running) {
+          why = "stopped before the minigame: " + rt->status().message;
+          break;
+        }
+      }
+      if (why.empty() && f == o.start_cap)
+        why = "minigame not reached by frame " + std::to_string(f) + " (overlay " + seen + ")";
+      if (!why.empty()) {
+        std::printf("e2 row %s m%u port %d FAIL: %s\n", id.c_str(), row.number, port, why.c_str());
+        std::fflush(stdout);
+        ++rows_failed;
+        continue;
+      }
+      const std::uint64_t frame0 = f;
+      const mpt::SaveState start = rt->saveState();
+      bool load_failed = false;
+      auto from_start = [&]() {
+        if (mpt::Result r = rt->loadState(start); !r) {
+          std::printf("dump lane: e2: loadState failed: %s\n", r.error().c_str());
+          load_failed = true;
+        }
+      };
+      auto describe = [](const E2Play& p) {
+        if (!p.stopped.empty()) return p.stopped;
+        if (!p.ended) return std::string("no end within the cap");
+        return "ended t=" + std::to_string(p.end_t) + ", settled " + std::to_string(kE2Settle) + " frames" +
+               (p.next.empty() ? std::string() : " (then " + p.next + ")");
+      };
+      const E2Play idle = e2_play(*rt, row.number, frame0, port, std::nullopt, o.cap, nullptr, o.verbose);
+      from_start();
+      if (load_failed) return 1;
+      const E2Play idle2 = e2_play(*rt, row.number, frame0, port, std::nullopt, o.cap, nullptr, o.verbose);
+      const bool deterministic =
+          idle.trail.size() == idle2.trail.size() &&
+          std::equal(idle.trail.begin(), idle.trail.end(), idle2.trail.begin(),
+                     [](const e2::Checkpoint& a, const e2::Checkpoint& b) {
+                       return a.t == b.t && a.hash == b.hash && a.in_minigame == b.in_minigame;
+                     });
+      std::size_t in_window = 0;
+      for (const e2::Checkpoint& c : idle.trail) in_window += c.in_minigame ? 1 : 0;
+      std::printf("e2 %s m%u port %d idle start=%llu %s checkpoints=%zu replay=%s\n", id.c_str(), row.number, port,
+                  static_cast<unsigned long long>(frame0), describe(idle).c_str(), in_window,
+                  deterministic ? "equal" : "DIFFERS");
+      if (!idle.stopped.empty()) why = "idle run " + idle.stopped;
+      else if (!idle.ended) why = "idle run did not end within the cap";
+      else if (!deterministic) why = "idle replay differs";
+      std::vector<e2::Control> controls = row.controls;
+      controls.push_back(e2::Control::z);
+      std::optional<std::vector<e2::Checkpoint>> r_half_trail;
+      for (e2::Control c : controls) {
+        from_start();
+        if (load_failed) return 1;
+        const bool quick = o.quick && c != e2::Control::r_half;
+        const E2Play run = e2_play(*rt, row.number, frame0, port, c, o.cap, quick ? &idle.trail : nullptr, o.verbose);
+        const std::optional<std::uint64_t> div = e2::first_divergence(idle.trail, run.trail);
+        const std::string at = div ? "t" + std::to_string(*div) : std::string("none");
+        std::printf("e2 %s m%u port %d %s diverge=%s %s\n", id.c_str(), row.number, port,
+                    std::string(e2::name(c)).c_str(), at.c_str(),
+                    quick && div ? "(stopped at the divergence)" : describe(run).c_str());
+        if (c == e2::Control::r_half) r_half_trail = run.trail;
+        if (!run.stopped.empty() && why.empty()) why = std::string(e2::name(c)) + " run " + run.stopped;
+        if (c == e2::Control::z) {
+          if (div && why.empty()) why = "the Z null control diverged (pad residue, or the minigame reads Z)";
+          continue;
+        }
+        if (div) ++proven;
+        else if (why.empty()) why = std::string(e2::name(c)) + " never left the idle trail";
+        if (!(quick && div) && !run.ended && run.stopped.empty() && why.empty())
+          why = std::string(e2::name(c)) + " run did not end within the cap";
+      }
+      if (row.r_half_vs_full) {
+        from_start();
+        if (load_failed) return 1;
+        const E2Play full = e2_play(*rt, row.number, frame0, port, e2::Control::r_full, o.cap, nullptr, o.verbose);
+        const std::optional<std::uint64_t> div = r_half_trail ? e2::first_divergence(*r_half_trail, full.trail) : std::nullopt;
+        const std::string at = div ? "t" + std::to_string(*div) : std::string("none");
+        std::printf("e2 %s m%u port %d R-255-vs-R-128 diverge=%s %s\n", id.c_str(), row.number, port, at.c_str(),
+                    describe(full).c_str());
+        if (!div && why.empty()) why = "R=128 and R=255 never differ";
+      }
+      std::printf("e2 row %s m%u port %d %s: %zu/%zu controls proven%s%s\n", id.c_str(), row.number, port,
+                  why.empty() ? "PASS" : "FAIL", proven, row.controls.size(), why.empty() ? "" : "; ", why.c_str());
+      std::fflush(stdout);
+      (why.empty() ? rows_passed : rows_failed)++;
+    }
+  }
+  std::printf("dump lane: e2: %d row-port(s) pass, %d fail\n", rows_passed, rows_failed);
+  return rows_failed == 0 && rows_passed > 0 ? 0 : 1;
+}
+#endif
+
 // The M1 check: boot headless on the dump, no input, and step.
 int boot(const BootOptions& options, const std::filesystem::path& dump_dir, const std::filesystem::path& cache) {
   const std::optional<mpt::TitleId> title = mpt::parse_title_id(options.title);
@@ -1209,6 +1423,7 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir, cons
                                  : options.save_load_diff != 0    ? "save-load-diff"
                                  : options.e5_round_trip != 0     ? "e5-round-trip"
                                  : options.reboot_trail           ? "reboot-trail"
+                                 : options.e2.on                  ? "e2"
                                  : options.conformance            ? "conformance"
                                                                   : "boot",
                                  options.seed);  // crash report breadcrumbs
@@ -1227,6 +1442,18 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir, cons
     return options.party ? party_run(options, verified, registry) : verify_replay_file(options, verified, registry);
 #else
     std::puts("dump lane: --party and --verify-replay need the MP4 runtime");
+    return 1;
+#endif
+  }
+  if (options.e2.on) {
+#if defined(MPT_DUMP_LANE_MP4)
+    if (*title != mpt::TitleId::mp4) {
+      std::puts("dump lane: --e2 runs on mp4 only");
+      return 1;
+    }
+    return e2_run(options, std::get<mpt::VerifiedDump>(dump), registry);
+#else
+    std::puts("dump lane: --e2 needs the MP4 runtime");
     return 1;
 #endif
   }
@@ -1497,6 +1724,24 @@ static int lane_main(int argc, char** argv) {
         }
         boot_options.presses.push_back(*p);
         from = comma + 1;
+      }
+    } else if (arg == "--e2") {
+      boot_options.e2.on = true;
+    } else if (arg == "--e2-verbose") {
+      boot_options.e2.verbose = true;
+    } else if (arg == "--e2-quick") {
+      boot_options.e2.quick = true;
+    } else if (arg == "--e2-cap" && has_value) {
+      boot_options.e2.cap = std::strtoull(argv[++i], nullptr, 10);
+    } else if ((arg == "--e2-rows" || arg == "--e2-ports") && has_value) {
+      const std::string list = argv[++i];
+      if (arg == "--e2-ports") boot_options.e2.ports.clear();
+      for (std::size_t at = 0; at <= list.size();) {
+        const std::size_t comma = std::min(list.find(',', at), list.size());
+        const unsigned long v = std::strtoul(list.substr(at, comma - at).c_str(), nullptr, 10);
+        if (arg == "--e2-rows") boot_options.e2.rows.push_back(static_cast<std::uint16_t>(v));
+        else if (v < 4) boot_options.e2.ports.push_back(static_cast<int>(v));
+        at = comma + 1;
       }
     } else if (arg == "--party") {
       boot_options.party = true;

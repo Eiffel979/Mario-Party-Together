@@ -201,6 +201,41 @@ module kept loaded for the process"). Every normal exit of the lane releases it 
   stub (`tests/mp4_loader/guard_stub.cpp`) on a fiber, keeps or reloads the stub, and resumes it. CTest
   runs both (`dump_lane_guard_reload_keep`, `dump_lane_guard_reload_fails_fast`) on Windows x64.
 
+## E2: the game-side input proof (MP4, M4-07)
+
+```
+mpt_dump_lane --boot mp4 --e2 [--seed S] [--e2-rows N[,N...]] [--e2-ports P[,P...]] [--e2-cap N]
+              [--e2-quick] [--e2-verbose]
+```
+
+Ruling M4-E's game-side proof for every row of `docs/titles/mp4.md` section 18 (`e2.h` holds the rows,
+the injection and the verdict; `tests/unit/test_dump_lane_e2.cpp` checks them against section 18 without
+a dump).
+
+- **Start.** For each row and port the lane boots a fresh runtime with `Mp4Runtime::setTestStart`: the
+  module does bootDll's one-time setup, seats four human players on pads 0 to 3 (the port as the focus
+  player, who takes the single seat of a 1-vs-3, Bowser, Fortune or Item minigame and leads team 0 in a
+  2-vs-2) and starts the minigame through instDll. The test start is a determinism input in the state
+  hash; no replay records it. The state is saved on the minigame's first frame and every run below starts
+  from it.
+- **Runs.** Idle (every pad connected, nothing pressed) twice, whose trails must be equal; then each listed
+  control on the port, and Z as a null control. Controls come in bursts: active 24 frames of every 32
+  (buttons pulse 4 on, 4 off; the stick holds right, up, left or down), idle for the other 8.
+- **Checkpoints** are the last frame of each idle gap. The state hash covers the game's own pad arrays,
+  which copy the pad every frame, so a hash taken while a control is held would differ from idle even in
+  a minigame that ignores it. At the end of the gap the pad and those arrays are idle again, so a
+  difference is game state the input changed. Z must not diverge; that checks the gap is long enough.
+- **Verdict.** A control is proven on the port when its trail leaves the idle trail at a checkpoint where
+  both runs are still in the minigame. Every run must end the minigame with no halt or fault within
+  `--e2-cap` frames (default 36,000) and run 300 frames more. Bowser's Bigger Blast also needs R=128 and
+  R=255 to differ from each other. After the minigame, instDll's history goes to resultDll, which has no
+  party to show here and returns inside the frame it starts in.
+- `--e2-quick` stops each control run at its first divergence (no end check), for a fast look.
+  `--e2-verbose` also prints the game's OSReport text and each overlay change.
+- Output: one `e2 <id> m<NNN> port P <control> diverge=t<N>|none ...` line per run, one `e2 row ... PASS|FAIL`
+  line per row and port, and `dump lane: e2: N row-port(s) pass, M fail`. Exit 0 only if every row-port
+  passes. The lane writes nothing.
+
 ## Diagnosis: arena watches (`watch.h`, MP4)
 
 ```
