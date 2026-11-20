@@ -89,6 +89,7 @@ typedef enum MptMp4VideoBackend {
 #define MPT_MP4_BOOT_UNLOCK_BOWSERS_GNARLY_PARTY 0x4u
 #define MPT_MP4_BOOT_GAMEPLAY_MASK 0xFFu
 #define MPT_MP4_PHASE1_GAMEPLAY_FLAGS 0x0u
+#define MPT_MP4_TEST_START(minigame, focus) (((uint32_t)(minigame) & 0x3FFu) | (((uint32_t)(focus) & 3u) << 12))
 /* Debug flags: never part of the state hash. Trap CPU reads of GXCopyTex destinations (ADR 0007
  * section 5); a read faults the step. */
 #define MPT_MP4_BOOT_DEBUG_COPY_TRAP 0x100u
@@ -114,7 +115,11 @@ typedef struct MptMp4BootConfig {
   const uint8_t* save_media;  /* card image (SaveMedia::data) or NULL for a blank card; copied */
   size_t save_media_size;
   uint32_t save_media_format; /* SaveMedia::format_version; must match card_format() when given */
-  uint32_t reserved0;
+  /* Test only (M4-07; was reserved0): 0 for a normal boot, or a direct start of one minigame,
+   * MPT_MP4_TEST_START(number, focus): bits 0..9 its number (401 for m401Dll), bits 12..13 the focus
+   * player (mpt_mp4_port.h). A determinism input: the module folds it into the hashed and saved gameplay
+   * word, so a normal boot's hash and saved states are unchanged. */
+  uint32_t test_start;
   uintptr_t arena_base;     /* fixed SDK arena address for fresh-process save states, 0 = anywhere */
   const char* cache_dir;    /* UTF-8 pipeline cache directory for the GPU backend, or NULL */
 } MptMp4BootConfig;

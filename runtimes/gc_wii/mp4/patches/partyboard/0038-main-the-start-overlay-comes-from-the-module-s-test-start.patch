@@ -1,0 +1,26 @@
+Apply order 0038 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+main: the start overlay comes from the module's test start, on MPT_PC
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+M4-07 (E2 game-side proof). mpt_mp4_test_start (src/test_start.c) returns bootDll unless the host asked
+for a test-only direct start of one minigame (MptMp4BootConfig.test_start). Then it seats four human
+players on pads 0 to 3, sets the minigame as GWSystem.mg_next and starts instDll, which plays it as on a
+board. A normal boot is unchanged: same overlay, no game data written. State hashes do not move
+(docs/titles/mp4.md, M1).
+
+diff --git a/src/game/main.c b/src/game/main.c
+index 20dffc9..9c54009 100644
+--- a/src/game/main.c
++++ b/src/game/main.c
+@@ -118,7 +118,11 @@ void main(void)
+         GWPlayerCfg[i].character = -1;
+     }
+     
++#ifdef MPT_PC
++    omMasterInit(0, _ovltbl, DLL_MAX, mpt_mp4_test_start(DLL_bootdll));
++#else
+     omMasterInit(0, _ovltbl, DLL_MAX, DLL_bootdll);
++#endif
+     VIWaitForRetrace();
+ 
+     if (VIGetNextField() == 0) {

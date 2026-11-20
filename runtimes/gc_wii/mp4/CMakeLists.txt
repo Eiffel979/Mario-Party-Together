@@ -176,6 +176,13 @@ add_library(mpt_mp4_byteswap OBJECT "${MPT_MP4_PB}/src/port/byteswap.cpp")
 target_link_libraries(mpt_mp4_byteswap PRIVATE mpt_mp4_game_flags)
 target_compile_options(mpt_mp4_byteswap PRIVATE ${MPT_MP4_NOWARN})
 
+# Test only (M4-07): the direct minigame start (src/test_start.c, Party Board patch 0038). Game headers,
+# but no game_section.h: its configuration is host state set before boot, and a new object in the game
+# data range would add an anchor symbol to the state hash.
+add_library(mpt_mp4_test_start OBJECT src/test_start.c)
+target_link_libraries(mpt_mp4_test_start PRIVATE mpt_mp4_game_flags)
+target_compile_options(mpt_mp4_test_start PRIVATE ${MPT_MP4_WARN_FLAGS})
+
 # ---- RELs: compiled separately, then isolated (tools/MptMp4Rel.cmake) ----------------------------
 include("${CMAKE_CURRENT_SOURCE_DIR}/tools/MptMp4Rel.cmake")
 mpt_mp4_rel_setup()
@@ -212,6 +219,7 @@ mpt_mp4_write_rel_table(MPT_MP4_REL "${CMAKE_CURRENT_BINARY_DIR}/generated/mpt_m
 add_library(mp4_game SHARED
   $<TARGET_OBJECTS:mpt_mp4_dol>
   $<TARGET_OBJECTS:mpt_mp4_byteswap>
+  $<TARGET_OBJECTS:mpt_mp4_test_start>
   ${MPT_MP4_REL_INFOS}
   "${CMAKE_CURRENT_BINARY_DIR}/generated/mpt_mp4_rel_table.c"
   src/rel_loader.c
@@ -268,7 +276,7 @@ message(STATUS "runtimes/gc_wii/mp4: build ID ${MPT_MP4_BUILD_ID}")
 
 # Every object library, for compile-only builds.
 add_custom_target(mpt_mp4_objects)
-add_dependencies(mpt_mp4_objects mpt_mp4_dol mpt_mp4_byteswap)
+add_dependencies(mpt_mp4_objects mpt_mp4_dol mpt_mp4_byteswap mpt_mp4_test_start)
 foreach(_rel IN LISTS MPT_MP4_RELS)
   add_dependencies(mpt_mp4_objects mpt_mp4_rel_${_rel})
 endforeach()
@@ -304,7 +312,7 @@ if(MPT_BUILD_TESTS)
   # Hundreds of objects: the list goes through a file, not the command line.
   string(REPLACE ";" "\n" _rel_lines "${MPT_MP4_REL_LIBS}")
   file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/mp4_game_code.txt"
-       CONTENT "$<JOIN:$<TARGET_OBJECTS:mpt_mp4_dol>,\n>\n$<JOIN:$<TARGET_OBJECTS:mpt_mp4_byteswap>,\n>\n${_rel_lines}\n")
+       CONTENT "$<JOIN:$<TARGET_OBJECTS:mpt_mp4_dol>,\n>\n$<JOIN:$<TARGET_OBJECTS:mpt_mp4_byteswap>,\n>\n$<JOIN:$<TARGET_OBJECTS:mpt_mp4_test_start>,\n>\n${_rel_lines}\n")
   add_test(NAME mp4_no_host_math
     COMMAND "${CMAKE_COMMAND}" "-DNM=${MPT_MP4_NM}" "-DFILES_FROM=${CMAKE_CURRENT_BINARY_DIR}/mp4_game_code.txt"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/../sdk/tests/check_no_host_math.cmake")
