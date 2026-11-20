@@ -1365,8 +1365,11 @@ E2Role e2_role(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::T
   std::printf("e2 %s m%u port %d focus %d idle start=%llu %s checkpoints=%zu replay=%s\n", id.c_str(), row.number,
               port, focus, static_cast<unsigned long long>(frame0), describe(idle).c_str(), in_window,
               deterministic ? "equal" : "DIFFERS");
+  // A minigame that waits for input (Reversal of Fortune's plunger) never ends idle. That is not a
+  // failure by itself: such a row needs an injected run that ends it, and no run may halt or fault.
+  const bool idle_waits = idle.stopped.empty() && !idle.ended;
+  bool any_ended = idle.ended;
   if (!idle.stopped.empty()) why = "idle run " + idle.stopped;
-  else if (!idle.ended) why = "idle run did not end within the cap";
   else if (!deterministic) why = "idle replay differs";
   // The Z null control goes first: a listed control counts only where it diverges before Z does. Some
   // minigames copy the pad into their own objects and stop refreshing the copy in some states, so a
@@ -1438,9 +1441,13 @@ E2Role e2_role(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::T
       continue;
     }
     if (div && (!z_div || *div < *z_div)) out.proven.push_back(c);
-    if (!(quick && div) && !run.ended && run.stopped.empty() && why.empty())
+    any_ended = any_ended || run.ended;
+    if (!idle_waits && !(quick && div) && !run.ended && run.stopped.empty() && why.empty())
       why = std::string(e2::name(c)) + " run did not end within the cap";
   }
+  if (idle_waits && !any_ended && !o.quick && why.empty()) why = "no run ended the minigame within the cap";
+  if (idle_waits) std::printf("e2 %s m%u port %d focus %d note: the minigame waits for input; %s\n", id.c_str(),
+                              row.number, port, focus, any_ended ? "an injected run ended it" : "no run ended it");
   if (half_vs_full) {
     if (!from_start()) return out;
     const E2Play full = e2_play(*rt, row.number, frame0, port, {e2::Control::r_full}, o.cap, nullptr, o.verbose);

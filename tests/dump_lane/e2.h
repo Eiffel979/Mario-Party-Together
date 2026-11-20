@@ -145,7 +145,9 @@ inline const std::vector<Row>& rows() {
 constexpr std::uint64_t kCycle = 32;
 constexpr std::uint64_t kActive = 24;
 // Inside the active part buttons pulse (held kPulseOn of every kPulsePeriod frames), so the game sees
-// presses and holds; the stick holds one direction per cycle, turning right, up, left, down.
+// presses and holds; the stick holds one direction per cycle, turning right, up, left, down; analog
+// triggers hold their pull through the active part (a throttle or a pressure is held, and the idle gap
+// still gives the game's analog-L/R bit a new press every cycle).
 constexpr std::uint64_t kPulsePeriod = 8;
 constexpr std::uint64_t kPulseOn = 4;
 
@@ -160,7 +162,7 @@ inline PadState idle_pad() {
 }
 
 // The pad for control `c`, `t` frames after the minigame started (the first frame its overlay runs).
-// Control::r_half and r_full hold their pressure through the active part, as a partial pull would.
+// Analog triggers (l_analog, r_analog, r_half, r_full) hold their pull through the active part.
 inline PadState inject(Control c, std::uint64_t t) {
   PadState p = idle_pad();
   if (t % kCycle >= kActive) return p;
@@ -180,8 +182,8 @@ inline PadState inject(Control c, std::uint64_t t) {
     case Control::z: p.buttons = on ? kButtonZ : 0; break;
     case Control::l_click: p.buttons = on ? kButtonL : 0; break;
     case Control::r_click: p.buttons = on ? kButtonR : 0; break;
-    case Control::l_analog: p.trigger_l = on ? kAnalog : 0; break;
-    case Control::r_analog: p.trigger_r = on ? kAnalog : 0; break;
+    case Control::l_analog: p.trigger_l = kAnalog; break;  // analog pulls hold through the burst
+    case Control::r_analog: p.trigger_r = kAnalog; break;
     case Control::r_half: p.trigger_r = kHalf; break;
     case Control::r_full: p.trigger_r = kFull; break;
   }
