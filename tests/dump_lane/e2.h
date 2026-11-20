@@ -99,7 +99,7 @@ inline const std::vector<Row>& rows() {
        {C::stick, C::a}, "A acts only once the stick has moved the claw over a target"},
       {"mp4.minigame.stamp_out", 415, 0, {C::stick, C::a}},
       {"mp4.minigame.candlelight_flight", 416, 1, {C::stick, C::a}},
-      {"mp4.minigame.makin_waves", 417, 1, {C::stick, C::a, C::l_analog}},
+      {"mp4.minigame.makin_waves", 417, 1, {C::stick, C::a, C::l_click}},  // the L click (0x40 in 0x140), not the trigger
       {"mp4.minigame.hide_and_go_boom", 418, 1, {C::a, C::b, C::x, C::y}},
       {"mp4.minigame.tree_stomp", 419, 1, {C::stick, C::a, C::b}},
       {"mp4.minigame.fish_n_drips", 420, 1, {C::a, C::b, C::x, C::y, C::l_click, C::r_click}},

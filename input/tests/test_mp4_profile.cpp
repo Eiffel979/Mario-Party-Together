@@ -94,8 +94,15 @@ std::map<std::string, std::string> catalog_minigames() {
   return out;
 }
 
-bool party_eligible(const std::string& category) {
+// §18's table: every minigame outside Extra Room and Story (the E2 proof rows).
+bool in_coverage_table(const std::string& category) {
   return category.find("Extra Room") == std::string::npos && category.find("Story") == std::string::npos;
+}
+
+// A regular party can launch it. No board code launches the Item minigames;
+// they come only from Mini-game mode and Story (docs/titles/mp4.md §18.1).
+bool party_eligible(const std::string& category) {
+  return in_coverage_table(category) && category.find("Item") == std::string::npos;
 }
 
 PortLayout keyboard_on_port0() {
@@ -209,30 +216,55 @@ TEST_CASE("every MP4 override is a catalog minigame with a note and a coverage r
   }
 }
 
-TEST_CASE("the coverage table has exactly the party-eligible catalog minigames") {
+TEST_CASE("the coverage table has the E2 rows, Item rows marked not party-eligible, and their sign-off") {
   const auto catalog = catalog_minigames();
   CHECK(catalog.size() == 61);
   const auto coverage = table_rows("## 18. Input coverage");
   std::set<std::string> expected;
+  std::set<std::string> eligible;
   for (const auto& [id, category] : catalog) {
-    if (party_eligible(category)) expected.insert(id);
+    if (!in_coverage_table(category)) continue;
+    expected.insert(id);
+    if (party_eligible(category)) eligible.insert(id);
   }
   CHECK(expected.size() == 49);
+  CHECK(eligible.size() == 44);  // the five Item minigames are not launched by any board (§18.1)
+  // §18.1 (PR #91, merge c8e6ace; corrected at d7c1fb0): the rows not fully
+  // proven on the game side.
+  const std::set<std::string> not_proven = {
+      "mp4.minigame.mario_medley",      "mp4.minigame.long_claw_of_the_law", "mp4.minigame.pair_a_sailing",
+      "mp4.minigame.dungeon_duos",      "mp4.minigame.balloon_of_doom",      "mp4.minigame.goombas_chip_flip",
+      "mp4.minigame.take_a_breather",   "mp4.minigame.kareening_koopa",      "mp4.minigame.makin_waves"};
   std::set<std::string> listed;
+  int proven = 0;
   for (const auto& [id, c] : coverage) {
     CAPTURE(id);
     listed.insert(id);
-    CHECK(catalog.count(id) == 1);
+    REQUIRE(catalog.count(id) == 1);
     REQUIRE(c.size() == 8);
     CHECK(!c[3].empty());  // inputs read
     CHECK(!c[5].empty());  // keyboard
     CHECK(!c[6].empty());  // gamepad
-    CHECK(c[7] == "to sign off on the dump lane");
+    // Category: Item rows say they are not party-eligible, no other row does.
+    const bool marked = c[2].find("not party-eligible") != std::string::npos;
+    CHECK(marked == (eligible.count(id) == 0));
+    // Sign-off cites the game-side proof and its merge, and says proven or not.
+    CHECK(c[7].find("\xC2\xA7" "18.1") != std::string::npos);
+    CHECK(c[7].find("PR #91, merge `c8e6ace`") != std::string::npos);
+    CHECK(c[7].find("`d7c1fb0`") != std::string::npos);  // §18.1's Makin' Waves correction
+    if (not_proven.count(id) == 1) {
+      CHECK(c[7].rfind("not proven: ", 0) == 0);
+    } else {
+      CHECK(c[7].rfind("proven: device @ `9dac583`", 0) == 0);
+      ++proven;
+    }
     // A row says "override" exactly when the profile has one.
     const bool overridden = c[5].rfind("override", 0) == 0 || c[6].rfind("override", 0) == 0;
     CHECK(overridden == (mp4_profile().minigames.count(id) == 1));
   }
   CHECK(listed == expected);
+  CHECK(proven == 40);
+  CHECK(not_proven.size() == 9);
 }
 
 TEST_CASE("Bowser's Bigger Blast: lshift+E holds R part-way, E commits") {
