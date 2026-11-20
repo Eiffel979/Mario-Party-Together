@@ -32,7 +32,7 @@ enum class Control : std::uint8_t {
   r_analog,
   r_half,    // R held at half pressure (Bowser's Bigger Blast's partial pull)
   r_full,    // R held at full travel (its R=255 side)
-  z,         // the null control: no listed row reads Z, so it must not diverge
+  z,         // the null control: no listed row reads Z; its divergence is the residue cutoff
 };
 
 constexpr std::string_view name(Control c) {
@@ -66,6 +66,12 @@ struct Row {
   std::uint8_t type;    // the game's category (mgInfoTbl type), as in section 12
   std::vector<Control> controls;
   bool r_half_vs_full = false;  // M4-E's special check: R=128 and R=255 differ from each other
+  // Controls the game only acts on together or in a situation other controls set up (a prompted
+  // combination, a claw that must first be over a target). Each listed control in this set is proven
+  // leave-one-out: the run injects the whole set, its baseline the set without that control, so a
+  // divergence is that control's own effect. Listed controls outside the set are compared with idle.
+  std::vector<Control> context = {};
+  std::string_view context_why = {};
 };
 
 inline const std::vector<Row>& rows() {
@@ -75,7 +81,8 @@ inline const std::vector<Row>& rows() {
       {"mp4.minigame.slime_time", 402, 0, {C::a}},
       {"mp4.minigame.booksquirm", 403, 0, {C::stick}},
       {"mp4.minigame.trace_race", 404, 4, {C::stick}},
-      {"mp4.minigame.mario_medley", 405, 0, {C::a, C::b, C::l_click, C::r_click}},
+      {"mp4.minigame.mario_medley", 405, 0, {C::a, C::b, C::l_click, C::r_click}, false,
+       {C::a, C::b, C::l_click, C::r_click}, "a press counts only when it matches the prompted button or pair"},
       {"mp4.minigame.avalanche", 406, 0, {C::stick, C::a}},
       {"mp4.minigame.domination", 407, 0, {C::a}},
       {"mp4.minigame.paratrooper_plunge", 408, 0, {C::stick}},
@@ -84,7 +91,8 @@ inline const std::vector<Row>& rows() {
       {"mp4.minigame.photo_finish", 411, 0, {C::stick, C::a, C::l_analog, C::r_analog}},
       {"mp4.minigame.mr_blizzards_brigade", 412, 0, {C::stick}},
       {"mp4.minigame.bob_omb_breakers", 413, 0, {C::stick, C::a, C::b, C::x, C::y}},
-      {"mp4.minigame.long_claw_of_the_law", 414, 0, {C::stick, C::a, C::l_analog, C::r_analog}},
+      {"mp4.minigame.long_claw_of_the_law", 414, 0, {C::stick, C::a, C::l_analog, C::r_analog}, false,
+       {C::stick, C::a}, "A acts only once the stick has moved the claw over a target"},
       {"mp4.minigame.stamp_out", 415, 0, {C::stick, C::a}},
       {"mp4.minigame.candlelight_flight", 416, 1, {C::stick, C::a}},
       {"mp4.minigame.makin_waves", 417, 1, {C::stick, C::a, C::l_analog}},
@@ -111,7 +119,8 @@ inline const std::vector<Row>& rows() {
       {"mp4.minigame.paths_of_peril", 439, 4, {C::stick}},
       {"mp4.minigame.bowsers_bigger_blast", 440, 4, {C::r_half, C::r_click}, true},
       {"mp4.minigame.butterfly_blitz", 441, 4, {C::stick, C::a, C::b}},
-      {"mp4.minigame.mario_speedwagons", 443, 0, {C::a, C::r_analog}},
+      {"mp4.minigame.mario_speedwagons", 443, 0, {C::a, C::r_analog}, false,
+       {C::a, C::r_analog}, "A shifts gear only once R's throttle has the car past a speed"},
       {"mp4.minigame.reversal_of_fortune", 444, 5, {C::stick, C::a, C::r_analog}},
       {"mp4.minigame.bowser_bop", 445, 6, {C::stick, C::a}},
       {"mp4.minigame.mystic_match_em", 446, 6, {C::a, C::stick}},
@@ -130,7 +139,9 @@ inline const std::vector<Row>& rows() {
 // is active for kActive frames of each kCycle and idle for the rest, and checkpoints fall on the last
 // frame of each idle gap, when the pad, the game's pad arrays and their repeat counters are back at
 // idle. A hash difference there is game state the input changed. The Z null control (a button no
-// listed row reads) checks that the gap is long enough: it must not diverge.
+// listed row reads) marks where that stops holding: some minigames copy the pad into their own objects
+// and stop refreshing the copy in some states, so a press stays in game memory with no reaction behind
+// it. A listed control counts only where it diverges before Z does (main.cpp, e2_role).
 constexpr std::uint64_t kCycle = 32;
 constexpr std::uint64_t kActive = 24;
 // Inside the active part buttons pulse (held kPulseOn of every kPulsePeriod frames), so the game sees
@@ -174,6 +185,40 @@ inline PadState inject(Control c, std::uint64_t t) {
     case Control::r_half: p.trigger_r = kHalf; break;
     case Control::r_full: p.trigger_r = kFull; break;
   }
+  return p;
+}
+
+// Several controls at once: buttons OR together, the stick and each trigger come from the control
+// that drives them (the bursts and pulses are aligned, so combinations are pressed on the same frames).
+inline PadState inject_set(const std::vector<Control>& set, std::uint64_t t) {
+  PadState p = idle_pad();
+  for (Control c : set) {
+    const PadState q = inject(c, t);
+    p.buttons |= q.buttons;
+    if (q.stick_x != 0 || q.stick_y != 0) {
+      p.stick_x = q.stick_x;
+      p.stick_y = q.stick_y;
+    }
+    if (q.trigger_l > p.trigger_l) p.trigger_l = q.trigger_l;
+    if (q.trigger_r > p.trigger_r) p.trigger_r = q.trigger_r;
+  }
+  return p;
+}
+
+// What a listed control's run injects and what its trail is compared with: the control alone against
+// idle, or (in a row's context set) the whole set against the set without it.
+struct Plan {
+  std::vector<Control> run;
+  std::vector<Control> baseline;  // empty: the idle run
+};
+
+inline Plan plan_for(const Row& row, Control c) {
+  bool in_context = false;
+  for (Control k : row.context) in_context = in_context || k == c;
+  if (!in_context) return {{c}, {}};
+  Plan p{row.context, {}};
+  for (Control k : row.context)
+    if (k != c) p.baseline.push_back(k);
   return p;
 }
 

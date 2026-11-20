@@ -191,3 +191,31 @@ TEST_CASE("E2 verdict: a divergence counts only while both runs are in the minig
   CHECK(e2::first_divergence(idle, {{31, 7, true}}) == 31u);
   CHECK(e2::focus_for_port(2) == 2);
 }
+
+TEST_CASE("E2 context rows prove each control leave-one-out") {
+  for (const e2::Row& row : e2::rows()) {
+    const std::string id(row.id);
+    CAPTURE(id);
+    CHECK(row.context.empty() == row.context_why.empty());
+    for (e2::Control k : row.context)
+      CHECK(std::find(row.controls.begin(), row.controls.end(), k) != row.controls.end());
+    for (e2::Control c : row.controls) {
+      const e2::Plan p = e2::plan_for(row, c);
+      const bool in_context = std::find(row.context.begin(), row.context.end(), c) != row.context.end();
+      if (!in_context) {
+        CHECK(p.run == std::vector<e2::Control>{c});
+        CHECK(p.baseline.empty());
+        continue;
+      }
+      // The run and its baseline differ in exactly this control.
+      CHECK(p.run == row.context);
+      CHECK(p.baseline.size() + 1 == p.run.size());
+      CHECK(std::find(p.baseline.begin(), p.baseline.end(), c) == p.baseline.end());
+    }
+  }
+  // inject_set presses a combination on the same frames.
+  const PadState both = e2::inject_set({e2::Control::a, e2::Control::b, e2::Control::stick}, 0);
+  CHECK(both.buttons == (kButtonA | kButtonB));
+  CHECK(both.stick_x == 32767);
+  CHECK(e2::inject_set({}, 0).buttons == 0);
+}
