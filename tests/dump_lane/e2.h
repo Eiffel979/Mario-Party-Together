@@ -179,6 +179,9 @@ inline PadState inject(Control c, std::uint64_t t) {
   PadState p = idle_pad();
   if (t % kCycle >= kActive) return p;
   const bool on = t % kPulsePeriod < kPulseOn;
+  // PadState::buttons is a std::uint32_t mask; Button is an enum, so both arms are made the mask's type
+  // (GCC's -Wextra warns on an enum and a plain integer in one conditional).
+  const auto pulse = [on](Button b) -> std::uint32_t { return on ? static_cast<std::uint32_t>(b) : 0u; };
   switch (c) {
     case Control::stick:
     case Control::c_stick: {
@@ -188,13 +191,13 @@ inline PadState inject(Control c, std::uint64_t t) {
       (c == Control::stick ? p.stick_y : p.c_stick_y) = d[1];
       break;
     }
-    case Control::a: p.buttons = on ? kButtonA : 0; break;
-    case Control::b: p.buttons = on ? kButtonB : 0; break;
-    case Control::x: p.buttons = on ? kButtonX : 0; break;
-    case Control::y: p.buttons = on ? kButtonY : 0; break;
-    case Control::z: p.buttons = on ? kButtonZ : 0; break;
-    case Control::l_click: p.buttons = on ? kButtonL : 0; break;
-    case Control::r_click: p.buttons = on ? kButtonR : 0; break;
+    case Control::a: p.buttons = pulse(kButtonA); break;
+    case Control::b: p.buttons = pulse(kButtonB); break;
+    case Control::x: p.buttons = pulse(kButtonX); break;
+    case Control::y: p.buttons = pulse(kButtonY); break;
+    case Control::z: p.buttons = pulse(kButtonZ); break;
+    case Control::l_click: p.buttons = pulse(kButtonL); break;
+    case Control::r_click: p.buttons = pulse(kButtonR); break;
     case Control::l_analog: p.trigger_l = kAnalog; break;  // analog pulls hold through the burst
     case Control::r_analog: p.trigger_r = kAnalog; break;
     case Control::r_half: p.trigger_r = kHalf; break;
