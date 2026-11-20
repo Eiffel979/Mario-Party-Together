@@ -221,8 +221,9 @@ a dump).
 - **Runs.** Idle (every pad connected, nothing pressed) twice, whose trails must be equal; then Z as a null
   control, and each listed control on the port. A row with a context set (`e2.h`: a prompted pair, a claw
   that must first be over a target, a gear shift that needs speed) proves each control in it
-  leave-one-out: the whole set against the set without that control. Controls come in bursts: active 24 frames of every 32
-  (buttons pulse 4 on, 4 off; the stick holds right, up, left or down), idle for the other 8.
+  leave-one-out: the whole set against the set without that control. Controls come in bursts: active
+  24 frames of every 32 (buttons pulse 4 on, 4 off; the stick holds right, up, left or down; analog
+  triggers hold their pull), idle for the other 8.
 - **Checkpoints** are the last frame of each idle gap. The state hash covers the game's own pad arrays,
   which copy the pad every frame, so a hash taken while a control is held would differ from idle even in
   a minigame that ignores it. At the end of the gap the pad and those arrays are idle again, so a
@@ -234,14 +235,15 @@ a dump).
   both runs are still in the minigame. In a minigame with a single seat (1-vs-3, Bowser, Fortune, Item),
   controls still unproven with the port as the focus player are tried again with the port in the other
   role (the next port as the focus player). Every run must end the minigame with no halt or fault within
-  `--e2-cap` frames (default 36,000) and run 300 frames more. Bowser's Bigger Blast also needs R=128 and
-  R=255 to differ from each other. After the minigame, instDll's history goes to resultDll, which has no
-  party to show here and returns inside the frame it starts in.
+  `--e2-cap` frames (default 36,000) and run 300 frames more; a minigame that waits for input (its idle
+  run never ends, as Reversal of Fortune's plunger) passes when an injected run ends it. Bowser's Bigger
+  Blast also needs R=128 and R=255 to differ from each other. After the minigame, instDll's history goes
+  to resultDll, which has no party to show here and returns inside the frame it starts in.
 - `--e2-quick` stops each control run at its first divergence (no end check), for a fast look.
   `--e2-verbose` also prints the game's OSReport text and each overlay change.
-- Output: one `e2 <id> m<NNN> port P <control> diverge=t<N>|none ...` line per run, one `e2 row ... PASS|FAIL`
-  line per row and port, and `dump lane: e2: N row-port(s) pass, M fail`. Exit 0 only if every row-port
-  passes. The lane writes nothing.
+- Output: one `e2 <id> m<NNN> port P focus F <control> diverge=t<N>|none vs idle|context; ...` line per
+  run, one `e2 row ... PASS|FAIL` line per row and port, and `dump lane: e2: N row-port(s) pass, M fail`.
+  Exit 0 only if every row-port passes. The lane writes nothing.
 
 ## Diagnosis: arena watches (`watch.h`, MP4)
 
