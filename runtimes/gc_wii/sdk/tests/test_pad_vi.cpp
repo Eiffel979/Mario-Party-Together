@@ -1,5 +1,8 @@
 // PAD mapping from InputFrame, latched at the VI post-retrace point, and VI
 // retrace callbacks (E10, ADR 0007 §4).
+#include <cstdint>
+#include <utility>
+
 #include "harness.h"
 #include "mpt_gc/os.h"
 #include "mpt_gc/pad.h"
@@ -133,6 +136,61 @@ TEST_CASE("PADClamp applies the octagonal stick and trigger clamps") {
   CHECK(s[2].stickX == 100);   // not connected: untouched
   CHECK(s[3].stickX == -54);  // (112, 45) after the dead zone, scaled onto the octagon edge
   CHECK(s[3].stickY == 21);
+}
+
+// The trigger vector the game sees (M4-07, docs/titles/mp4.md section 18). PADClamp maps raw 0..255 to
+// 0 at or below 30, raw - 30 above it, and 150 from 180 up. MP4's pad reader (game/pad.c) then sets its
+// analog L/R button bit when `trigger & 0xC0` is nonzero: clamped 64 and up, so raw 94 and up. The
+// "/255" thresholds in section 18 are against the clamped 0..150 value, not raw.
+TEST_CASE("PADClamp's trigger vector and where MP4's analog-L/R bit (trigger & 0xC0) turns on") {
+  for (int raw = 0; raw <= 255; ++raw) {
+    PADStatus s[4] = {};
+    s[0].triggerL = static_cast<u8>(raw);
+    s[0].triggerR = static_cast<u8>(raw);
+    PADClamp(s);
+    const int expected = raw <= 30 ? 0 : (raw > 180 ? 180 : raw) - 30;
+    CAPTURE(raw);
+    CHECK(s[0].triggerL == expected);
+    CHECK(s[0].triggerR == expected);
+    CHECK(((s[0].triggerL & 0xC0) != 0) == (raw >= 94));
+  }
+  // The edges, spelled out.
+  const std::pair<int, int> edges[] = {{30, 0}, {31, 1}, {93, 63}, {94, 64}, {179, 149}, {180, 150}, {255, 150}};
+  for (const auto& [raw, clamped] : edges) {
+    PADStatus s[4] = {};
+    s[0].triggerL = static_cast<u8>(raw);
+    PADClamp(s);
+    CAPTURE(raw);
+    CHECK(s[0].triggerL == clamped);
+  }
+  // Never reaches 192: the clamped maximum is 150 (0x96), so only bits 0x80 and 0x40 can set the game's bit.
+  PADStatus full[4] = {};
+  full[0].triggerL = 255;
+  PADClamp(full);
+  CHECK(full[0].triggerL < 192);
+}
+
+TEST_CASE("an InputFrame trigger reaches the game's clamped value through PADRead and PADClamp") {
+  auto clamped = [](std::uint8_t raw, std::uint32_t buttons) {
+    PADStatus out[4] = {};
+    Game g{[&] {
+      PADInit();
+      PADRead(out);
+      PADClamp(out);
+    }};
+    auto sdk = boot(g);
+    InputFrame in;
+    in.pads[0] = connectedPad(buttons);
+    in.pads[0].trigger_l = raw;
+    REQUIRE(step(*sdk, in) == StepStatus::halted);
+    return static_cast<int>(out[0].triggerL);
+  };
+  CHECK(clamped(0, 0) == 0);
+  CHECK(clamped(93, 0) == 63);   // below the game's analog-L bit
+  CHECK(clamped(94, 0) == 64);   // the first raw value that sets it
+  CHECK(clamped(128, 0) == 98);  // half pressure (Bowser's Bigger Blast's partial pull)
+  CHECK(clamped(230, 0) == 150); // the gamepad's click threshold is far past saturation
+  CHECK(clamped(0, kButtonL) == 150);  // the digital L click means full travel
 }
 
 TEST_CASE("input is latched at the post-retrace point of each frame") {
