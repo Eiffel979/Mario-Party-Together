@@ -219,8 +219,8 @@ a dump).
   1), so the pads rotate: slot i is played on pad (i + focus) % 4, with the port as the focus pad first.
   Other categories keep slot i on pad i. The test start is a determinism input in the state hash; no
   replay records it. The state is saved on the minigame's first frame and every run below starts from it.
-- **Runs.** Idle (every pad connected, nothing pressed) twice, whose trails must be equal; then Z as a null
-  control, and each listed control on the port. A row with a context set (`e2.h`: a prompted pair, a claw
+- **Runs.** Idle (every pad connected, nothing pressed) twice, whose trails must be equal; then each listed
+  control on the port, each with its null control. A row with a context set (`e2.h`: a prompted pair, a claw
   that must first be over a target, a gear shift that needs speed) proves each control in it
   leave-one-out: the whole set against the set without that control. Controls come in bursts: active
   24 frames of every 32 (buttons pulse 4 on, 4 off; the stick holds right, up, left or down; analog
@@ -228,10 +228,13 @@ a dump).
 - **Checkpoints** are the last frame of each idle gap. The state hash covers the game's own pad arrays,
   which copy the pad every frame, so a hash taken while a control is held would differ from idle even in
   a minigame that ignores it. At the end of the gap the pad and those arrays are idle again, so a
-  difference is game state the input changed. Z is the null control: no listed row reads it, but some
-  minigames copy the pad into their own objects and stop refreshing the copy in some states, so a press
-  can stay in game memory with no reaction behind it. Z runs first, and a listed control counts only
-  where it diverges before Z does. `--e2-items` names the state-hash items each divergence changed.
+  difference is game state the input changed. Null controls guard that: some minigames copy the pad
+  into their own objects and stop refreshing the copy in some states, so an input can stay in game
+  memory with no reaction behind it. Each listed control has a null of its class that no row reads (Z
+  for buttons, the C-stick for the stick, the unlisted trigger for an analog trigger, or the C-stick when
+  a row lists both), played on the same baseline (idle, or the context set without the control). A
+  control counts only where it diverges before its null does. `--e2-items` names the state-hash items
+  each divergence changed.
 - **Verdict.** A control is proven on the port when its trail leaves its baseline at a checkpoint where
   both runs are still in the minigame. In a seated category, controls still unproven with the port in
   slot 0 are tried again with the port in another seat: slot 3 (a team member) for 1-vs-3, Bowser,

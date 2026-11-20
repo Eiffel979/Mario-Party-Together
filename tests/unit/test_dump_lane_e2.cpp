@@ -87,6 +87,12 @@ std::set<e2::Control> controls_named(const std::string& cell) {
   return out;
 }
 
+// Nothing pressed, tilted or pulled.
+bool idle_pad_state(const PadState& p) {
+  return p.buttons == 0 && p.stick_x == 0 && p.stick_y == 0 && p.c_stick_x == 0 && p.c_stick_y == 0 &&
+         p.trigger_l == 0 && p.trigger_r == 0;
+}
+
 // PADClamp's trigger window (runtimes/gc_wii/sdk, pinned by test_pad_vi.cpp) and the SDK's L/R rule:
 // a digital press or raw 255 is full travel.
 int clamped(std::uint8_t raw) { return raw <= 30 ? 0 : std::min<int>(raw, 180) - 30; }
@@ -106,7 +112,8 @@ TEST_CASE("E2 rows are section 18's rows, with the controls each row lists") {
     const std::set<e2::Control> listed(row.controls.begin(), row.controls.end());
     CHECK(listed.size() == row.controls.size());
     CHECK(listed == controls_named(it->second));
-    CHECK(listed.count(e2::Control::z) == 0);  // Z is the null control, never a listed one
+    CHECK(listed.count(e2::Control::z) == 0);        // the null controls are never listed ones
+    CHECK(listed.count(e2::Control::c_stick) == 0);
     CHECK(row.number >= 401);
     CHECK(row.number <= 463);
     CHECK(row.r_half_vs_full == (id == "mp4.minigame.bowsers_bigger_blast"));
@@ -117,6 +124,7 @@ TEST_CASE("E2 rows are section 18's rows, with the controls each row lists") {
 TEST_CASE("E2 injection is idle on every checkpoint and active only in the burst") {
   const e2::Control all[] = {e2::Control::stick,    e2::Control::a,        e2::Control::b,       e2::Control::x,
                              e2::Control::y,        e2::Control::z,        e2::Control::l_click, e2::Control::r_click,
+                             e2::Control::c_stick,
                              e2::Control::l_analog, e2::Control::r_analog, e2::Control::r_half,  e2::Control::r_full};
   const PadState idle = e2::idle_pad();
   CHECK(idle.connected == 1);
@@ -126,14 +134,14 @@ TEST_CASE("E2 injection is idle on every checkpoint and active only in the burst
     for (std::uint64_t t = 0; t < 4 * e2::kCycle; ++t) {
       const PadState p = e2::inject(c, t);
       CHECK(p.connected == 1);
-      const bool is_idle = p.buttons == 0 && p.stick_x == 0 && p.stick_y == 0 && p.trigger_l == 0 && p.trigger_r == 0;
+      const bool is_idle = idle_pad_state(p);
       if (t % e2::kCycle >= e2::kActive) CHECK(is_idle);  // the gap
       if (e2::is_checkpoint(t)) {
         CHECK(is_idle);
         // The gap before a checkpoint is idle the whole way.
         for (std::uint64_t g = t + 1 - (e2::kCycle - e2::kActive); g <= t; ++g) {
           const PadState q = e2::inject(c, g);
-          CHECK((q.buttons == 0 && q.stick_x == 0 && q.trigger_l == 0 && q.trigger_r == 0));
+          CHECK(idle_pad_state(q));
         }
       }
       active_seen = active_seen || !is_idle;
@@ -218,4 +226,43 @@ TEST_CASE("E2 context rows prove each control leave-one-out") {
   CHECK(both.buttons == (kButtonA | kButtonB));
   CHECK(both.stick_x == 32767);
   CHECK(e2::inject_set({}, 0).buttons == 0);
+}
+
+TEST_CASE("E2 null controls: one per input class, never an input the row lists") {
+  using C = e2::Control;
+  for (const e2::Row& row : e2::rows()) {
+    const std::string id(row.id);
+    CAPTURE(id);
+    for (C c : row.controls) {
+      const C n = e2::null_for(row, c);
+      CAPTURE(e2::name(c));
+      CHECK_FALSE(e2::lists(row, n));
+      switch (c) {
+        case C::stick: CHECK(n == C::c_stick); break;
+        case C::l_analog:
+        case C::r_analog:
+        case C::r_half:
+        case C::r_full:
+          CHECK((n == C::l_analog || n == C::r_analog || n == C::c_stick));  // a trigger, or the C-stick
+          break;
+        default: CHECK(n == C::z); break;
+      }
+    }
+  }
+  // The trigger null is the unlisted trigger.
+  const auto find = [](std::string_view id) -> const e2::Row& {
+    for (const e2::Row& r : e2::rows())
+      if (r.id == id) return r;
+    FAIL("no row " << id);
+    return e2::rows().front();
+  };
+  CHECK(e2::null_for(find("mp4.minigame.mario_speedwagons"), C::r_analog) == C::l_analog);
+  CHECK(e2::null_for(find("mp4.minigame.makin_waves"), C::l_analog) == C::r_analog);
+  CHECK(e2::null_for(find("mp4.minigame.bowsers_bigger_blast"), C::r_half) == C::l_analog);
+  CHECK(e2::null_for(find("mp4.minigame.photo_finish"), C::l_analog) == C::c_stick);
+  // The C-stick null turns as the main stick does, on the C-stick only.
+  const PadState p = e2::inject(C::c_stick, 0);
+  CHECK(p.c_stick_x == 32767);
+  CHECK(p.stick_x == 0);
+  CHECK(e2::inject_set({C::stick, C::c_stick}, e2::kCycle).c_stick_y == 32767);
 }

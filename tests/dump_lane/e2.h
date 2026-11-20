@@ -10,7 +10,7 @@
 // Our own table of content IDs and control names: no game material.
 #pragma once
 
-#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string_view>
@@ -32,7 +32,10 @@ enum class Control : std::uint8_t {
   r_analog,
   r_half,    // R held at half pressure (Bowser's Bigger Blast's partial pull)
   r_full,    // R held at full travel (its R=255 side)
-  z,         // the null control: no listed row reads Z; its divergence is the residue cutoff
+  // Null controls (no section 18 row lists them): each one's divergence is the cutoff for the listed
+  // controls of its input class (null_for).
+  z,         // buttons
+  c_stick,   // sticks (the C-stick, turning as the main stick does), and triggers when a row lists both
 };
 
 constexpr std::string_view name(Control c) {
@@ -49,6 +52,7 @@ constexpr std::string_view name(Control c) {
     case Control::r_half: return "R-128";
     case Control::r_full: return "R-255";
     case Control::z: return "Z(null)";
+    case Control::c_stick: return "C-stick(null)";
   }
   return "?";
 }
@@ -145,10 +149,11 @@ inline const std::vector<Row>& rows() {
 // while a control is held would differ from idle even in a minigame that ignores it. So every control
 // is active for kActive frames of each kCycle and idle for the rest, and checkpoints fall on the last
 // frame of each idle gap, when the pad, the game's pad arrays and their repeat counters are back at
-// idle. A hash difference there is game state the input changed. The Z null control (a button no
-// listed row reads) marks where that stops holding: some minigames copy the pad into their own objects
-// and stop refreshing the copy in some states, so a press stays in game memory with no reaction behind
-// it. A listed control counts only where it diverges before Z does (main.cpp, e2_role).
+// idle. A hash difference there is game state the input changed. The null controls (null_for: an input
+// of the same class no listed row reads) mark where that stops holding: some minigames copy the pad
+// into their own objects and stop refreshing the copy in some states, so an input stays in game memory
+// with no reaction behind it. A listed control counts only where it diverges before its null does, the
+// null played on the same baseline (main.cpp, e2_role).
 constexpr std::uint64_t kCycle = 32;
 constexpr std::uint64_t kActive = 24;
 // Inside the active part buttons pulse (held kPulseOn of every kPulsePeriod frames), so the game sees
@@ -175,11 +180,12 @@ inline PadState inject(Control c, std::uint64_t t) {
   if (t % kCycle >= kActive) return p;
   const bool on = t % kPulsePeriod < kPulseOn;
   switch (c) {
-    case Control::stick: {
+    case Control::stick:
+    case Control::c_stick: {
       static constexpr std::int16_t kDir[4][2] = {{32767, 0}, {0, 32767}, {-32767, 0}, {0, -32767}};
       const auto& d = kDir[(t / kCycle) % 4];
-      p.stick_x = d[0];
-      p.stick_y = d[1];
+      (c == Control::stick ? p.stick_x : p.c_stick_x) = d[0];
+      (c == Control::stick ? p.stick_y : p.c_stick_y) = d[1];
       break;
     }
     case Control::a: p.buttons = on ? kButtonA : 0; break;
@@ -208,10 +214,41 @@ inline PadState inject_set(const std::vector<Control>& set, std::uint64_t t) {
       p.stick_x = q.stick_x;
       p.stick_y = q.stick_y;
     }
+    if (q.c_stick_x != 0 || q.c_stick_y != 0) {
+      p.c_stick_x = q.c_stick_x;
+      p.c_stick_y = q.c_stick_y;
+    }
     if (q.trigger_l > p.trigger_l) p.trigger_l = q.trigger_l;
     if (q.trigger_r > p.trigger_r) p.trigger_r = q.trigger_r;
   }
   return p;
+}
+
+// The null control for listed control `c` in `row`: an input of the same class that no section 18 row
+// reads, so a divergence it causes is pad residue (a copy the game froze), not a reaction. Buttons take
+// Z; the stick takes the C-stick; an analog trigger takes the trigger the row does not list, or the
+// C-stick when the row lists both.
+inline bool lists(const Row& row, Control c) {
+  for (Control k : row.controls)
+    if (k == c) return true;
+  return false;
+}
+
+inline Control null_for(const Row& row, Control c) {
+  switch (c) {
+    case Control::stick: return Control::c_stick;
+    case Control::l_analog:
+    case Control::r_analog:
+    case Control::r_half:
+    case Control::r_full: {
+      const bool lists_l = lists(row, Control::l_analog);
+      const bool lists_r = lists(row, Control::r_analog) || lists(row, Control::r_half);
+      if (!lists_l) return Control::l_analog;
+      if (!lists_r) return Control::r_analog;
+      return Control::c_stick;
+    }
+    default: return Control::z;
+  }
 }
 
 // What a listed control's run injects and what its trail is compared with: the control alone against

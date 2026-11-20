@@ -25,8 +25,8 @@
 // (path_guard.h). The build cache defaults to the shell's (its user cache folder), never MPT_DUMP_DIR.
 
 #include <algorithm>
-#include <cctype>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
@@ -35,6 +35,7 @@
 #include <cstring>
 #include <memory>
 #include <optional>
+#include <set>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -1372,38 +1373,49 @@ E2Role e2_role(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::T
   bool any_ended = idle.ended;
   if (!idle.stopped.empty()) why = "idle run " + idle.stopped;
   else if (!deterministic) why = "idle replay differs";
-  // The Z null control goes first: a listed control counts only where it diverges before Z does. Some
-  // minigames copy the pad into their own objects and stop refreshing the copy in some states, so a
-  // press can stay in game memory with no reaction behind it; Z shows when that starts.
-  std::vector<e2::Control> controls{e2::Control::z};
-  controls.insert(controls.end(), to_test.begin(), to_test.end());
-  std::optional<std::uint64_t> z_div;
+  // Null controls (e2::null_for): one per input class, played against the same baseline as the control
+  // it guards (idle, or the context set without that control), with the null added. Some minigames copy
+  // the pad into their own objects and stop refreshing the copy in some states, so an input can stay in
+  // game memory with no reaction behind it; the null's divergence shows when that starts for its class,
+  // and a listed control counts only where it diverges before its null does.
   std::optional<std::vector<e2::Checkpoint>> r_half_trail;
-  // A context row's leave-one-out baselines (e2::plan_for), played once each.
-  std::map<std::vector<e2::Control>, E2Play> baselines;
-  for (e2::Control c : controls) {
-    const e2::Plan plan = e2::plan_for(row, c);
-    const E2Play* base = &idle;
-    std::string against = "idle";
-    if (!plan.baseline.empty()) {
-      auto it = baselines.find(plan.baseline);
-      if (it == baselines.end()) {
-        if (!from_start()) return out;
-        it = baselines
-                 .emplace(plan.baseline, e2_play(*rt, row.number, frame0, port, plan.baseline, o.cap, nullptr, o.verbose))
-                 .first;
-        if (!it->second.stopped.empty() && why.empty()) why = "a baseline run " + it->second.stopped;
-      }
-      base = &it->second;
-      against = "context";
+  std::map<std::vector<e2::Control>, E2Play> played;  // baselines and null runs, each played once
+  auto play_set = [&](const std::vector<e2::Control>& set) -> const E2Play* {
+    if (set.empty()) return &idle;
+    auto it = played.find(set);
+    if (it == played.end()) {
+      if (!from_start()) return nullptr;
+      it = played.emplace(set, e2_play(*rt, row.number, frame0, port, set, o.cap, nullptr, o.verbose)).first;
+      if (!it->second.stopped.empty() && why.empty()) why = "a baseline or null run " + it->second.stopped;
     }
+    return &it->second;
+  };
+  std::set<std::vector<e2::Control>> nulls_printed;
+  for (e2::Control c : to_test) {
+    const e2::Plan plan = e2::plan_for(row, c);
+    const E2Play* base = play_set(plan.baseline);
+    if (base == nullptr) return out;
+    const std::string against = plan.baseline.empty() ? "idle" : "context";
+    // The cutoff: the null of c's class on top of c's baseline.
+    const e2::Control null_c = e2::null_for(row, c);
+    std::vector<e2::Control> null_set = plan.baseline;
+    null_set.push_back(null_c);
+    const E2Play* null_run = play_set(null_set);
+    if (null_run == nullptr) return out;
+    const std::optional<std::uint64_t> cutoff = e2::first_divergence(base->trail, null_run->trail);
+    if (nulls_printed.insert(null_set).second)
+      std::printf("e2 %s m%u port %d focus %d %s diverge=%s vs %s; %s\n", id.c_str(), row.number, port, focus,
+                  std::string(e2::name(null_c)).c_str(), cutoff ? ("t" + std::to_string(*cutoff)).c_str() : "none",
+                  against.c_str(), describe(*null_run).c_str());
     if (!from_start()) return out;
     const bool quick = o.quick && c != e2::Control::r_half;
     const E2Play run = e2_play(*rt, row.number, frame0, port, plan.run, o.cap, quick ? &base->trail : nullptr, o.verbose);
     const std::optional<std::uint64_t> div = e2::first_divergence(base->trail, run.trail);
     const std::string at = div ? "t" + std::to_string(*div) : std::string("none");
-    std::printf("e2 %s m%u port %d focus %d %s diverge=%s vs %s; %s\n", id.c_str(), row.number, port, focus,
+    const bool counts = div && (!cutoff || *div < *cutoff);
+    std::printf("e2 %s m%u port %d focus %d %s diverge=%s vs %s%s; %s\n", id.c_str(), row.number, port, focus,
                 std::string(e2::name(c)).c_str(), at.c_str(), against.c_str(),
+                div && !counts ? (" (not before " + std::string(e2::name(null_c)) + ")").c_str() : "",
                 quick && div ? "(stopped at the divergence)" : describe(run).c_str());
     if (c == e2::Control::r_half) r_half_trail = run.trail;
     if (div && o.items) {
@@ -1435,13 +1447,7 @@ E2Role e2_role(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::T
                   std::string(e2::name(c)).c_str(), static_cast<unsigned long long>(*div), n, names.c_str());
     }
     if (!run.stopped.empty() && why.empty()) why = std::string(e2::name(c)) + " run " + run.stopped;
-    if (c == e2::Control::z) {
-      z_div = div;
-      if (div) std::printf("e2 %s m%u port %d focus %d note: Z left idle at t%llu; later divergences do not count\n",
-                           id.c_str(), row.number, port, focus, static_cast<unsigned long long>(*div));
-      continue;
-    }
-    if (div && (!z_div || *div < *z_div)) out.proven.push_back(c);
+    if (counts) out.proven.push_back(c);
     any_ended = any_ended || run.ended;
     if (need_end && !idle_waits && !(quick && div) && !run.ended && run.stopped.empty() && why.empty())
       why = std::string(e2::name(c)) + " run did not end within the cap";
@@ -1498,6 +1504,8 @@ int e2_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Title
           return 1;
         }
         proven.insert(proven.end(), second.proven.begin(), second.proven.end());
+        // The first seat passed its hard checks (why was empty to get here), so the row's verdict now
+        // rests on the second seat's: a fault, a differing idle replay or a failed baseline there.
         why = second.why;
       }
       if (why.empty())
