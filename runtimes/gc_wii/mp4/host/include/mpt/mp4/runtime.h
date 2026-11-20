@@ -57,6 +57,12 @@ class Mp4Runtime final : public ITitleRuntime {
   // game's trajectory and the state hash, and no replay records them, so a run with them is
   // diagnosis only. Bits outside MPT_MP4_BOOT_GAMEPLAY_MASK are ignored. Call before boot().
   void setTestGameplayFlags(std::uint32_t flags) { test_gameplay_flags_ = flags & MPT_MP4_BOOT_GAMEPLAY_MASK; }
+  // Test only (M4-07, the E2 game-side proof): boot straight into minigame `number` (401 for m401Dll)
+  // with four human players on pads 0 to 3, `focus` (0..3) taking the single seat of a 1-vs-3, Bowser,
+  // Fortune or Item minigame (MptMp4BootConfig::test_start). A determinism input in the state hash; no
+  // replay records it, so a run with it is evidence for the dump lane only. 0 = a normal boot. Call
+  // before boot().
+  void setTestStart(std::uint32_t number, std::uint32_t focus) { test_start_ = number == 0 ? 0u : MPT_MP4_TEST_START(number, focus); }
 
   // Test only (E4 hash coverage, ABI v1.2 debug_perturb): flips one byte of a memory class
   // (MptMp4PerturbTarget); the same call again restores it. Between frames only. False if the
@@ -92,6 +98,7 @@ class Mp4Runtime final : public ITitleRuntime {
   bool debug_hooks_ = false;       // setDebugHooks
   bool note_module_hits_ = false;  // setNoteModuleHits
   std::uint32_t test_gameplay_flags_ = 0;  // setTestGameplayFlags
+  std::uint32_t test_start_ = 0;           // setTestStart
   MptMp4Game* game_ = nullptr;
   RuntimeHealth health_{};
   void (*report_)(void*, const char*) = nullptr;

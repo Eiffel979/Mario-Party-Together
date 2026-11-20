@@ -110,6 +110,24 @@ int main(int argc, char** argv) {
   CHECK(game == NULL);
   CHECK(error.message[0] != '\0');
 
+  /* v1.5 test_start (M4-07): only a minigame number 401..499 with a focus player in bits 12..13. */
+  config.test_start = 400; /* not a minigame */
+  CHECK(api->create(&config, &game, &error) == MPT_MP4_ERR_ARGUMENT);
+  CHECK(game == NULL);
+  config.test_start = 401u | 0x8000u; /* bit 15 is not part of the field */
+  CHECK(api->create(&config, &game, &error) == MPT_MP4_ERR_ARGUMENT);
+  config.test_start = 401u | 0x400u; /* bit 10, between the number and the focus player */
+  CHECK(api->create(&config, &game, &error) == MPT_MP4_ERR_ARGUMENT);
+  config.test_start = 500;
+  CHECK(api->create(&config, &game, &error) == MPT_MP4_ERR_ARGUMENT);
+  config.test_start = MPT_MP4_TEST_START(499, 0); /* the top of the range: reaches the disc check */
+  CHECK(api->create(&config, &game, &error) == MPT_MP4_ERR_DISC);
+  CHECK(game == NULL);
+  config.test_start = MPT_MP4_TEST_START(401, 3); /* valid: the run reaches the disc and fails there */
+  CHECK(api->create(&config, &game, &error) == MPT_MP4_ERR_DISC);
+  CHECK(game == NULL);
+  config.test_start = 0;
+
   if (failures == 0) printf("game module ABI: all checks passed (%s)\n", api->build_id);
   return failures == 0 ? 0 : 1;
 }

@@ -215,6 +215,11 @@ bool boot(MptMp4Game& game, std::optional<mpt::SaveMedia> card, std::string& err
   mpt_mp4_port_config.unlock_all_minigames = (game.gameplay_flags & MPT_MP4_BOOT_UNLOCK_ALL_MINIGAMES) != 0;
   mpt_mp4_port_config.unlock_bowsers_gnarly_party =
       (game.gameplay_flags & MPT_MP4_BOOT_UNLOCK_BOWSERS_GNARLY_PARTY) != 0;
+  // Test only (M4-07): bits 8 and up of the gameplay word carry MptMp4BootConfig::test_start.
+  {
+    const std::uint32_t t = game.gameplay_flags >> 8;
+    mpt_mp4_test_start_config(static_cast<int>(t & 0x3FFu), static_cast<int>((t >> 12) & 3u));
+  }
 
   mpt::gx::set_object_id_counters(game.boot_ids);
   game.renderer->reset_for_load_state();
@@ -293,6 +298,16 @@ MptMp4Status create(const MptMp4BootConfig* in, MptMp4Game** out, MptMp4Error* e
   if (config.cache_dir != nullptr) game->cache_dir = config.cache_dir;
   game->seed = config.seed;
   game->gameplay_flags = config.flags & MPT_MP4_BOOT_GAMEPLAY_MASK;
+  // Test only (M4-07): a direct minigame start joins the hashed, saved gameplay word above the flags.
+  // Zero for every normal boot, so the word, the state hash and saved states are as before.
+  if (config.test_start != 0) {
+    const std::uint32_t minigame = config.test_start & 0x3FFu;
+    if (minigame < 401 || minigame > 499 || (config.test_start & ~0x33FFu) != 0) {
+      setError(error, "create: test_start is not a minigame number with a focus player");
+      return MPT_MP4_ERR_ARGUMENT;
+    }
+    game->gameplay_flags |= (config.test_start & 0x33FFu) << 8;
+  }
   game->audio_output = config.audio_output != 0;
   game->arena_base = config.arena_base;
 

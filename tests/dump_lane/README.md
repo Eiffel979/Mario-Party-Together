@@ -201,6 +201,54 @@ module kept loaded for the process"). Every normal exit of the lane releases it 
   stub (`tests/mp4_loader/guard_stub.cpp`) on a fiber, keeps or reloads the stub, and resumes it. CTest
   runs both (`dump_lane_guard_reload_keep`, `dump_lane_guard_reload_fails_fast`) on Windows x64.
 
+## E2: the game-side input proof (MP4, M4-07)
+
+```
+mpt_dump_lane --boot mp4 --e2 [--seed S] [--e2-rows N[,N...]] [--e2-ports P[,P...]] [--e2-cap N]
+              [--e2-quick] [--e2-verbose] [--e2-items]
+```
+
+Ruling M4-E's game-side proof for every row of `docs/titles/mp4.md` section 18 (`e2.h` holds the rows,
+the injection and the verdict; `tests/unit/test_dump_lane_e2.cpp` checks them against section 18 without
+a dump).
+
+- **Start.** For each row and port the lane boots a fresh runtime with `Mp4Runtime::setTestStart`: the
+  module does bootDll's one-time setup, seats four human players and starts the minigame through instDll.
+  In a seated category (1-vs-3, 2-vs-2, Bowser, Fortune, Item) the minigame gives roles by config slot
+  (the single seat or team 0's first player is slot 0, and some item minigames create only slots 0 and
+  1), so the pads rotate: slot i is played on pad (i + focus) % 4, with the port as the focus pad first.
+  Other categories keep slot i on pad i. The test start is a determinism input in the state hash; no
+  replay records it. The state is saved on the minigame's first frame and every run below starts from it.
+- **Runs.** Idle (every pad connected, nothing pressed) twice, whose trails must be equal; then each listed
+  control on the port, each with its null control. A row with a context set (`e2.h`: a prompted pair, a claw
+  that must first be over a target, a gear shift that needs speed) proves each control in it
+  leave-one-out: the whole set against the set without that control. Controls come in bursts: active
+  24 frames of every 32 (buttons pulse 4 on, 4 off; the stick holds right, up, left or down; analog
+  triggers hold their pull), idle for the other 8.
+- **Checkpoints** are the last frame of each idle gap. The state hash covers the game's own pad arrays,
+  which copy the pad every frame, so a hash taken while a control is held would differ from idle even in
+  a minigame that ignores it. At the end of the gap the pad and those arrays are idle again, so a
+  difference is game state the input changed. Null controls guard that: some minigames copy the pad
+  into their own objects and stop refreshing the copy in some states, so an input can stay in game
+  memory with no reaction behind it. Each listed control has a null of its class that no row reads (Z
+  for buttons, the C-stick for the stick, the unlisted trigger for an analog trigger, or the C-stick when
+  a row lists both), played on the same baseline (idle, or the context set without the control). A
+  control counts only where it diverges before its null does. `--e2-items` names the state-hash items
+  each divergence changed.
+- **Verdict.** A control is proven on the port when its trail leaves its baseline at a checkpoint where
+  both runs are still in the minigame. In a seated category, controls still unproven with the port in
+  slot 0 are tried again with the port in another seat: slot 3 (a team member) for 1-vs-3, Bowser,
+  Fortune and Item, slot 1 (team 0's second player) for 2-vs-2. Every run must end the minigame with no halt or fault within
+  `--e2-cap` frames (default 36,000) and run 300 frames more; a minigame that waits for input (its idle
+  run never ends, as Reversal of Fortune's plunger) passes when an injected run ends it. Bowser's Bigger
+  Blast also needs R=128 and R=255 to differ from each other. After the minigame, instDll's history goes
+  to resultDll, which has no party to show here and returns inside the frame it starts in.
+- `--e2-quick` stops each control run at its first divergence (no end check), for a fast look.
+  `--e2-verbose` also prints the game's OSReport text and each overlay change.
+- Output: one `e2 <id> m<NNN> port P focus F <control> diverge=t<N>|none vs idle|context; ...` line per
+  run, one `e2 row ... PASS|FAIL` line per row and port, and `dump lane: e2: N row-port(s) pass, M fail`.
+  Exit 0 only if every row-port passes. The lane writes nothing.
+
 ## Diagnosis: arena watches (`watch.h`, MP4)
 
 ```

@@ -27,6 +27,16 @@ extern MptMp4PortConfig mpt_mp4_port_config;
 int mpt_mp4_dol_attach(const unsigned char* dol, size_t size, char* error, size_t error_size);
 void mpt_mp4_dol_detach(void);
 
+/* Test only (M4-07, E2 game-side proof): a direct start of one minigame instead of the boot sequence.
+ * `minigame` is its number (401 for m401Dll), 0 for a normal boot; `focus` (0..3) is the pad that plays
+ * config slot 0 in a seated category (1-vs-3, 2-vs-2, Bowser, Fortune, Item): the single seat, or the
+ * first player of team 0. Pads rotate with it (slot i on pad (i + focus) % 4).
+ * Set before boot; the configuration lives outside the game data range (src/test_start.c). */
+void mpt_mp4_test_start_config(int minigame, int focus);
+/* Called by game/main.c (patch 0038) for omMasterInit's start overlay: `normal` (bootDll) unless a test
+ * start is configured. Then it seats four human players, sets GWSystem.mg_next and returns instDll. */
+int mpt_mp4_test_start(int normal);
+
 /* The game's entry point (game/main.c, patch 0010): the SDK runs it as the root coroutine. */
 void mpt_mp4_game_main(void);
 

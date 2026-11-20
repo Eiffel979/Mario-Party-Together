@@ -1,0 +1,39 @@
+Apply order 0039 against mariopartyrd/partyboard 98ac07fd1e8f7ab938bbb6fe75789fad99419010 (CC0-1.0; ADR 0009 section 5).
+m445dll: the mole process starts over when its loop ends, as on the console, on MPT_PC
+Applied in order by runtimes/gc_wii/mp4/CMakeLists.txt with `git apply`.
+
+M4-07 (E2 game-side proof). Bowser Bop's mole process (fn_1_1C64) leaves its while (TRUE) loop with
+break once the 60 s timer has run out (lbl_1_bss_6DC >= 4) and falls off the end of the function. On the
+console a process starts through gclongjmp with LR set to its entry, so a function that returns
+re-enters at its start: it clears its mole's flags and waits for a pop-up that never comes. Our
+coroutines have no such return address, and src/libco.c panics ("a process coroutine returned"), which
+faulted every E2 run of the minigame near its end. On MPT_PC the function now jumps back to its start
+instead of returning. Bowser Bop is reached from Mini-game mode and Story only, never from a party, so
+no committed replay or golden plays this code; state hashes do not move (docs/titles/mp4.md, M1).
+
+diff --git a/src/REL/m445Dll/main.c b/src/REL/m445Dll/main.c
+index 6d4138c..2682410 100644
+--- a/src/REL/m445Dll/main.c
++++ b/src/REL/m445Dll/main.c
+@@ -688,6 +688,9 @@ void fn_1_1C64(void)
+     s32 var_r23;
+     s32 var_r26;
+ 
++#ifdef MPT_PC
++mpt_restart:
++#endif
+     temp_r31 = HuPrcCurrentGet()->user_data;
+     temp_r31->unk1C = 0;
+     temp_r31->unk34 = 0;
+@@ -966,6 +969,11 @@ void fn_1_1C64(void)
+         temp_r31->unk34 = 0;
+         HuPrcVSleep();
+     }
++#ifdef MPT_PC
++    /* On the console a process function that returns re-enters at its start: gclongjmp sets LR to the
++     * entry. The mole loop above leaves with break at the 60 s end (lbl_1_bss_6DC >= 4). */
++    goto mpt_restart;
++#endif
+ }
+ 
+ // identical to m411Dll/main.c::fn_1_5D58
