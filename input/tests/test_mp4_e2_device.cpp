@@ -406,6 +406,48 @@ void check_trigger_saturates(Rig& rig, Side side, int s) {
   }
 }
 
+// Take a Breather expects the L click (0x40) and the R click (0x20) in turn
+// (docs/titles/mp4.md §18.1). Every L and R click source clicks its own side
+// only, so the two can alternate; on a gamepad the click comes from the trigger
+// at or past the profile's raw 230 click threshold, never below it.
+constexpr int kMp4ClickThreshold = 230;  // input/profiles/mp4/default.json trigger_button_threshold
+
+void check_clicks_in_turn(Rig& rig) {
+  for (Side side : {Side::l, Side::r}) {
+    check_click(rig, side);
+    const Side other = side == Side::l ? Side::r : Side::l;
+    CAPTURE(side == Side::l ? "L click alone" : "R click alone");
+    for (const Source& s : click_sources(rig, side)) {
+      CAPTURE(source_to_string(s));
+      DeviceSnapshot snap = rig.blank();
+      Rig::hold(snap, s);
+      const GcView g = gc_view(rig.map(snap));
+      CHECK(gc_click(g, side));
+      CHECK_FALSE(gc_click(g, other));
+    }
+    if (rig.kind() == DeviceKind::gamepad) {
+      const auto analog = rig.analog_sources(trigger_control(side));
+      REQUIRE_FALSE(analog.empty());
+      for (const Source& s : analog) {
+        CAPTURE(source_to_string(s));
+        bool clicked = false;
+        for (std::int32_t raw = 0;; raw = std::min<std::int32_t>(raw + 8, kAxisMax)) {
+          DeviceSnapshot snap = rig.blank();
+          Rig::hold(snap, s, raw);
+          const PadState p = rig.map(snap);
+          const bool click = (p.buttons & click_bit(side)) != 0;
+          if (pad_trigger(p, side) < kMp4ClickThreshold) CHECK_FALSE(click);
+          else CHECK(click);
+          clicked = clicked || click;
+          CHECK_FALSE(gc_click(gc_view(p), other));
+          if (raw == kAxisMax) break;
+        }
+        CHECK(clicked);
+      }
+    }
+  }
+}
+
 // Bowser's Bigger Blast: R held part-way without the click, then the click.
 // M4-E names R = 128 against R = 255 for this row.
 void check_r_partial_then_click(Rig& rig) {
@@ -634,6 +676,7 @@ enum class Need {
   l_saturates_150,
   r_saturates_150,
   r_partial_then_click,
+  lr_clicks_in_turn,  // the L click and the R click, each on its own
   a_press_rate,
 };
 
@@ -655,6 +698,7 @@ const char* need_label(Need n) {
     case Need::l_saturates_150: return "L saturates at 150";
     case Need::r_saturates_150: return "R saturates at 150";
     case Need::r_partial_then_click: return "R part-way, then R click";
+    case Need::lr_clicks_in_turn: return "L click, R click in turn";
     case Need::a_press_rate: return "A press rate";
   }
   return "?";
@@ -692,6 +736,7 @@ void check_need(Rig& rig, Need n) {
     case Need::l_saturates_150: check_trigger_saturates(rig, Side::l, 150); break;
     case Need::r_saturates_150: check_trigger_saturates(rig, Side::r, 150); break;
     case Need::r_partial_then_click: check_r_partial_then_click(rig); break;
+    case Need::lr_clicks_in_turn: check_clicks_in_turn(rig); break;
     case Need::a_press_rate: check_press_rate(rig); break;
   }
 }
@@ -760,9 +805,7 @@ const std::vector<Row>& rows() {
       {"goombas_chip_flip", "stick, A, L click", {N::stick, N::a, N::l_click}},
       {"kareening_koopa", "stick", {N::stick}},
       {"rumble_fishing", "stick, A", {N::stick, N::a}},
-      {"take_a_breather",
-       "stick, digital buttons (mask excludes the analog-L/R bits)",
-       {N::stick, N::digital_buttons}},
+      {"take_a_breather", "L click, R click (pressed in turn)" DAGGER, {N::lr_clicks_in_turn}},
   };
   return table;
 }

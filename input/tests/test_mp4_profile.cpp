@@ -229,14 +229,18 @@ TEST_CASE("the coverage table has the E2 rows, Item rows marked not party-eligib
   }
   CHECK(expected.size() == 49);
   CHECK(eligible.size() == 44);  // the five Item minigames are not launched by any board (§18.1)
-  // §18.1 (PR #91, merge c8e6ace; Makin' Waves corrected at d7c1fb0, Kareening
-  // Koopa proven at 3cf989f): the rows not fully proven on the game side.
-  const std::set<std::string> not_proven = {
-      "mp4.minigame.mario_medley",      "mp4.minigame.long_claw_of_the_law", "mp4.minigame.pair_a_sailing",
-      "mp4.minigame.dungeon_duos",      "mp4.minigame.balloon_of_doom",      "mp4.minigame.goombas_chip_flip",
-      "mp4.minigame.take_a_breather",   "mp4.minigame.makin_waves"};
+  // §18.1 (PR #91, merge c8e6ace; corrected at d7c1fb0 and 3cf989f): the rows
+  // accepted under M4-E Option C (§18.1 at b1b2bd7), and the rows not proven:
+  // Goomba's Chip Flip (an Item row, outside Option C) and Take a Breather
+  // (game-side rerun pending with its corrected inputs).
+  const std::set<std::string> accepted = {
+      "mp4.minigame.mario_medley", "mp4.minigame.long_claw_of_the_law", "mp4.minigame.makin_waves",
+      "mp4.minigame.pair_a_sailing", "mp4.minigame.dungeon_duos", "mp4.minigame.balloon_of_doom"};
+  const std::set<std::string> not_proven = {"mp4.minigame.goombas_chip_flip", "mp4.minigame.take_a_breather"};
   std::set<std::string> listed;
   int proven = 0;
+  int accepted_rows = 0;
+  int not_proven_rows = 0;
   for (const auto& [id, c] : coverage) {
     CAPTURE(id);
     listed.insert(id);
@@ -250,12 +254,17 @@ TEST_CASE("the coverage table has the E2 rows, Item rows marked not party-eligib
     CHECK(marked == (eligible.count(id) == 0));
     // Sign-off cites the game-side proof and its merge, and says proven or not.
     CHECK(c[7].find("\xC2\xA7" "18.1") != std::string::npos);
-    CHECK(c[7].find("PR #91, merge `c8e6ace`") != std::string::npos);
-    CHECK(c[7].find("`3cf989f`") != std::string::npos);  // §18.1 with Kareening Koopa proven
-    if (not_proven.count(id) == 1) {
+    CHECK(c[7].find("\xC2\xA7" "18.1 @ `") != std::string::npos);
+    if (accepted.count(id) == 1) {
+      CHECK(eligible.count(id) == 1);  // Option C covers party-eligible rows only
+      CHECK(c[7] == "accepted (M4-E Option C): game side partly proven, reason \xC2\xA7" "18.1 @ `b1b2bd7`");
+      ++accepted_rows;
+    } else if (not_proven.count(id) == 1) {
       CHECK(c[7].rfind("not proven: ", 0) == 0);
+      CHECK(c[7].find("PR #91, merge `c8e6ace`") != std::string::npos);
+      ++not_proven_rows;
     } else {
-      CHECK(c[7].rfind("proven: device @ `9dac583`", 0) == 0);
+      CHECK(c[7] == "proven: device @ `9dac583`, game side \xC2\xA7" "18.1 @ `3cf989f` (PR #91, merge `c8e6ace`)");
       ++proven;
     }
     // A row says "override" exactly when the profile has one.
@@ -264,7 +273,8 @@ TEST_CASE("the coverage table has the E2 rows, Item rows marked not party-eligib
   }
   CHECK(listed == expected);
   CHECK(proven == 41);
-  CHECK(not_proven.size() == 8);
+  CHECK(accepted_rows == 6);
+  CHECK(not_proven_rows == 2);
 }
 
 TEST_CASE("Bowser's Bigger Blast: lshift+E holds R part-way, E commits") {
