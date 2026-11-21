@@ -139,7 +139,7 @@ inline const std::vector<Row>& rows() {
       {"mp4.minigame.kareening_koopa", 449, 6, {C::stick}},
       {"mp4.minigame.rumble_fishing", 455, 4, {C::stick, C::a}, false,
        {C::stick, C::a}, "the stick reels only once A has hooked a fish"},
-      {"mp4.minigame.take_a_breather", 456, 0, {C::stick, C::a}},
+      {"mp4.minigame.take_a_breather", 456, 0, {C::l_click, C::r_click}},  // pressed in turn (unk_0A & 0x60)
   };
   return r;
 }
