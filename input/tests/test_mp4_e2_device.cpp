@@ -421,9 +421,13 @@ void check_clicks_in_turn(Rig& rig) {
       CAPTURE(source_to_string(s));
       DeviceSnapshot snap = rig.blank();
       Rig::hold(snap, s);
-      const GcView g = gc_view(rig.map(snap));
+      const PadState p = rig.map(snap);
+      const GcView g = gc_view(p);
       CHECK(gc_click(g, side));
       CHECK_FALSE(gc_click(g, other));
+      // The game counts a click only when its masked button word holds exactly
+      // the expected bit, so the click must press nothing else.
+      CHECK((p.buttons & ~click_bit(side)) == 0);
     }
     if (rig.kind() == DeviceKind::gamepad) {
       const auto analog = rig.analog_sources(trigger_control(side));
@@ -436,8 +440,12 @@ void check_clicks_in_turn(Rig& rig) {
           Rig::hold(snap, s, raw);
           const PadState p = rig.map(snap);
           const bool click = (p.buttons & click_bit(side)) != 0;
-          if (pad_trigger(p, side) < kMp4ClickThreshold) CHECK_FALSE(click);
-          else CHECK(click);
+          if (pad_trigger(p, side) < kMp4ClickThreshold) {
+            CHECK_FALSE(click);
+          } else {
+            CHECK(click);
+            CHECK((p.buttons & ~click_bit(side)) == 0);  // the click alone, nothing else pressed
+          }
           clicked = clicked || click;
           CHECK_FALSE(gc_click(gc_view(p), other));
           if (raw == kAxisMax) break;
