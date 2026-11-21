@@ -229,14 +229,13 @@ TEST_CASE("the coverage table has the E2 rows, Item rows marked not party-eligib
   }
   CHECK(expected.size() == 49);
   CHECK(eligible.size() == 44);  // the five Item minigames are not launched by any board (§18.1)
-  // §18.1 (PR #91, merge c8e6ace; corrected at d7c1fb0 and 3cf989f): the rows
-  // accepted under M4-E Option C (§18.1 at b1b2bd7), and the rows not proven:
-  // Goomba's Chip Flip (an Item row, outside Option C) and Take a Breather
-  // (game-side rerun pending with its corrected inputs).
+  // §18.1 (PR #91, merge c8e6ace; corrected at d7c1fb0, 3cf989f and 9c51eb0):
+  // the rows accepted under M4-E Option C (§18.1 at b1b2bd7), and the one row
+  // not proven, Goomba's Chip Flip (an Item row, outside Option C).
   const std::set<std::string> accepted = {
       "mp4.minigame.mario_medley", "mp4.minigame.long_claw_of_the_law", "mp4.minigame.makin_waves",
       "mp4.minigame.pair_a_sailing", "mp4.minigame.dungeon_duos", "mp4.minigame.balloon_of_doom"};
-  const std::set<std::string> not_proven = {"mp4.minigame.goombas_chip_flip", "mp4.minigame.take_a_breather"};
+  const std::set<std::string> not_proven = {"mp4.minigame.goombas_chip_flip"};
   std::set<std::string> listed;
   int proven = 0;
   int accepted_rows = 0;
@@ -263,6 +262,11 @@ TEST_CASE("the coverage table has the E2 rows, Item rows marked not party-eligib
       CHECK(c[7].rfind("not proven: ", 0) == 0);
       CHECK(c[7].find("PR #91, merge `c8e6ace`") != std::string::npos);
       ++not_proven_rows;
+    } else if (id == "mp4.minigame.take_a_breather") {
+      // Proven after its inputs were corrected to the L and R clicks.
+      CHECK(c[7] == "proven: device @ `9dac583`, game side \xC2\xA7" "18.1 @ `9c51eb0` (rerun at `bda4902`; "
+                    "PR #91, merge `c8e6ace`)");
+      ++proven;
     } else {
       CHECK(c[7] == "proven: device @ `9dac583`, game side \xC2\xA7" "18.1 @ `3cf989f` (PR #91, merge `c8e6ace`)");
       ++proven;
@@ -272,9 +276,9 @@ TEST_CASE("the coverage table has the E2 rows, Item rows marked not party-eligib
     CHECK(overridden == (mp4_profile().minigames.count(id) == 1));
   }
   CHECK(listed == expected);
-  CHECK(proven == 41);
+  CHECK(proven == 42);
   CHECK(accepted_rows == 6);
-  CHECK(not_proven_rows == 2);
+  CHECK(not_proven_rows == 1);
 }
 
 TEST_CASE("Bowser's Bigger Blast: lshift+E holds R part-way, E commits") {
