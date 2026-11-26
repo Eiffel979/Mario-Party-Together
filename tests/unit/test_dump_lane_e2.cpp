@@ -101,7 +101,7 @@ int clamped(std::uint8_t raw) { return raw <= 30 ? 0 : std::min<int>(raw, 180) -
 
 TEST_CASE("E2 rows are section 18's rows, with the controls each row lists") {
   const auto doc = section18();
-  REQUIRE(doc.size() == 49);
+  REQUIRE(doc.size() == 51);  // 49 + Bowser Wrestling and Panels of Doom (P1-17); red until section 18 adds them
   std::set<std::string> ids;
   for (const e2::Row& row : e2::rows()) {
     const std::string id(row.id);

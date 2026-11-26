@@ -140,6 +140,11 @@ inline const std::vector<Row>& rows() {
       {"mp4.minigame.rumble_fishing", 455, 4, {C::stick, C::a}, false,
        {C::stick, C::a}, "the stick reels only once A has hooked a fish"},
       {"mp4.minigame.take_a_breather", 456, 0, {C::l_click, C::r_click}},  // pressed in turn (unk_0A & 0x60)
+      // Party-eligible since P1-17: Bowser's Gnarly Party's Bowser space launches them for a Mega player.
+      {"mp4.minigame.bowser_wrestling", 457, 8, {C::a, C::l_click, C::r_click}, false,  // L and R in turn (prevTrig)
+       {C::a, C::l_click, C::r_click}, "the minigame waits for A; L and R act only in its later states"},
+      {"mp4.minigame.panels_of_doom", 458, 8, {C::stick, C::a}, false,  // stick as a direction past 20
+       {C::stick, C::a}, "the minigame waits for A; the stick acts only in its later phase"},
   };
   return r;
 }
