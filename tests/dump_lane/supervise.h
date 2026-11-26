@@ -46,6 +46,7 @@
 #include <vector>
 
 #include "crash_report.h"
+#include "expected_crash.h"
 #include "path_guard.h"
 
 #if defined(_WIN32) && defined(_M_X64)
@@ -688,6 +689,7 @@ inline std::optional<int> crash_selftest_if_asked(int argc, char** argv) {
     std::puts("dump lane: --crash-selftest could not load the stub module or its mpt_overrun_stub_crash");
     return 1;
   }
+  expect_crash_without_dialog();  // the stub crashes on purpose (expected_crash.h)
   // Made-up breadcrumbs, so the check can see every field reach the report.
   crash_note_run("selftest", 7);
   crash_note_party("minigame", "selftestDll", 3, 4, 20);
