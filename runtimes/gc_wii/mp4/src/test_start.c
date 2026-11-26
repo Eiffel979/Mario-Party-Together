@@ -8,6 +8,7 @@
 #include "dolphin.h"
 #include "game/audio.h"
 #include "game/chrman.h"
+#include "game/flag.h"
 #include "game/gamework_data.h"
 #include "game/object.h"
 #include "game/minigame_seq.h"
@@ -52,11 +53,11 @@ int mpt_mp4_test_start(int normal) {
   if (mg < 0) return normal; /* not a minigame: the host sees bootDll and fails the run */
   const int type = mgInfoTbl[mg].type;
   const int focus = s_focus;
-  /* Seated categories (1-vs-3, 2-vs-2, Bowser, Fortune, Item) give the minigame's roles by config slot:
+  /* Seated categories (1-vs-3, 2-vs-2, Bowser, Fortune, Item, Story) give the minigame's roles by config slot:
    * the single seat is slot 0 (group 0), and some item minigames create only slots 0 and 1. So the pads
    * rotate: slot i is played on pad (i + focus) % 4, and the focus pad takes slot 0. Every other category
    * keeps slot i on pad i. Characters stay slot i's. */
-  const int seated = type == 1 || type == 2 || type == 3 || type == 5 || type == 6;
+  const int seated = type == 1 || type == 2 || type == 3 || type == 5 || type == 6 || type == 8;
   for (int i = 0; i < 4; ++i) {
     GWPlayerCfg[i].character = (s16)i;
     GWPlayerCfg[i].pad_idx = (s16)(seated ? (i + focus) % 4 : i);
@@ -71,6 +72,11 @@ int mpt_mp4_test_start(int normal) {
     }
   }
   GWSystem.player_curr = 0; /* the focus pad's slot in a seated category */
+  /* A Story-category minigame in a party comes from Bowser's Gnarly Party's Bowser space (w06Dll/bowser.c),
+   * which seats the Mega-size player as group 0 and everyone else as group 1 (as above) while the board's
+   * in-progress flag (1, 0) is set (board/main.c BoardObjectSetup). Bowser Wrestling and Panels of Doom read
+   * that flag to make their group-1 seat Bowser, a COM, so the test start sets it too. */
+  if (type == 8) _SetFlag(FLAG_ID_MAKE(1, 0));
   GWSystem.mg_next = (s16)mg;
   /* The system setup bootDll does once before any minigame can run (bootDll's
    * BootInitForSkippedSequence): characters, windows, the minigame sequence data (the start and finish
