@@ -25,11 +25,18 @@ namespace {
 
 volatile int* volatile g_null = nullptr;
 
+// The writes run in their own frame, below the buffer's: an unoptimized build keeps the loop's counter
+// and bound in memory, and in the overrunning frame they would lie above the buffer, so the overrun
+// would rewrite its own bound and run on to the end of the stack (an access violation, not the /GS
+// failure). Here the overrun reaches only the caller's cookie, return address and home area.
+MPT_OVERRUN_STUB_NOINLINE void overrun_stub_fill(volatile char* write, int bytes) {
+  for (int i = 0; i < bytes; ++i) write[i] = 'x';  // past the end on purpose
+}
+
 MPT_OVERRUN_STUB_NOINLINE int overrun_stub_smash(int bytes) {
   char buffer[16];
-  volatile char* write = buffer;
-  for (int i = 0; i < bytes; ++i) write[i] = 'x';  // past the end on purpose
-  return write[0] + write[15];
+  overrun_stub_fill(buffer, bytes);
+  return buffer[0] + buffer[15];
 }
 
 }  // namespace

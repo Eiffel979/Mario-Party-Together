@@ -103,7 +103,7 @@ set_tests_properties(replay_check_rejects_non_replay PROPERTIES PASS_REGULAR_EXP
 # MPT_DUMP_DIR is set; see tests/dump_lane/README.md. Run it with: ctest -L dump
 # It plays every real title the shell registers (P1-16), building each from the dump with asset-import.
 add_executable(mpt_dump_lane dump_lane/main.cpp dump_lane/e2.h dump_lane/crash_report.h dump_lane/path_guard.h dump_lane/real_titles.h dump_lane/png.h dump_lane/watch.h
-  dump_lane/supervise.h dump_lane/stack_chk_fail.cpp)
+  dump_lane/supervise.h dump_lane/stack_guard.h dump_lane/expected_crash.h dump_lane/dump_lane.h dump_lane/stack_chk_fail.cpp)
 target_link_libraries(mpt_dump_lane PRIVATE mpt::core mpt::asset_import mpt::shell_core)
 target_compile_definitions(mpt_dump_lane PRIVATE
   MPT_REPLAYS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/replays"
@@ -126,14 +126,11 @@ set_tests_properties(dump_lane_replays PROPERTIES LABELS dump SKIP_RETURN_CODE 7
 # (DbgHelp walks the stack); on Linux the lane's own __stack_chk_fail reports, exported so the game
 # module binds to it. The self-test crashes a synthetic stub module (mp4_loader/overrun_stub.cpp) and
 # needs no dump. Linux runs the gs case only (av and abort are Windows supervisor paths).
-add_library(mpt_overrun_stub MODULE mp4_loader/overrun_stub.cpp)
-set_target_properties(mpt_overrun_stub PROPERTIES PREFIX "")
-mpt_set_warnings(mpt_overrun_stub)
+# The stubs are built in crash_stubs/ (no Debug runtime checks there).
+add_subdirectory(crash_stubs)
 if(WIN32)
-  target_compile_options(mpt_overrun_stub PRIVATE /GS)
   target_link_libraries(mpt_dump_lane PRIVATE dbghelp)
 else()
-  target_compile_options(mpt_overrun_stub PRIVATE -fstack-protector-all)
   target_link_options(mpt_dump_lane PRIVATE "LINKER:--export-dynamic-symbol=__stack_chk_fail")
   target_link_libraries(mpt_dump_lane PRIVATE ${CMAKE_DL_LIBS})
 endif()
@@ -141,12 +138,7 @@ add_dependencies(mpt_dump_lane mpt_overrun_stub)
 # The E5 module-reload check on a synthetic stub (M4-16, dump_lane/stack_guard.h): a /GS-guarded frame
 # suspended on a fiber survives the module staying loaded and fails fast after a reload (new cookie).
 # Windows x64 only; the stub is linked at a fixed base like the game module, so a reload maps it back.
-if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND COMMAND mpt_mp4_fixed_base_link)
-  add_library(mpt_guard_stub MODULE mp4_loader/guard_stub.cpp)
-  set_target_properties(mpt_guard_stub PROPERTIES PREFIX "")
-  target_compile_options(mpt_guard_stub PRIVATE /GS)
-  mpt_mp4_fixed_base_link(mpt_guard_stub BASE 0x5B9700000000)
-  mpt_set_warnings(mpt_guard_stub)
+if(TARGET mpt_guard_stub)
   add_dependencies(mpt_dump_lane mpt_guard_stub)
   add_test(NAME dump_lane_guard_reload_keep
     COMMAND mpt_dump_lane --guard-reload-selftest "$<TARGET_FILE:mpt_guard_stub>" keep)
