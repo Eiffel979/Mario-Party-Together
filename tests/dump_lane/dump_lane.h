@@ -9,10 +9,12 @@
 // cross-platform golden trail: one "<frame> <state_hash>" line per checkpoint.
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <optional>
@@ -22,7 +24,9 @@
 #include <variant>
 #include <vector>
 
+#include "../support/adapter_checks.h"
 #include "../support/determinism_harness.h"
+#include "mpt/core/party_director.h"
 #include "mpt/core/replay.h"
 #include "mpt/core/session.h"
 #include "mpt/core/title_registry.h"
@@ -284,6 +288,149 @@ inline PadState party_autopilot(const PartyScript& script, std::uint64_t frame, 
     }
   }
   return pad;
+}
+
+
+// ---- P1-17: the expected PartyEvent sequence of a whole party ------------------------------------------
+// Structural rules, not a recorded golden: what any full party of `expected` must produce, whatever the
+// seed's minigames and frames. The dump lane checks the M4-01 autopilot party against them
+// (--party-events); tests/unit/test_dump_lane_party.cpp proves the rules on synthetic event lists.
+struct FullPartyExpectation {
+  TitleId title = TitleId::mp4;
+  std::int32_t max_turns = 20;
+  std::optional<BoardId> board{};
+  std::array<bool, kMaxPlayers> is_cpu{{false, true, true, true}};
+  // Whether a regular party can launch the minigame (mpt::mp4::party_eligible for MP4). Unset: any.
+  std::function<bool(const MinigameId&)> party_eligible{};
+};
+
+inline const char* phase_text(PartyPhase phase) {
+  switch (phase) {
+    case PartyPhase::none: return "none";
+    case PartyPhase::setup: return "setup";
+    case PartyPhase::board: return "board";
+    case PartyPhase::minigame: return "minigame";
+    case PartyPhase::results: return "results";
+    case PartyPhase::finished: return "finished";
+  }
+  return "?";
+}
+
+// The phase changes a party may make (ADR 0005, docs/titles/mp4.md section 21): none, setup, then
+// board turns with their minigames, then results and finished, never back.
+inline bool party_phase_step_allowed(PartyPhase from, PartyPhase to) {
+  switch (from) {
+    case PartyPhase::none: return to == PartyPhase::setup;
+    case PartyPhase::setup: return to == PartyPhase::board;
+    case PartyPhase::board: return to == PartyPhase::minigame || to == PartyPhase::results;
+    case PartyPhase::minigame: return to == PartyPhase::board;
+    case PartyPhase::results: return to == PartyPhase::finished;
+    case PartyPhase::finished: return false;
+  }
+  return false;
+}
+
+inline std::string id_text(const std::optional<ContentId>& id) { return id ? id->str() : std::string("nothing"); }
+
+// Every problem with `events` (the Director's, from boot on) and `final_party` (its mirror at the end)
+// as one full party of `expected`; empty when there is none.
+inline std::vector<std::string> check_full_party(std::span<const PartyEvent> events, const PartySnapshot& final_party,
+                                                 const Catalog& catalog, const FullPartyExpectation& expected) {
+  std::vector<std::string> problems;
+  const auto at = [](const PartyEvent& e, const std::string& what) {
+    return "frame " + std::to_string(e.frame) + ": " + what;
+  };
+  const auto check_minigame = [&](const PartyEvent& e, const MinigameId& id) {
+    if (id.title() != expected.title || id.kind() != "minigame") {
+      problems.push_back(at(e, id.str() + " is not a minigame of this title"));
+    } else if (!test::catalog_lists(catalog.minigames, id)) {
+      problems.push_back(at(e, id.str() + " is not in the catalog"));
+    } else if (expected.party_eligible && !expected.party_eligible(id)) {
+      problems.push_back(at(e, id.str() + " is not party-eligible"));
+    }
+  };
+
+  PartyPhase phase = PartyPhase::none;
+  std::int32_t last_turn = 0;
+  std::optional<MinigameId> running;
+  std::size_t minigames = 0;
+  std::uint64_t last_frame = 0;
+  for (const PartyEvent& e : events) {
+    if (e.frame < last_frame) problems.push_back(at(e, "events out of frame order"));
+    last_frame = e.frame;
+    if (const std::string p = test::check_snapshot(e.snapshot, catalog); !p.empty()) problems.push_back(at(e, p));
+    const bool in_party = e.snapshot.phase != PartyPhase::none && e.snapshot.phase != PartyPhase::setup;
+    if (in_party && e.snapshot.max_turns != expected.max_turns) {
+      problems.push_back(at(e, "max_turns " + std::to_string(e.snapshot.max_turns) + ", expected " +
+                                   std::to_string(expected.max_turns)));
+    }
+    if (in_party && expected.board && e.snapshot.board != expected.board) {
+      problems.push_back(at(e, "the board is " + id_text(e.snapshot.board) + ", expected " + expected.board->str()));
+    }
+    switch (e.kind) {
+      case PartyEvent::Kind::phase_changed:
+        if (!party_phase_step_allowed(phase, e.snapshot.phase)) {
+          problems.push_back(at(e, std::string("phase ") + phase_text(phase) + " -> " + phase_text(e.snapshot.phase) +
+                                       " is not a step of a party"));
+        }
+        phase = e.snapshot.phase;
+        break;
+      case PartyEvent::Kind::turn_started:
+        if (e.snapshot.turn != last_turn + 1) {
+          problems.push_back(at(e, "turn " + std::to_string(e.snapshot.turn) + " started after turn " +
+                                       std::to_string(last_turn)));
+        }
+        last_turn = e.snapshot.turn;
+        break;
+      case PartyEvent::Kind::minigame_started:
+        if (!e.minigame) {
+          problems.push_back(at(e, "minigame_started without a minigame"));
+          break;
+        }
+        if (running) problems.push_back(at(e, e.minigame->str() + " started while " + running->str() + " runs"));
+        if (e.snapshot.phase != PartyPhase::minigame) {
+          problems.push_back(at(e, e.minigame->str() + " started outside the minigame phase"));
+        }
+        check_minigame(e, *e.minigame);
+        running = e.minigame;
+        ++minigames;
+        break;
+      case PartyEvent::Kind::minigame_ended:
+        if (!e.minigame || e.minigame != running) {
+          problems.push_back(at(e, "minigame_ended for " + id_text(e.minigame) + ", running " + id_text(running)));
+        }
+        running.reset();
+        break;
+    }
+  }
+  if (running) problems.push_back(running->str() + " never ended");
+  if (last_turn != expected.max_turns) {
+    problems.push_back("the last turn started was " + std::to_string(last_turn) + ", expected " +
+                       std::to_string(expected.max_turns));
+  }
+  // Every turn ends in a minigame; battle, Bowser and other space events can add more.
+  if (minigames < static_cast<std::size_t>(expected.max_turns)) {
+    problems.push_back(std::to_string(minigames) + " minigames for " + std::to_string(expected.max_turns) + " turns");
+  }
+  if (phase != PartyPhase::finished) problems.push_back(std::string("the events end in phase ") + phase_text(phase));
+
+  // The final snapshot: the finished party's last turn, its board and its seats.
+  const PartySnapshot& f = final_party;
+  if (const std::string p = test::check_snapshot(f, catalog); !p.empty()) problems.push_back("final: " + p);
+  if (f.phase != PartyPhase::finished) problems.push_back(std::string("final: phase ") + phase_text(f.phase));
+  if (f.turn != expected.max_turns || f.max_turns != expected.max_turns) {
+    problems.push_back("final: turn " + std::to_string(f.turn) + "/" + std::to_string(f.max_turns) + ", expected " +
+                       std::to_string(expected.max_turns) + "/" + std::to_string(expected.max_turns));
+  }
+  if (expected.board && f.board != expected.board) problems.push_back("final: not on " + expected.board->str());
+  for (std::size_t i = 0; i < kMaxPlayers; ++i) {
+    const PlayerState& p = f.players[i];
+    const std::string who = "final: player " + std::to_string(i + 1);
+    if (!p.character) problems.push_back(who + " has no character");
+    if (p.is_cpu != expected.is_cpu[i]) problems.push_back(who + (p.is_cpu ? " is a CPU" : " is human"));
+    if (p.coins < 0 || p.stars < 0) problems.push_back(who + " has negative coins or stars");
+  }
+  return problems;
 }
 
 }  // namespace mpt::dump_lane

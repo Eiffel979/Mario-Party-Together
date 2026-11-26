@@ -11,6 +11,7 @@ add_executable(mpt_unit_tests
   unit/test_event_routing.cpp
   unit/test_dump_lane.cpp
   unit/test_dump_lane_e2.cpp
+  unit/test_dump_lane_party.cpp
   unit/test_dump_lane_paths.cpp
   unit/test_dump_lane_png.cpp
   unit/test_gc_disc.cpp
@@ -122,6 +123,13 @@ endif()
 mpt_set_warnings(mpt_dump_lane)
 add_test(NAME dump_lane_replays COMMAND mpt_dump_lane)
 set_tests_properties(dump_lane_replays PROPERTIES LABELS dump SKIP_RETURN_CODE 77)
+# P1-17: the full-party event test on the M4-01 autopilot replay (tests/dump_lane/README.md, "Party
+# events"). The replay comes from MPT_MP4_PARTY_REPLAY or is recorded into the build cache on the first
+# run (a whole party, about an hour); it is never in the repository. Skipped (77) without MPT_DUMP_DIR.
+if(TARGET mpt_mp4_runtime)
+  add_test(NAME dump_lane_mp4_party_events COMMAND mpt_dump_lane --boot mp4 --party-events)
+  set_tests_properties(dump_lane_mp4_party_events PROPERTIES LABELS dump SKIP_RETURN_CODE 77 TIMEOUT 14400)
+endif()
 # Crash reports (M4-04, dump_lane/supervise.h): --supervise debugs the lane to report /GS fail-fasts
 # (DbgHelp walks the stack); on Linux the lane's own __stack_chk_fail reports, exported so the game
 # module binds to it. The self-test crashes a synthetic stub module (mp4_loader/overrun_stub.cpp) and
