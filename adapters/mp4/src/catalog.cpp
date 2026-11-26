@@ -140,7 +140,6 @@ const std::array<const char*, 46> kPartyEligible = {
     "mp4.minigame.panels_of_doom",  // m458
 };
 
-
 // GWPlayerCfg.character: the game's character order (CHARNO_*, 0-7).
 const std::array<CharacterEntry, 8> kCharacters = {{
     {0, "mp4.character.mario", "Mario"},
