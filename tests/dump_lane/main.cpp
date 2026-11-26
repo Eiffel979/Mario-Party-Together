@@ -1511,10 +1511,7 @@ int e2_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Title
         why = second.why;
       }
       if (why.empty())
-        for (e2::Control c : unproven()) {
-          why = std::string(e2::name(c)) + " never left its baseline";
-          break;
-        }
+        if (const auto u = unproven(); !u.empty()) why = std::string(e2::name(u.front())) + " never left its baseline";
       std::string seats;
       for (int fc : focuses) seats += (seats.empty() ? "" : ",") + std::to_string(fc);
       std::printf("e2 row %s m%u port %d %s: %zu/%zu controls proven (focus %s)%s%s\n", id.c_str(), row.number, port,
