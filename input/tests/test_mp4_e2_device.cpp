@@ -594,6 +594,42 @@ void check_stick(Rig& rig) {
 
 // The game's stick-as-D-pad reads the clamped stick: up/down past 20, left/right
 // past 30, and resets its repeat when |x| + |y| drops below 20.
+// The stick read as a direction past +-t on each axis (Panels of Doom's pick
+// phases, docs/titles/mp4.md §18.1): rest stays within t on both axes, every
+// cardinal tilt (full, and the keyboard's half tilt) goes past t on its own axis
+// with the right sign, and on a gamepad an analog tilt reaches exactly t and
+// t + 1 on X, so the direction can be held just short of or just past the edge.
+void check_stick_past(Rig& rig, int t) {
+  CAPTURE(t);
+  const GcView idle = gc_view(rig.map(rig.blank()));
+  CHECK(std::abs(idle.stick_x) <= t);
+  CHECK(std::abs(idle.stick_y) <= t);
+  for (const Direction& d : kDirections) {
+    if (d.dx != 0 && d.dy != 0) continue;
+    CAPTURE(d.name);
+    std::vector<bool> tilts{false};
+    if (rig.kind() == DeviceKind::keyboard) tilts.push_back(true);
+    for (bool half : tilts) {
+      CAPTURE(half);
+      const GcView g = gc_view(rig.map(stick_toward(rig, d, half)));
+      if (d.dx != 0) {
+        CHECK(g.stick_x * d.dx > t);
+      } else {
+        CHECK(g.stick_y * d.dy > t);
+      }
+    }
+  }
+  if (rig.kind() == DeviceKind::gamepad) {
+    std::set<int> seen;
+    for (std::int32_t raw = 0;; raw = std::min<std::int32_t>(raw + 16, kAxisMax)) {
+      seen.insert(gc_view(rig.map(stick_toward(rig, kDirections[0], false, raw))).stick_x);
+      if (raw == kAxisMax) break;
+    }
+    CHECK(seen.count(t) == 1);
+    CHECK(seen.count(t + 1) == 1);
+  }
+}
+
 void check_stick_as_dpad(Rig& rig) {
   constexpr int kUpDownPast = 20;
   constexpr int kLeftRightPast = 30;
@@ -670,6 +706,7 @@ void check_press_rate(Rig& rig) {
 enum class Need {
   stick,
   stick_as_dpad,
+  stick_past_20,  // the stick read as a direction past +-20 (game units)
   a,
   b,
   x,
@@ -692,6 +729,7 @@ const char* need_label(Need n) {
   switch (n) {
     case Need::stick: return "stick";
     case Need::stick_as_dpad: return "stick as D-pad";
+    case Need::stick_past_20: return "stick as a direction past 20";
     case Need::a: return "A";
     case Need::b: return "B";
     case Need::x: return "X";
@@ -717,6 +755,7 @@ void check_need(Rig& rig, Need n) {
   switch (n) {
     case Need::stick: check_stick(rig); break;
     case Need::stick_as_dpad: check_stick_as_dpad(rig); break;
+    case Need::stick_past_20: check_stick(rig); check_stick_past(rig, 20); break;
     case Need::a: check_button(rig, Control::a, kButtonA); break;
     case Need::b: check_button(rig, Control::b, kButtonB); break;
     case Need::x: check_button(rig, Control::x, kButtonX); break;
@@ -814,6 +853,8 @@ const std::vector<Row>& rows() {
       {"kareening_koopa", "stick", {N::stick}},
       {"rumble_fishing", "stick, A", {N::stick, N::a}},
       {"take_a_breather", "L click, R click (pressed in turn)" DAGGER, {N::lr_clicks_in_turn}},
+      {"bowser_wrestling", "A, L click, R click (L and R in turn)" DAGGER, {N::a, N::lr_clicks_in_turn}},
+      {"panels_of_doom", "stick, A" DAGGER, {N::stick_past_20, N::a}},
   };
   return table;
 }
@@ -882,7 +923,7 @@ std::map<std::string, std::string> coverage_inputs() {
 
 TEST_CASE("mp4 E2 device proof covers every row of docs/titles/mp4.md section 18 as written") {
   const auto doc = coverage_inputs();
-  REQUIRE(doc.size() == 49);
+  REQUIRE(doc.size() == 51);
   std::set<std::string> proved;
   for (const Row& row : rows()) {
     const std::string id = full_id(row);

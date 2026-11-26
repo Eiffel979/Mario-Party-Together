@@ -46,5 +46,8 @@ PartySnapshot snapshot_of(const MptMp4Party& party);
 std::optional<BoardId> board_for(std::int32_t gw_board);
 std::optional<CharacterId> character_for(std::int32_t character);
 std::optional<MinigameId> minigame_for_overlay(const char* overlay_name);
+// P1-17: whether a regular party can launch `minigame`: the 46 minigames of docs/titles/mp4.md 18.1's
+// confirmed list (an explicit list, not the category). False for any other ID, MP4's or not.
+bool party_eligible(const MinigameId& minigame);
 
 }  // namespace mpt::mp4

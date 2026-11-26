@@ -94,15 +94,25 @@ std::map<std::string, std::string> catalog_minigames() {
   return out;
 }
 
-// §18's table: every minigame outside Extra Room and Story (the E2 proof rows).
-bool in_coverage_table(const std::string& category) {
-  return category.find("Extra Room") == std::string::npos && category.find("Story") == std::string::npos;
+// The two Story minigames a regular party can launch: board 5's Bowser space
+// launches them for a Mega-size player (ruling M4-U3, docs/titles/mp4.md §18.1).
+// The adapter's explicit list (adapters/mp4, party_eligible()) says the same;
+// it is not linked here because it pulls in the MP4 runtime.
+bool party_story(const std::string& id) {
+  return id == "mp4.minigame.bowser_wrestling" || id == "mp4.minigame.panels_of_doom";
+}
+
+// §18's table: every minigame outside Extra Room and Story, plus the two
+// party-eligible Story ones (the E2 proof rows).
+bool in_coverage_table(const std::string& id, const std::string& category) {
+  if (category.find("Extra Room") != std::string::npos) return false;
+  return category.find("Story") == std::string::npos || party_story(id);
 }
 
 // A regular party can launch it. No board code launches the Item minigames;
 // they come only from Mini-game mode and Story (docs/titles/mp4.md §18.1).
-bool party_eligible(const std::string& category) {
-  return in_coverage_table(category) && category.find("Item") == std::string::npos;
+bool party_eligible(const std::string& id, const std::string& category) {
+  return in_coverage_table(id, category) && category.find("Item") == std::string::npos;
 }
 
 PortLayout keyboard_on_port0() {
@@ -223,18 +233,19 @@ TEST_CASE("the coverage table has the E2 rows, Item rows marked not party-eligib
   std::set<std::string> expected;
   std::set<std::string> eligible;
   for (const auto& [id, category] : catalog) {
-    if (!in_coverage_table(category)) continue;
+    if (!in_coverage_table(id, category)) continue;
     expected.insert(id);
-    if (party_eligible(category)) eligible.insert(id);
+    if (party_eligible(id, category)) eligible.insert(id);
   }
-  CHECK(expected.size() == 49);
-  CHECK(eligible.size() == 44);  // the five Item minigames are not launched by any board (§18.1)
+  CHECK(expected.size() == 51);
+  CHECK(eligible.size() == 46);  // P1-17: the five Item minigames are not launched by any board (§18.1)
   // §18.1 (PR #91, merge c8e6ace; corrected at d7c1fb0, 3cf989f and 9c51eb0):
   // the rows accepted under M4-E Option C (§18.1 at b1b2bd7), and the one row
   // not proven, Goomba's Chip Flip (an Item row, outside Option C).
   const std::set<std::string> accepted = {
       "mp4.minigame.mario_medley", "mp4.minigame.long_claw_of_the_law", "mp4.minigame.makin_waves",
-      "mp4.minigame.pair_a_sailing", "mp4.minigame.dungeon_duos", "mp4.minigame.balloon_of_doom"};
+      "mp4.minigame.pair_a_sailing", "mp4.minigame.dungeon_duos", "mp4.minigame.balloon_of_doom",
+      "mp4.minigame.bowser_wrestling"};
   const std::set<std::string> not_proven = {"mp4.minigame.goombas_chip_flip"};
   std::set<std::string> listed;
   int proven = 0;
@@ -254,7 +265,16 @@ TEST_CASE("the coverage table has the E2 rows, Item rows marked not party-eligib
     // Sign-off cites the game-side proof and its merge, and says proven or not.
     CHECK(c[7].find("\xC2\xA7" "18.1") != std::string::npos);
     CHECK(c[7].find("\xC2\xA7" "18.1 @ `") != std::string::npos);
-    if (accepted.count(id) == 1) {
+    // Category: the two M4-U3 Story rows say they are party-eligible.
+    CHECK((c[2] == "Story (party-eligible: board 5's Bowser space)") == party_story(id));
+    if (id == "mp4.minigame.bowser_wrestling") {
+      CHECK(c[7] == "accepted (M4-E Option C): game side partly proven, A proven, L/R clicks not proven, "
+                    "reason \xC2\xA7" "18.1 @ `c5f2e62`; device @ `248350b`");
+      ++accepted_rows;
+    } else if (id == "mp4.minigame.panels_of_doom") {
+      CHECK(c[7] == "proven: device @ `248350b`, game side \xC2\xA7" "18.1 @ `c5f2e62` (rerun at `e7dde31`)");
+      ++proven;
+    } else if (accepted.count(id) == 1) {
       CHECK(eligible.count(id) == 1);  // Option C covers party-eligible rows only
       CHECK(c[7] == "accepted (M4-E Option C): game side partly proven, reason \xC2\xA7" "18.1 @ `b1b2bd7`");
       ++accepted_rows;
@@ -276,8 +296,8 @@ TEST_CASE("the coverage table has the E2 rows, Item rows marked not party-eligib
     CHECK(overridden == (mp4_profile().minigames.count(id) == 1));
   }
   CHECK(listed == expected);
-  CHECK(proven == 42);
-  CHECK(accepted_rows == 6);
+  CHECK(proven == 43);
+  CHECK(accepted_rows == 7);
   CHECK(not_proven_rows == 1);
 }
 

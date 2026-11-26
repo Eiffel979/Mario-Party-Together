@@ -32,6 +32,7 @@ struct CharacterEntry {
 extern const std::array<BoardEntry, 8> kBoards;
 extern const std::array<MinigameEntry, 61> kMinigames;
 extern const std::array<CharacterEntry, 8> kCharacters;
+extern const std::array<const char*, 46> kPartyEligible;  // P1-17, catalog.cpp
 
 // Every board, minigame and character, in the tables' order.
 Catalog mp4_catalog();
