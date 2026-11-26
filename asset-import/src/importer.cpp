@@ -122,9 +122,11 @@ IdentifyReport Importer::identify(const std::filesystem::path& path) const {
       if (size != kGcFullDiscSize) report.message += " (The image also looks truncated or trimmed.)";
       return report;
     }
-    for (const KnownDump* known : candidates) {
-      // The header says this is a version we support, but the hashes differ.
-      report.message = "This disc says it is " + describe(*known) +
+    // Every candidate left is supported (the loop above returned on any that is not).
+    // The header says this is a version we support, but the hashes differ.
+    if (!candidates.empty()) {
+      const KnownDump& known = *candidates.front();
+      report.message = "This disc says it is " + describe(known) +
                        ", but it does not match the verified dump of that version.";
       std::string damage;
       if (!GcDisc::open(*gc_source, damage)) {
