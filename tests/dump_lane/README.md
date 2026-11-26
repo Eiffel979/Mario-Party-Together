@@ -168,6 +168,34 @@ mpt_dump_lane --boot mp4 --verify-replay FILE [--frames N] [--frame-log FILE] [-
   (`Mp4Runtime::setTestGameplayFlags`), so `--party-board 5` can reach Bowser's Gnarly Party. No replay
   records the flag, so the lane refuses it with `--replay`, and such a run is diagnosis only.
 
+### Party events (P1-17)
+
+`mpt_dump_lane --boot mp4 --party-events`, the CTest test `dump_lane_mp4_party_events` (label `dump`),
+checks the `PartyEvent` sequence and the final `PartySnapshot` of a whole party:
+
+- **The replay.** It plays the M4-01 autopilot party (seed 1, Toad's Midway Madness, 20 turns) from
+  `MPT_MP4_PARTY_REPLAY`, or from `<build cache>/dump-lane/mp4_party_seed1.mptr`. If that file is
+  missing, the run records it there with `--party` and then exits as skipped (77): the replay is
+  verified in a fresh process, never in the one that recorded it. The replay is your own game run.
+  The lane refuses a replay path inside the repository or inside `MPT_DUMP_DIR`, and it is never a
+  committed fixture (`tests/replays/` is for those, under ruling M4-F).
+- **The checks.** A run that finds the replay plays it on a fresh `Session` with `verify_replay`
+  (every checkpoint's state hash and party digest), prints the Director's events and the final
+  seats, and then applies `check_full_party` (`dump_lane.h`). Those are structural rules, not a
+  recorded golden:
+  - the phases go none, setup, board, then board and minigame in turn, then results and finished,
+    and never back;
+  - turns 1 to 20 each start once, in order;
+  - every minigame that starts ends before the next starts, and each is an `mp4` minigame in the
+    catalog and party-eligible;
+  - at least one minigame per turn;
+  - the board and turn count hold throughout;
+  - the final snapshot is `finished` on turn 20/20 on Toad's Midway Madness, with player 1 human and
+    players 2 to 4 CPU, every seat with a character and no negative coins or stars.
+  `tests/unit/test_dump_lane_party.cpp` proves the rules in CI on synthetic parties.
+- The option takes no other party option: seed 1 and the default board only (exit 2 otherwise).
+  A full run takes about 8 minutes on the reference machine.
+
 ## E5: the in-process save-state round trip, and a fresh runtime on the kept module (MP4, M4-16)
 
 ```

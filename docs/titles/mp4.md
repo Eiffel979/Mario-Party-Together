@@ -1242,6 +1242,33 @@ The #49 review moved libco's stack high-water statics out of the range as well.
 
 **Party-eligible list (P1-17, confirmed 2026-11-25).** The minigames a regular party can launch are confirmed from the board code (§18.1, "Which minigames a party can launch", with file and line for every path): 46 minigames, the 44 rows §18 marked plus Bowser Wrestling and Panels of Doom, which Bowser's Gnarly Party launches for a Mega-size player. The adapter answers `mpt::mp4::party_eligible(id)` from that explicit list, not from the category, and `tests/unit/test_mp4_host.cpp` pins the 46 IDs and the 15 exclusions (the five Item rows, The Final Battle and the nine Extra Room rows). No `core/` type changed.
 
+**The adapter's other calls in Phase 1 (P1-17).** `applyRuleset` accepts only an empty ruleset (the seed is always set by the host) and fails with a reason for any rule. `writeParty` is unused in Phase 1: the Director is a read-only mirror (ADR 0005), so the call does nothing. `launchMinigame` fails with a reason and `pollMinigameResult` reports nothing; both wait for Phase 5 (ADR 0002). `tests/unit/test_mp4_host.cpp` pins all four on an unbooted runtime: every rule field is rejected, and `writeParty` changes neither the party read nor the state hash. No `core/` type changed.
+
+**Full-party event test (P1-17, 2026-11-26, Windows, Release, null backend).** `mpt_dump_lane --boot mp4 --party-events` (`dump_lane_mp4_party_events`, label `dump`; `tests/dump_lane/README.md`, "Party events") plays the M4-01 autopilot replay on a fresh `Session` and checks its `PartyEvent` sequence and final `PartySnapshot` against structural rules (`check_full_party`, `dump_lane.h`), not against a recorded golden. The replay was recorded locally into the build cache and is never committed (M4-F). Its recording run gave the M4-01 numbers below unchanged: finished at frame 250,789, 250,800 frames, 45,967 input runs, 4,180 checkpoints, 6,168,073 bytes, last hash `53b119efe3f28194`.
+- **Two separate verifying processes.** Each played 250,800 of 250,800 frames and matched 4,180 of 4,180 checkpoints, with last hash `53b119efe3f28194` and the Director at `finished`. Each saw the same 124 events: 25 minigames over 20 turns, `results` at frame 246,053 and `finished` at 250,788 (the step after which the Director saw it). Each printed `party events: PASS`.
+- **Final snapshot.** Turn 20/20 on `mp4.board.toads_midway_madness`:
+
+  | Seat | Character | Seat type | Stars | Coins |
+  |---|---|---|---|---|
+  | 1 | `mp4.character.mario` | human | 1 | 67 |
+  | 2 | `mp4.character.luigi` | CPU | 2 | 70 |
+  | 3 | `mp4.character.peach` | CPU | 0 | 116 |
+  | 4 | `mp4.character.yoshi` | CPU | 2 | 160 |
+
+- **The minigames, as evidence only** (the test does not pin them). Frames are when each started; all 25 are party-eligible.
+  - Turns 1–3: `paratrooper_plunge` (11,181), `long_claw_of_the_law` (18,591), `fruits_of_doom` (22,787), and on turn 3 also `team_treasure_trek` (35,431).
+  - Turns 4–9: `cliffhangers` (46,697), `fish_n_drips` (60,238), `money_belts` (72,323), `candlelight_flight` (81,200), `hide_and_go_boom` (93,181), `the_great_deflate` (108,389).
+  - Turn 10: `reversal_of_fortune` (111,808), then `pair_a_sailing` (122,268).
+  - Turns 11–13: `right_oar_left` (133,193), `blame_it_on_the_crane` (144,994), `mario_medley` (154,935).
+  - Turn 14: `reversal_of_fortune` twice (160,928 and 166,079), then `team_treasure_trek` (170,853).
+  - Turns 15–16: `toads_quick_draw` (180,071), `hop_or_pop` (195,778).
+  - Turn 17: `bowsers_bigger_blast` (203,185), then `candlelight_flight` (215,255).
+  - Turns 18–20: `take_a_breather` (224,503), `goooooooal` (229,786), `cliffhangers` (235,477).
+- **Event sequence details.**
+  - Phases: `setup` at 3,914, `board` at 4,306, and `results` at 246,053, 356 frames after the last minigame returned to the board (245,697).
+  - Turn 1 starts in `setup`: mentDll's party read already holds turn 1/20.
+- **Found on the way: a second party session in one process diverges.** The first version of the test verified the replay in the process that had just recorded it. Its fresh `Session` differed from the replay's first checkpoint, at frame 60 (hash `72644e94f129beb9`). Verifying in a separate process matches every checkpoint, so the test now records in one run, exits as skipped, and verifies in the next. The cause is not yet known. Something the kept game module carries (ADR 0008, "Game module kept loaded for the process") seems to survive a whole party, while `--reboot-trail` shows that a fresh runtime after a short run matches. This is an in-process E5 question, recorded here for follow-up, and it has no effect on the separate-process checks.
+
 **Scripted party on the dump lane.** `mpt_dump_lane --boot mp4` with a `--press` script runs this sequence with A presses (START at the title and on the minigame's instruction screen):
 - title → file select on the blank card → mode select (the card picker; the first card is party mode);
 - party setup (`mentDll`);
