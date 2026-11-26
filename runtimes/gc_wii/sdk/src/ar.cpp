@@ -1,4 +1,5 @@
 // ARAM in the arena. DMA is a synchronous copy; callbacks are interrupts.
+#include <cstddef>
 #include <cstring>
 #include <string>
 
@@ -13,13 +14,23 @@ void copy(u32 type, uintptr_t mainmem, u32 aram_addr, u32 length, const char* wh
   if (std::uint64_t{aram_addr} + length > kAramBytes) fatal(std::string(what) + ": ARAM address out of range");
   if (length == 0) return;
   if (type != ARAM_DIR_MRAM_TO_ARAM && type != ARAM_DIR_ARAM_TO_MRAM) fatal(std::string(what) + ": bad DMA direction");
-  // SdkConfig::aram_guards: ARAM the title says nothing may move bytes to or from.
-  for (const SdkConfig::AramGuard& g : impl().config.aram_guards) {
-    if (aram_addr < g.end && g.begin < std::uint64_t{aram_addr} + length) {
-      fatal(g.label + ": " + what + (type == ARAM_DIR_MRAM_TO_ARAM ? " main RAM to ARAM" : " ARAM to main RAM") +
-            " [" + std::to_string(aram_addr) + ", " + std::to_string(std::uint64_t{aram_addr} + length) +
-            ") overlaps [" + std::to_string(g.begin) + ", " + std::to_string(g.end) + ")");
+  // SdkConfig::aram_guards: ARAM the title says nothing may move bytes to or from. The overlapping guard is
+  // found by index and fatal() is called after the loop: fatal() never returns to this frame (see its
+  // declaration), so a range-for iterator alive across it would stay registered with the guard vector, and
+  // MSVC's Debug iterator checks would walk it on freed coroutine stack when the vector is later destroyed.
+  const auto& guards = impl().config.aram_guards;
+  std::size_t hit = guards.size();
+  for (std::size_t i = 0; i < guards.size(); ++i) {
+    if (aram_addr < guards[i].end && guards[i].begin < std::uint64_t{aram_addr} + length) {
+      hit = i;
+      break;
     }
+  }
+  if (hit != guards.size()) {
+    const SdkConfig::AramGuard& g = guards[hit];
+    fatal(g.label + ": " + what + (type == ARAM_DIR_MRAM_TO_ARAM ? " main RAM to ARAM" : " ARAM to main RAM") +
+          " [" + std::to_string(aram_addr) + ", " + std::to_string(std::uint64_t{aram_addr} + length) +
+          ") overlaps [" + std::to_string(g.begin) + ", " + std::to_string(g.end) + ")");
   }
   ++impl().io_aram_transfers;
   auto* ram = reinterpret_cast<std::byte*>(mainmem);

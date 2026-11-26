@@ -368,6 +368,14 @@ void dispatch(const Event& e);
 // step's own host-side code never calls it. Reaching it from host code means the
 // C API was called outside game code, a programming error reported by throwing
 // std::logic_error. It never aborts the process.
+//
+// Rule for callers: in a game thread fatal() switches to the host and never returns to the calling frame,
+// so nothing in that frame is ever destroyed. Call it with no live iterator, lock or other object whose
+// destructor another object depends on: a range-for or iterator into a container that outlives the
+// coroutine stays registered with it (MSVC's Debug iterator checks then walk the dead iterator), and a
+// held lock is never released. Find what you need by index, leave the loop or scope, then call fatal().
+// The message argument and other plain temporaries are only abandoned (their memory is not freed); that
+// is the accepted cost of one fault per runtime.
 [[noreturn]] void fatal(const std::string& message);
 void report(const char* text);
 
