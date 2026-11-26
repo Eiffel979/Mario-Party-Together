@@ -122,13 +122,14 @@ constexpr bool kMtxAsserts = true;
 bool asserts_normalize(const Vec& v) {
   return kMtxAsserts && v.x * v.x == 0.0f && v.y * v.y == 0.0f && v.z * v.z == 0.0f;
 }
-// A squared magnitude that overflows to +inf normalizes to a zero vector without asserting (frsqrte
-// of +inf is 0), which C_VECReflect may then normalize again. Such inputs are skipped too.
+// C_VECReflect normalizes -a and b, then its result. A finite a whose squared magnitude overflows to
+// +inf normalizes to a zero vector without asserting (frsqrte of +inf is 0), so the result is zero
+// and its normalization asserts. The same overflow in b only zeroes the normal, and the result is
+// then -a's unit vector; inf or NaN components give NaN, which passes the check.
 bool asserts_reflect(const Vec& a, const Vec& b) {
-  const auto unsafe = [](const Vec& v) {
-    return asserts_normalize(v) || (kMtxAsserts && !std::isfinite(v.x * v.x + v.y * v.y + v.z * v.z));
-  };
-  return unsafe(a) || unsafe(b);
+  const bool finite = std::isfinite(a.x) && std::isfinite(a.y) && std::isfinite(a.z);
+  const bool overflows = finite && std::isinf(a.x * a.x + a.y * a.y + a.z * a.z);
+  return asserts_normalize(a) || asserts_normalize(b) || (kMtxAsserts && overflows);
 }
 
 // Hard inputs for reciprocal square roots and magnitudes.
@@ -394,11 +395,14 @@ void dump_raw(const char* path) {
 
 TEST_CASE("aurora MTX matches its golden values") {
   if (const char* dump = std::getenv("MPT_GX_MTX_DUMP")) {
+    // With asserts on, skipped values are placeholders, not results (see the header comment).
+    REQUIRE_MESSAGE(!kMtxAsserts, "dump raw values from a release (NDEBUG) build");
     dump_raw(dump);
   }
   if (std::getenv("MPT_GX_MTX_PRINT") != nullptr) {
     // Goldens come only from the pinned aurora (ADR 0009 section 1).
     REQUIRE_MESSAGE(MPT_GX_AURORA_PINNED, "refusing to record goldens from an unpinned aurora checkout");
+    REQUIRE_MESSAGE(!kMtxAsserts, "regenerate goldens from a release (NDEBUG) build");
     std::printf("# Golden values for test_mtx.cpp (see its header). Recorded on the reference machine.\n");
     for (const Group& g : kGroups) {
       const Bits b = g.run();
