@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <cstring>
 #include <optional>
+#include <set>
+#include <string>
 
 #include "mpt/core/content_id.h"
 #include "mpt/core/ruleset.h"
@@ -280,4 +282,78 @@ TEST_CASE("Mp4Adapter snapshot_of on the raw end-of-party sequence") {
     CHECK(snap.current_minigame.has_value() == (s.phase == mpt::PartyPhase::minigame));
     CHECK(mpt::test::check_snapshot(snap, catalog).empty());
   }
+}
+
+// P1-17: the minigames a regular party can launch (docs/titles/mp4.md 18.1). The 44 rows section 18
+// marks party-eligible, plus Bowser Wrestling and Panels of Doom, which Bowser's Gnarly Party launches on
+// its Bowser space for a Mega-size player. Written out here so a change to the adapter's list shows.
+TEST_CASE("Mp4 party_eligible: exactly the 46 minigames a regular party can launch") {
+  const std::set<std::string> expected = {
+      "mp4.minigame.manta_rings",
+      "mp4.minigame.slime_time",
+      "mp4.minigame.booksquirm",
+      "mp4.minigame.trace_race",
+      "mp4.minigame.mario_medley",
+      "mp4.minigame.avalanche",
+      "mp4.minigame.domination",
+      "mp4.minigame.paratrooper_plunge",
+      "mp4.minigame.toads_quick_draw",
+      "mp4.minigame.three_throw",
+      "mp4.minigame.photo_finish",
+      "mp4.minigame.mr_blizzards_brigade",
+      "mp4.minigame.bob_omb_breakers",
+      "mp4.minigame.long_claw_of_the_law",
+      "mp4.minigame.stamp_out",
+      "mp4.minigame.candlelight_flight",
+      "mp4.minigame.makin_waves",
+      "mp4.minigame.hide_and_go_boom",
+      "mp4.minigame.tree_stomp",
+      "mp4.minigame.fish_n_drips",
+      "mp4.minigame.hop_or_pop",
+      "mp4.minigame.money_belts",
+      "mp4.minigame.goooooooal",
+      "mp4.minigame.blame_it_on_the_crane",
+      "mp4.minigame.the_great_deflate",
+      "mp4.minigame.revers_a_bomb",
+      "mp4.minigame.right_oar_left",
+      "mp4.minigame.cliffhangers",
+      "mp4.minigame.team_treasure_trek",
+      "mp4.minigame.pair_a_sailing",
+      "mp4.minigame.order_up",
+      "mp4.minigame.dungeon_duos",
+      "mp4.minigame.cheep_cheep_sweep",
+      "mp4.minigame.darts_of_doom",
+      "mp4.minigame.fruits_of_doom",
+      "mp4.minigame.balloon_of_doom",
+      "mp4.minigame.chain_chomp_fever",
+      "mp4.minigame.paths_of_peril",
+      "mp4.minigame.bowsers_bigger_blast",
+      "mp4.minigame.butterfly_blitz",
+      "mp4.minigame.mario_speedwagons",
+      "mp4.minigame.reversal_of_fortune",
+      "mp4.minigame.rumble_fishing",
+      "mp4.minigame.take_a_breather",
+      "mp4.minigame.bowser_wrestling",
+      "mp4.minigame.panels_of_doom",
+  };
+  REQUIRE(expected.size() == 46);
+  const mpt::Catalog catalog = mpt::mp4::Mp4Adapter(dummy_runtime()).catalog();
+  std::set<std::string> eligible;
+  for (const mpt::CatalogEntry& m : catalog.minigames)
+    if (mpt::mp4::party_eligible(m.id)) eligible.insert(m.id.str());
+  CHECK(eligible == expected);
+  // The excluded rows, by name: the five Item minigames, the other Story rows and every Extra Room row.
+  for (const char* id : {"mp4.minigame.bowser_bop", "mp4.minigame.mystic_match_em", "mp4.minigame.archaeologuess",
+                         "mp4.minigame.goombas_chip_flip", "mp4.minigame.kareening_koopa", "mp4.minigame.the_final_battle",
+                         "mp4.minigame.beach_volley_folly", "mp4.minigame.barrel_baron", "mp4.minigame.jigsaw_jitters",
+                         "mp4.minigame.challenge_booksquirm", "mp4.minigame.mushroom_medic", "mp4.minigame.doors_of_doom",
+                         "mp4.minigame.bob_omb_x_ing", "mp4.minigame.goomba_stomp", "mp4.minigame.panel_panic"}) {
+    CAPTURE(id);
+    const std::optional<mpt::ContentId> parsed = mpt::ContentId::parse(id);
+    REQUIRE(parsed.has_value());
+    CHECK_FALSE(mpt::mp4::party_eligible(*parsed));
+  }
+  CHECK(catalog.minigames.size() - eligible.size() == 15);
+  // Not an MP4 minigame at all.
+  CHECK_FALSE(mpt::mp4::party_eligible(*mpt::ContentId::parse("mp4.board.toads_midway_madness")));
 }

@@ -86,6 +86,61 @@ const std::array<MinigameEntry, 61> kMinigames = {{
     {463, 7, "mp4.minigame.panel_panic", "Panel Panic"},
 }};
 
+// P1-17: the minigames a regular party can launch, as an explicit list (docs/titles/mp4.md 18.1, "Where the
+// minigames of a party come from"). Not derived from the category: the roulette (board/mg_setup.c) draws
+// 4-player, 1-vs-3 and 2-vs-2, and the Battle, Bowser and Fortune spaces launch their own rows, but
+// Bowser's Gnarly Party (w06Dll/bowser.c) also launches two Story-category rows (Bowser Wrestling, Panels
+// of Doom) on its Bowser space for a Mega-size player, and no party path reaches the Item category.
+const std::array<const char*, 46> kPartyEligible = {
+    "mp4.minigame.manta_rings",  // m401
+    "mp4.minigame.slime_time",  // m402
+    "mp4.minigame.booksquirm",  // m403
+    "mp4.minigame.trace_race",  // m404
+    "mp4.minigame.mario_medley",  // m405
+    "mp4.minigame.avalanche",  // m406
+    "mp4.minigame.domination",  // m407
+    "mp4.minigame.paratrooper_plunge",  // m408
+    "mp4.minigame.toads_quick_draw",  // m409
+    "mp4.minigame.three_throw",  // m410
+    "mp4.minigame.photo_finish",  // m411
+    "mp4.minigame.mr_blizzards_brigade",  // m412
+    "mp4.minigame.bob_omb_breakers",  // m413
+    "mp4.minigame.long_claw_of_the_law",  // m414
+    "mp4.minigame.stamp_out",  // m415
+    "mp4.minigame.candlelight_flight",  // m416
+    "mp4.minigame.makin_waves",  // m417
+    "mp4.minigame.hide_and_go_boom",  // m418
+    "mp4.minigame.tree_stomp",  // m419
+    "mp4.minigame.fish_n_drips",  // m420
+    "mp4.minigame.hop_or_pop",  // m421
+    "mp4.minigame.money_belts",  // m422
+    "mp4.minigame.goooooooal",  // m423
+    "mp4.minigame.blame_it_on_the_crane",  // m424
+    "mp4.minigame.the_great_deflate",  // m425
+    "mp4.minigame.revers_a_bomb",  // m426
+    "mp4.minigame.right_oar_left",  // m427
+    "mp4.minigame.cliffhangers",  // m428
+    "mp4.minigame.team_treasure_trek",  // m429
+    "mp4.minigame.pair_a_sailing",  // m430
+    "mp4.minigame.order_up",  // m431
+    "mp4.minigame.dungeon_duos",  // m432
+    "mp4.minigame.cheep_cheep_sweep",  // m434
+    "mp4.minigame.darts_of_doom",  // m435
+    "mp4.minigame.fruits_of_doom",  // m436
+    "mp4.minigame.balloon_of_doom",  // m437
+    "mp4.minigame.chain_chomp_fever",  // m438
+    "mp4.minigame.paths_of_peril",  // m439
+    "mp4.minigame.bowsers_bigger_blast",  // m440
+    "mp4.minigame.butterfly_blitz",  // m441
+    "mp4.minigame.mario_speedwagons",  // m443
+    "mp4.minigame.reversal_of_fortune",  // m444
+    "mp4.minigame.rumble_fishing",  // m455
+    "mp4.minigame.take_a_breather",  // m456
+    "mp4.minigame.bowser_wrestling",  // m457
+    "mp4.minigame.panels_of_doom",  // m458
+};
+
+
 // GWPlayerCfg.character: the game's character order (CHARNO_*, 0-7).
 const std::array<CharacterEntry, 8> kCharacters = {{
     {0, "mp4.character.mario", "Mario"},
@@ -125,6 +180,12 @@ std::optional<CharacterId> character_for(std::int32_t character) {
   for (const CharacterEntry& ch : kCharacters)
     if (ch.value == character) return id_of(ch.id);
   return std::nullopt;
+}
+
+bool party_eligible(const MinigameId& minigame) {
+  for (const char* id : kPartyEligible)
+    if (minigame.str() == id) return true;
+  return false;
 }
 
 std::optional<MinigameId> minigame_for_overlay(const char* overlay_name) {
