@@ -124,8 +124,9 @@ mpt_set_warnings(mpt_dump_lane)
 add_test(NAME dump_lane_replays COMMAND mpt_dump_lane)
 set_tests_properties(dump_lane_replays PROPERTIES LABELS dump SKIP_RETURN_CODE 77)
 # P1-17: the full-party event test on the M4-01 autopilot replay (tests/dump_lane/README.md, "Party
-# events"). The replay comes from MPT_MP4_PARTY_REPLAY or is recorded into the build cache on the first
-# run (a whole party, about an hour); it is never in the repository. Skipped (77) without MPT_DUMP_DIR.
+# events"). The replay comes from MPT_MP4_PARTY_REPLAY or is recorded into the build cache by the first
+# run, which then skips (77): the next runs verify it, each in a fresh process. The replay is never in
+# the repository. Skipped (77) without MPT_DUMP_DIR.
 if(TARGET mpt_mp4_runtime)
   add_test(NAME dump_lane_mp4_party_events COMMAND mpt_dump_lane --boot mp4 --party-events)
   set_tests_properties(dump_lane_mp4_party_events PROPERTIES LABELS dump SKIP_RETURN_CODE 77 TIMEOUT 14400)

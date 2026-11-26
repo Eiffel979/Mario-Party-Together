@@ -1249,8 +1249,8 @@ int check_full_party_events(mpt::Session& session) {
 
 // `--party-events`: the replay named by MPT_MP4_PARTY_REPLAY, or else `<build cache>/dump-lane/
 // mp4_party_seed1.mptr`, recorded there by the M4-01 autopilot (seed 1, the default board) when it is
-// missing. Then the replay is played on a fresh Session, checked (verify_replay) and its events checked
-// against the full-party rules. The replay is the user's own game run: never in the repository (main
+// missing; that run then exits as skipped (77). A run that finds the replay plays it on a fresh Session,
+// checks it (verify_replay) and checks its events against the full-party rules. The replay is the user's own game run: never in the repository (main
 // refuses that) or in MPT_DUMP_DIR.
 int party_events_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::TitleRegistry& registry,
                      const std::filesystem::path& replay) {
@@ -1275,6 +1275,10 @@ int party_events_run(const BootOptions& options, const mpt::VerifiedDump& dump, 
       std::printf("dump lane: party events: could not move the replay into place\n");
       return 1;
     }
+    // The replay is verified in a fresh process, never in the one that recorded it: a Session started
+    // after a whole party in the same process diverged at frame 60 (docs/titles/mp4.md section 21).
+    std::printf("dump lane: party events: recorded; run again to verify it in a fresh process, skipping\n");
+    return kSkip;
   }
   BootOptions verify = options;
   verify.party_events = false;
