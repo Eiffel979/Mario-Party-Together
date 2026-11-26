@@ -19,6 +19,8 @@
 #include <optional>
 #include <vector>
 
+#include "expected_crash.h"
+
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -134,6 +136,7 @@ inline std::optional<int> guard_reload_selftest_if_asked(int argc, char** argv) 
     std::puts("usage: mpt_dump_lane [--supervise] --guard-reload-selftest STUB keep|reload");
     return 2;
   }
+  expect_crash_without_dialog();  // `reload` fails fast on purpose (expected_crash.h)
   const char* stub = argv[at + 1];
   const bool reload = std::strcmp(argv[at + 2], "reload") == 0;
   HMODULE module = LoadLibraryA(stub);

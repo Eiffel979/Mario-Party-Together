@@ -38,3 +38,6 @@ mpt-build-cache/
 
 # Pinned game-source checkouts for developer builds (ADR 0009)
 /external/
+
+# Python bytecode (tests/compliance and other scripts)
+__pycache__/
