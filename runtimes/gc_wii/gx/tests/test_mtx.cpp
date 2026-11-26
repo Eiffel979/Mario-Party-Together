@@ -13,6 +13,14 @@
 // change with the compiler version and optimisation level (on the reference machine, -Od and -O2
 // already disagree on 38 NaN signs in vec_c). Whether a result is NaN is still checked.
 //
+// aurora's MTX keeps the Dolphin SDK's debug assertions as C asserts, so with asserts on (no NDEBUG)
+// VECNormalize aborts on a vector whose squared magnitude is zero, as the SDK's debug library panics.
+// The retail SDK has no such check: frsqrte(0) is +inf and 0 * inf is NaN, so a zero vector
+// normalizes to NaN, and that Release result is what the goldens pin (the spot case below checks it).
+// With asserts on, the inputs that would assert are skipped: their values keep their places in the
+// group but are left out, and only the chunks holding none of them are compared with the goldens.
+// The full comparison, hash included, runs in Release.
+//
 // The golden values are in mtx_golden.txt. To re-record after an intended change (a pin bump or a
 // patch to MTX), run with MPT_GX_MTX_PRINT=1 and replace that file with the output.
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
@@ -42,13 +50,28 @@ struct Bits {
   std::vector<uint32_t> v;
   std::vector<uint32_t> value_case;  // index into labels, per value
   std::vector<std::string> labels;   // one per case: what went in
+  std::vector<bool> skipped;         // per value: left out because the call would assert
   void begin_case(std::string label) { labels.push_back(std::move(label)); }
+  void push(uint32_t bits, bool skip) {
+    v.push_back(bits);
+    skipped.push_back(skip);
+    value_case.push_back(labels.empty() ? 0u : static_cast<uint32_t>(labels.size() - 1));
+  }
   void add(float f) {
     uint32_t bits = std::bit_cast<uint32_t>(f);
     if (std::isnan(f)) bits = 0x7FC00000u;  // see the header comment
-    v.push_back(bits);
-    value_case.push_back(labels.empty() ? 0u : static_cast<uint32_t>(labels.size() - 1));
+    push(bits, false);
   }
+  // Holds the places of n values that were not computed (see the header comment).
+  void skip(size_t n) {
+    for (size_t i = 0; i < n; ++i) push(0u, true);
+  }
+  bool chunk_skipped(size_t c) const {
+    for (size_t i = c * kChunk; i < std::min(v.size(), (c + 1) * kChunk); ++i)
+      if (skipped[i]) return true;
+    return false;
+  }
+  bool any_skipped() const { return std::find(skipped.begin(), skipped.end(), true) != skipped.end(); }
   void add(const Vec& x) {
     add(x.x);
     add(x.y);
@@ -86,6 +109,28 @@ std::string hex(float f) {
 std::string hex(const Vec& v) { return "(" + hex(v.x) + " " + hex(v.y) + " " + hex(v.z) + ")"; }
 
 float f_from_bits(uint32_t b) { return std::bit_cast<float>(b); }
+
+// Whether aurora's MTX asserts. It is built in the same configuration as this test.
+#ifdef NDEBUG
+constexpr bool kMtxAsserts = false;
+#else
+constexpr bool kMtxAsserts = true;
+#endif
+
+// VECNormalize asserts on a zero squared magnitude. The sum of the squares is zero exactly when each
+// square is, whatever order PSVEC and C_VEC add them in (a NaN square is not zero).
+bool asserts_normalize(const Vec& v) {
+  return kMtxAsserts && v.x * v.x == 0.0f && v.y * v.y == 0.0f && v.z * v.z == 0.0f;
+}
+// C_VECReflect normalizes -a and b, then its result. A finite a whose squared magnitude overflows to
+// +inf normalizes to a zero vector without asserting (frsqrte of +inf is 0), so the result is zero
+// and its normalization asserts. The same overflow in b only zeroes the normal, and the result is
+// then -a's unit vector; inf or NaN components give NaN, which passes the check.
+bool asserts_reflect(const Vec& a, const Vec& b) {
+  const bool finite = std::isfinite(a.x) && std::isfinite(a.y) && std::isfinite(a.z);
+  const bool overflows = finite && std::isinf(a.x * a.x + a.y * a.y + a.z * a.z);
+  return asserts_normalize(a) || asserts_normalize(b) || (kMtxAsserts && overflows);
+}
 
 // Hard inputs for reciprocal square roots and magnitudes.
 std::vector<float> hard_scalars() {
@@ -132,8 +177,12 @@ Bits group_vec_rsqrt() {
   for (const Vec& v : hard_vectors()) {
     b.begin_case("v=" + hex(v) + " -> PSVECNormalize xyz, PSVECMag, PSVECSquareMag");
     Vec n{};
-    PSVECNormalize(&v, &n);
-    b.add(n);
+    if (asserts_normalize(v)) {
+      b.skip(3);
+    } else {
+      PSVECNormalize(&v, &n);
+      b.add(n);
+    }
     b.add(PSVECMag(&v));
     b.add(PSVECSquareMag(&v));
   }
@@ -158,16 +207,28 @@ Bits group_vec_c() {
     b.begin_case("a=" + hex(vs[i]) + " b=" + hex(vs[i + 1]) +
                  " -> Normalize(a) xyz, Mag(a), Cross xyz, Dot, HalfAngle xyz, Reflect xyz");
     Vec r{};
-    C_VECNormalize(&vs[i], &r);
-    b.add(r);
+    if (asserts_normalize(vs[i])) {
+      b.skip(3);
+    } else {
+      C_VECNormalize(&vs[i], &r);
+      b.add(r);
+    }
     b.add(C_VECMag(&vs[i]));
     C_VECCrossProduct(&vs[i], &vs[i + 1], &r);
     b.add(r);
     b.add(C_VECDotProduct(&vs[i], &vs[i + 1]));
-    C_VECHalfAngle(&vs[i], &vs[i + 1], &r);
-    b.add(r);
-    C_VECReflect(&vs[i], &vs[i + 1], &r);
-    b.add(r);
+    if (asserts_normalize(vs[i]) || asserts_normalize(vs[i + 1])) {
+      b.skip(3);
+    } else {
+      C_VECHalfAngle(&vs[i], &vs[i + 1], &r);
+      b.add(r);
+    }
+    if (asserts_reflect(vs[i], vs[i + 1])) {
+      b.skip(3);
+    } else {
+      C_VECReflect(&vs[i], &vs[i + 1], &r);
+      b.add(r);
+    }
   }
   return b;
 }
@@ -334,11 +395,14 @@ void dump_raw(const char* path) {
 
 TEST_CASE("aurora MTX matches its golden values") {
   if (const char* dump = std::getenv("MPT_GX_MTX_DUMP")) {
+    // With asserts on, skipped values are placeholders, not results (see the header comment).
+    REQUIRE_MESSAGE(!kMtxAsserts, "dump raw values from a release (NDEBUG) build");
     dump_raw(dump);
   }
   if (std::getenv("MPT_GX_MTX_PRINT") != nullptr) {
     // Goldens come only from the pinned aurora (ADR 0009 section 1).
     REQUIRE_MESSAGE(MPT_GX_AURORA_PINNED, "refusing to record goldens from an unpinned aurora checkout");
+    REQUIRE_MESSAGE(!kMtxAsserts, "regenerate goldens from a release (NDEBUG) build");
     std::printf("# Golden values for test_mtx.cpp (see its header). Recorded on the reference machine.\n");
     for (const Group& g : kGroups) {
       const Bits b = g.run();
@@ -356,9 +420,26 @@ TEST_CASE("aurora MTX matches its golden values") {
     const Bits b = g.run();
     const auto it = golden.find(g.name);
     REQUIRE_MESSAGE(it != golden.end(), "no golden for group " << g.name);
+    INFO("group " << g.name);
+    if (b.any_skipped()) {
+      // Asserts are on: compare the chunks that hold no skipped value (see the header comment).
+      const auto chunks = b.chunk_hashes();
+      CHECK(b.v.size() == it->second.count);
+      CHECK(chunks.size() == it->second.chunks.size());
+      size_t compared = 0, differing = 0;
+      for (size_t c = 0; c < chunks.size() && c < it->second.chunks.size(); ++c) {
+        if (b.chunk_skipped(c)) continue;
+        ++compared;
+        if (chunks[c] != it->second.chunks[c]) ++differing;
+      }
+      std::printf("group %s: asserts on, compared %zu of %zu chunks\n", g.name, compared, chunks.size());
+      if (differing != 0) report_divergence(g.name, b, it->second);
+      CHECK(compared > 0);
+      CHECK(differing == 0);
+      continue;
+    }
     const bool same = b.hash() == it->second.hash && b.v.size() == it->second.count;
     if (!same) report_divergence(g.name, b, it->second);
-    INFO("group " << g.name);
     CHECK(same);
   }
 }
@@ -370,4 +451,15 @@ TEST_CASE("PSVEC reciprocal square root spot values") {
   CHECK(PSVECSquareMag(&v) == 25.0f);
   const Vec z{-0.0f, 0.0f, -0.0f};
   CHECK(PSVECMag(&z) == 0.0f);
+}
+
+TEST_CASE("zero vectors normalize to NaN, as in the retail SDK") {
+  // The retail SDK has no zero-magnitude check (see the header comment); the goldens pin this result.
+  if (kMtxAsserts) return;  // the debug check aborts first, as the SDK's debug library does
+  const Vec z{-0.0f, 0.0f, -0.0f};
+  Vec n{};
+  PSVECNormalize(&z, &n);
+  CHECK((std::isnan(n.x) && std::isnan(n.y) && std::isnan(n.z)));
+  C_VECNormalize(&z, &n);
+  CHECK((std::isnan(n.x) && std::isnan(n.y) && std::isnan(n.z)));
 }
