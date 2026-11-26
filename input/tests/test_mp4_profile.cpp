@@ -269,10 +269,10 @@ TEST_CASE("the coverage table has the E2 rows, Item rows marked not party-eligib
     CHECK((c[2] == "Story (party-eligible: board 5's Bowser space)") == party_story(id));
     if (id == "mp4.minigame.bowser_wrestling") {
       CHECK(c[7] == "accepted (M4-E Option C): game side partly proven, A proven, L/R clicks not proven, "
-                    "reason \xC2\xA7" "18.1 @ `c5f2e62`");
+                    "reason \xC2\xA7" "18.1 @ `c5f2e62`; device @ `248350b`");
       ++accepted_rows;
     } else if (id == "mp4.minigame.panels_of_doom") {
-      CHECK(c[7] == "proven: device, game side \xC2\xA7" "18.1 @ `c5f2e62` (rerun at `e7dde31`)");
+      CHECK(c[7] == "proven: device @ `248350b`, game side \xC2\xA7" "18.1 @ `c5f2e62` (rerun at `e7dde31`)");
       ++proven;
     } else if (accepted.count(id) == 1) {
       CHECK(eligible.count(id) == 1);  // Option C covers party-eligible rows only
