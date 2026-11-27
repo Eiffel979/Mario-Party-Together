@@ -1267,7 +1267,13 @@ The #49 review moved libco's stack high-water statics out of the range as well.
 - **Event sequence details.**
   - Phases: `setup` at 3,914, `board` at 4,306, and `results` at 246,053, 356 frames after the last minigame returned to the board (245,697).
   - Turn 1 starts in `setup`: mentDll's party read already holds turn 1/20.
-- **Found on the way: a second party session in one process diverges.** The first version of the test verified the replay in the process that had just recorded it. Its fresh `Session` differed from the replay's first checkpoint, at frame 60 (hash `72644e94f129beb9`). Verifying in a separate process matches every checkpoint, so the test now records in one run, exits as skipped, and verifies in the next. The cause is not yet known. Something the kept game module carries (ADR 0008, "Game module kept loaded for the process") seems to survive a whole party, while `--reboot-trail` shows that a fresh runtime after a short run matches. This is an in-process E5 question, recorded here for follow-up, and it has no effect on the separate-process checks.
+- **Found on the way: a second party session in one process diverges.** The first version of the test verified the replay in the process that had just recorded it. Its fresh `Session` differed from the replay's first checkpoint, at frame 60 (hash `72644e94f129beb9`). Verifying in a separate process matches every checkpoint, so the test now records in one run, exits as skipped, and verifies in the next. **Cause** (found by qa-reviewer in the review of this branch):
+  - The module stays loaded for the process (ADR 0008, "Game module kept loaded for the process"), and `boot()` (`runtimes/gc_wii/mp4/src/abi.cpp`) restores only the game core's writable data at boot.
+  - A REL's data and bss are restored only when that REL is linked (`mpt_mp4_rel_link`, `rel_loader.c`).
+  - Every REL's range is hashed and saved (`stateRegions`, `abi.cpp`), so a fresh runtime on the kept module boots with the previous runtime's REL state in its hash, and in the game for a REL the boot path reads before linking it. The comment above `LoadImage` in `abi.cpp`, which says the REL images are restored at boot, is wrong.
+  - `--reboot-trail` missed it: the few RELs a title-screen run touches are linked again before frame 60, and that run compares only from frame 100.
+
+  The fix, restoring every REL's image at boot, is a separate follow-up (runtime-gc-wii). The separate-process checks above are not affected, since each process loads the module fresh.
 
 **Scripted party on the dump lane.** `mpt_dump_lane --boot mp4` with a `--press` script runs this sequence with A presses (START at the title and on the minigame's instruction screen):
 - title → file select on the blank card → mode select (the card picker; the first card is party mode);

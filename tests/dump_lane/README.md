@@ -174,7 +174,7 @@ mpt_dump_lane --boot mp4 --verify-replay FILE [--frames N] [--frame-log FILE] [-
 checks the `PartyEvent` sequence and the final `PartySnapshot` of a whole party:
 
 - **The replay.** It plays the M4-01 autopilot party (seed 1, Toad's Midway Madness, 20 turns) from
-  `MPT_MP4_PARTY_REPLAY`, or from `<build cache>/dump-lane/mp4_party_seed1.mptr`. If that file is
+  `MPT_MP4_PARTY_REPLAY`, or from `<build cache>/dump-lane/mp4_party_seed1-<module build ID>.mptr`. If that file is
   missing, the run records it there with `--party` and then exits as skipped (77): the replay is
   verified in a fresh process, never in the one that recorded it. The replay is your own game run.
   The lane refuses a replay path inside the repository or inside `MPT_DUMP_DIR`, and it is never a
@@ -193,7 +193,13 @@ checks the `PartyEvent` sequence and the final `PartySnapshot` of a whole party:
   - the final snapshot is `finished` on turn 20/20 on Toad's Midway Madness, with player 1 human and
     players 2 to 4 CPU, every seat with a character and no negative coins or stars.
   `tests/unit/test_dump_lane_party.cpp` proves the rules in CI on synthetic parties.
-- The option takes no other party option: seed 1 and the default board only (exit 2 otherwise).
+- **A stale replay.** The default file's name carries the game module's build ID (the build's
+  `manifest.json`, `runtime_build_version`), so a new module records its own replay. A change that
+  moves the state hashes without a new module (the host or the SDK side) makes the cached replay fail;
+  the lane then prints its path with "delete it to re-record". Deleting it makes the next run record
+  a new one. A replay named by `MPT_MP4_PARTY_REPLAY` is used as it is.
+- The option takes no other party option: seed 1 and the default board only. It also refuses
+  `--frame-log`, `--audio-out` and `--capture`, which would play the replay without checks (exit 2).
   A full run takes about 8 minutes on the reference machine.
 
 ## E5: the in-process save-state round trip, and a fresh runtime on the kept module (MP4, M4-16)
