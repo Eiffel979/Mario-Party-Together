@@ -123,6 +123,8 @@ struct BootOptions {
   bool conformance = false;            // --conformance: the runtime conformance suite instead of a boot run
   std::uint64_t save_load_diff = 0;    // --save-load-diff N: where a resumed run first differs, by hash item
   bool reboot_trail = false;           // --reboot-trail: runtimes A (seed), B (seed + 1), C (seed) in one process
+  bool reboot_dirty = false;           // --reboot-dirty: A, then runtimes that link many RELs, then C; C must equal A
+  std::uint64_t reboot_dirty_party = 15'000;  // --reboot-dirty-party N: frames of the autopilot party in between
   std::uint64_t e5_round_trip = 0;     // --e5-round-trip N: save before frame N, reload the module, load, compare
   bool e5_reload_module = false;       // --e5-reload-module: with --e5-round-trip, reload the module (diagnosis)
   // M2: scripted input on player 1 and frame captures.
@@ -449,50 +451,150 @@ int save_load_diff(const BootOptions& options, const mpt::VerifiedDump& dump, mp
 // and is destroyed before the next is created, so B and C run on the module A loaded. Every checkpoint
 // is printed as "reboot <A|B|C> frame N hash H", for comparing with separate boot-mode runs (the M1
 // trail). The lane itself fails unless C's trail equals A's and B's differs from it.
-int reboot_trail(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::TitleRegistry& registry) {
+// One clean runtime for --reboot-trail and --reboot-dirty: boots with `seed` on the kept module and
+// steps --frames frames (no input but --press). `trail` gets the boot-time hash (frame 0) and every
+// --every checkpoint after it, each printed as "reboot <name> frame N hash H".
+bool reboot_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::TitleRegistry& registry,
+                const char* name, std::uint64_t seed, std::vector<std::uint64_t>& trail) {
   const std::uint64_t every = options.every != 0 ? options.every : 100;
-  auto run = [&](const char* name, std::uint64_t seed, std::vector<std::uint64_t>& trail) {
-    std::unique_ptr<mpt::ITitleRuntime> runtime = registry.createRuntime(mpt::TitleId::mp4);
-    if (auto* mp4 = dynamic_cast<mpt::mp4::Mp4Runtime*>(runtime.get())) mp4->setReportSink(&print_report, nullptr);
-    mpt::RuntimeConfig config;
-    config.seed = seed;
-    if (mpt::Result r = runtime->boot(dump, config); !r) {
-      std::printf("dump lane: reboot %s: boot failed: %s\n", name, r.error().c_str());
+  std::unique_ptr<mpt::ITitleRuntime> runtime = registry.createRuntime(mpt::TitleId::mp4);
+  if (auto* mp4 = dynamic_cast<mpt::mp4::Mp4Runtime*>(runtime.get())) mp4->setReportSink(&print_report, nullptr);
+  mpt::RuntimeConfig config;
+  config.seed = seed;
+  if (mpt::Result r = runtime->boot(dump, config); !r) {
+    std::printf("dump lane: reboot %s: boot failed: %s\n", name, r.error().c_str());
+    return false;
+  }
+  const auto checkpoint = [&](std::uint64_t frame) {
+    const std::uint64_t hash = runtime->stateHash();
+    mpt::dump_lane::crash_note_checkpoint(frame, hash);
+    trail.push_back(hash);
+    std::printf("reboot %s frame %llu hash %016llx\n", name, static_cast<unsigned long long>(frame),
+                static_cast<unsigned long long>(hash));
+  };
+  checkpoint(0);  // the boot: a fresh runtime on the kept module must start where a fresh module does
+  for (std::uint64_t f = 0; f < options.frames; ++f) {
+    mpt::dump_lane::crash_note_frame(f);
+    mpt::InputFrame in;
+    in.frame = f;
+    in.pads[0] = scripted_pad(options, f);
+    runtime->stepFrame(in);
+    const mpt::RuntimeHealth h = runtime->status();
+    if (h.status != mpt::RuntimeStatus::running) {
+      std::printf("dump lane: reboot %s: frame %llu stopped: %s\n", name, static_cast<unsigned long long>(f),
+                  h.message.c_str());
       return false;
     }
-    for (std::uint64_t f = 0; f < options.frames; ++f) {
-      mpt::dump_lane::crash_note_frame(f);
-      mpt::InputFrame in;
-      in.frame = f;
-      in.pads[0] = scripted_pad(options, f);
-      runtime->stepFrame(in);
-      const mpt::RuntimeHealth h = runtime->status();
-      if (h.status != mpt::RuntimeStatus::running) {
-        std::printf("dump lane: reboot %s: frame %llu stopped: %s\n", name, static_cast<unsigned long long>(f),
-                    h.message.c_str());
-        return false;
-      }
-      if ((f + 1) % every != 0) continue;
-      const std::uint64_t hash = runtime->stateHash();
-      mpt::dump_lane::crash_note_checkpoint(f + 1, hash);
-      trail.push_back(hash);
-      std::printf("reboot %s frame %llu hash %016llx\n", name, static_cast<unsigned long long>(f + 1),
-                  static_cast<unsigned long long>(hash));
-    }
+    if ((f + 1) % every == 0) checkpoint(f + 1);
+  }
 #if defined(_WIN32) && defined(_M_X64)
-    const std::optional<std::uint64_t> cookie =
-        mpt::dump_lane::stack_guard::module_cookie(GetModuleHandleW(L"mp4_game.dll"));
-    std::printf("dump lane: reboot %s: seed %llu, module cookie %012llx\n", name, static_cast<unsigned long long>(seed),
-                static_cast<unsigned long long>(cookie.value_or(0)));
+  const std::optional<std::uint64_t> cookie =
+      mpt::dump_lane::stack_guard::module_cookie(GetModuleHandleW(L"mp4_game.dll"));
+  std::printf("dump lane: reboot %s: seed %llu, module cookie %012llx\n", name, static_cast<unsigned long long>(seed),
+              static_cast<unsigned long long>(cookie.value_or(0)));
 #endif
-    return true;  // the runtime is destroyed here, before the next one is created
-  };
+  return true;  // the runtime is destroyed here, before the next one is created
+}
+
+// `--reboot-trail` (ADR 0008, "Game module kept loaded for the process", point 3): a fresh runtime on
+// the kept module must start as one on a freshly loaded module. In one process, runtime A boots with
+// --seed, B with --seed + 1 and C with --seed again; each steps --frames frames (no input but --press)
+// and is destroyed before the next is created, so B and C run on the module A loaded. Every checkpoint,
+// from the boot-time hash (frame 0) on, is printed as "reboot <A|B|C> frame N hash H", for comparing
+// with separate boot-mode runs (the M1 trail). The lane itself fails unless C's trail equals A's and
+// B's differs from it.
+int reboot_trail(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::TitleRegistry& registry) {
   std::vector<std::uint64_t> a, b, c;
-  if (!run("A", options.seed, a) || !run("B", options.seed + 1, b) || !run("C", options.seed, c)) return 1;
+  if (!reboot_run(options, dump, registry, "A", options.seed, a) ||
+      !reboot_run(options, dump, registry, "B", options.seed + 1, b) ||
+      !reboot_run(options, dump, registry, "C", options.seed, c))
+    return 1;
   const bool c_is_a = c == a, b_differs = b != a;
-  std::printf("dump lane: reboot: %zu checkpoints each; C %s A; B %s A: %s\n", a.size(), c_is_a ? "equals" : "DIFFERS FROM",
-              b_differs ? "differs from" : "EQUALS", c_is_a && b_differs && !a.empty() ? "PASS" : "FAIL");
-  return c_is_a && b_differs && !a.empty() ? 0 : 1;
+  std::printf("dump lane: reboot: %zu checkpoints each, from frame 0; C %s A; B %s A: %s\n", a.size(),
+              c_is_a ? "equals" : "DIFFERS FROM", b_differs ? "differs from" : "EQUALS",
+              c_is_a && b_differs && a.size() > 1 ? "PASS" : "FAIL");
+  return c_is_a && b_differs && a.size() > 1 ? 0 : 1;
+}
+
+// A runtime that links many RELs, for --reboot-dirty: `test_start` 0 plays the M4-01 autopilot party
+// for `frames` frames (title, file and mode select, party setup, the board, the instruction screen, a
+// minigame and its results); any other value boots straight into that minigame (Mp4Runtime::
+// setTestStart, four human players). Prints every overlay it runs. False on a halt, fault or failed boot.
+bool reboot_dirty_run(const mpt::VerifiedDump& dump, mpt::TitleRegistry& registry, std::uint64_t seed,
+                      std::uint32_t test_start, std::uint64_t frames, std::set<std::string>& overlays) {
+  std::unique_ptr<mpt::ITitleRuntime> runtime = registry.createRuntime(mpt::TitleId::mp4);
+  auto* mp4 = dynamic_cast<mpt::mp4::Mp4Runtime*>(runtime.get());
+  if (mp4 == nullptr) return false;
+  if (test_start != 0) mp4->setTestStart(test_start, 0);
+  mpt::RuntimeConfig config;
+  config.seed = seed;
+  if (mpt::Result r = runtime->boot(dump, config); !r) {
+    std::printf("dump lane: reboot dirty: boot failed: %s\n", r.error().c_str());
+    return false;
+  }
+  const mpt::dump_lane::PartyScript script{};
+  mpt::dump_lane::PartyChangeTracker tracker;
+  std::string overlay;
+  for (std::uint64_t f = 0; f < frames; ++f) {
+    mpt::dump_lane::crash_note_frame(f);
+    MptMp4Party raw{};
+    raw.struct_size = sizeof raw;
+    const bool read = mp4->readParty(raw);
+    const mpt::PartySnapshot snap = read ? mpt::mp4::snapshot_of(raw) : mpt::PartySnapshot{};
+    tracker.observe(f, {snap.phase, read ? std::string(raw.overlay_name) : std::string(), snap.turn});
+    if (read && overlay != raw.overlay_name) {
+      overlay = raw.overlay_name;
+      if (!overlay.empty()) overlays.insert(overlay);
+    }
+    mpt::InputFrame in;
+    in.frame = f;
+    if (test_start == 0) {
+      in.pads[0] = mpt::dump_lane::party_autopilot(script, f, tracker.key(), tracker.sinceChange());
+    } else {
+      for (mpt::PadState& pad : in.pads) pad.connected = 1;  // the four human seats, idle
+    }
+    runtime->stepFrame(in);
+    const mpt::RuntimeHealth h = runtime->status();
+    if (h.status != mpt::RuntimeStatus::running) {
+      std::printf("dump lane: reboot dirty: frame %llu stopped: %s\n", static_cast<unsigned long long>(f),
+                  h.message.c_str());
+      return false;
+    }
+  }
+  std::printf("dump lane: reboot dirty: %s %llu frames, last overlay %s\n",
+              test_start == 0 ? "autopilot party" : ("minigame m" + std::to_string(test_start)).c_str(),
+              static_cast<unsigned long long>(frames), overlay.empty() ? "-" : overlay.c_str());
+  return true;
+}
+
+// `--reboot-dirty` (ADR 0008, "Game module kept loaded for the process", point 3; docs/titles/mp4.md
+// section 21): like --reboot-trail, but the runtimes between A and C dirty many RELs' data before C
+// boots: the autopilot party for --reboot-dirty-party frames (the board and its first minigame), then
+// a few minigames booted straight in (test_start), 600 frames each. A and C (both --seed, --frames from
+// boot) must have equal trails from the boot-time hash (frame 0) on. Each REL's data is part of the
+// state hash whether it is linked or not, so C differs from A unless every boot restores every REL.
+int reboot_dirty(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::TitleRegistry& registry) {
+  std::vector<std::uint64_t> a, c;
+  if (!reboot_run(options, dump, registry, "A", options.seed, a)) return 1;
+  std::set<std::string> overlays;
+  if (!reboot_dirty_run(dump, registry, options.seed, 0, options.reboot_dirty_party, overlays)) return 1;
+  for (std::uint32_t minigame : {410u, 424u, 429u, 457u}) {
+    if (!reboot_dirty_run(dump, registry, options.seed, minigame, 600, overlays)) return 1;
+  }
+  std::string list;
+  for (const std::string& o : overlays) list += (list.empty() ? "" : ",") + o;
+  std::printf("dump lane: reboot dirty: %zu overlays ran in between: %s\n", overlays.size(), list.c_str());
+  if (!reboot_run(options, dump, registry, "C", options.seed, c)) return 1;
+  std::size_t first_diff = 0;
+  while (first_diff < a.size() && first_diff < c.size() && a[first_diff] == c[first_diff]) ++first_diff;
+  const bool same = a == c && a.size() > 1;
+  if (!same && first_diff < a.size()) {
+    std::printf("dump lane: reboot dirty: C first differs from A at checkpoint %zu (%s)\n", first_diff,
+                first_diff == 0 ? "the boot-time hash, frame 0" : "after the boot");
+  }
+  std::printf("dump lane: reboot dirty: %zu checkpoints each, from frame 0; C %s A: %s\n", a.size(),
+              same ? "equals" : "DIFFERS FROM", same ? "PASS" : "FAIL");
+  return same ? 0 : 1;
 }
 
 int e5_round_trip(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::TitleRegistry& registry) {
@@ -530,6 +632,7 @@ int e5_round_trip(const BootOptions& options, const mpt::VerifiedDump& dump, mpt
   auto cookie_now = []() { return mpt::dump_lane::stack_guard::module_cookie(GetModuleHandleW(L"mp4_game.dll")); };
 #endif
   std::vector<std::pair<std::uint64_t, std::uint64_t>> straight;  // (frame, hash) at each checkpoint
+  std::uint64_t boot_hash = 0;  // the first runtime's stateHash() right after boot (frame 0)
   mpt::SaveState saved;
   [[maybe_unused]] std::optional<std::uint64_t> cookie_before;  // Windows x64 only
 #if defined(_WIN32) && defined(_M_X64)
@@ -538,6 +641,7 @@ int e5_round_trip(const BootOptions& options, const mpt::VerifiedDump& dump, mpt
   {
     std::unique_ptr<mpt::ITitleRuntime> first = make();
     if (!first) return 1;
+    boot_hash = first->stateHash();
     for (std::uint64_t f = 0; f < options.frames; ++f) {
       if (f == at) {
         saved = first->saveState();
@@ -592,6 +696,14 @@ int e5_round_trip(const BootOptions& options, const mpt::VerifiedDump& dump, mpt
 #endif
   std::unique_ptr<mpt::ITitleRuntime> fresh = make();
   if (!fresh) return 1;
+  // Before it loads the state, the fresh runtime must boot where the first one did (frame 0).
+  {
+    const std::uint64_t fresh_boot = fresh->stateHash();
+    std::printf("dump lane: e5: boot-time hash %016llx, first runtime %016llx: %s\n",
+                static_cast<unsigned long long>(fresh_boot), static_cast<unsigned long long>(boot_hash),
+                fresh_boot == boot_hash ? "equal" : "DIFFERENT");
+    if (fresh_boot != boot_hash) return 1;
+  }
 #if defined(_WIN32) && defined(_M_X64)
   {
     const std::optional<std::uint64_t> cookie_after = cookie_now();
@@ -1544,6 +1656,7 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir, cons
                                  : options.save_load_diff != 0    ? "save-load-diff"
                                  : options.e5_round_trip != 0     ? "e5-round-trip"
                                  : options.reboot_trail           ? "reboot-trail"
+                                 : options.reboot_dirty           ? "reboot-dirty"
                                  : options.e2.on                  ? "e2"
                                  : options.conformance            ? "conformance"
                                                                   : "boot",
@@ -1583,6 +1696,18 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir, cons
     return save_load_diff(options, std::get<mpt::VerifiedDump>(dump), registry);
 #else
     std::puts("dump lane: --save-load-diff needs the MP4 runtime");
+    return 1;
+#endif
+  }
+  if (options.reboot_dirty) {
+#if defined(MPT_DUMP_LANE_MP4)
+    if (*title != mpt::TitleId::mp4) {
+      std::puts("dump lane: --reboot-dirty runs on mp4 only for now");
+      return 1;
+    }
+    return reboot_dirty(options, std::get<mpt::VerifiedDump>(dump), registry);
+#else
+    std::puts("dump lane: --reboot-dirty needs the MP4 runtime");
     return 1;
 #endif
   }
@@ -1810,6 +1935,10 @@ static int lane_main(int argc, char** argv) {
       boot_options.e5_round_trip = std::strtoull(argv[++i], nullptr, 10);
     } else if (arg == "--reboot-trail") {
       boot_options.reboot_trail = true;
+    } else if (arg == "--reboot-dirty") {
+      boot_options.reboot_dirty = true;
+    } else if (arg == "--reboot-dirty-party" && has_value) {
+      boot_options.reboot_dirty_party = std::strtoull(argv[++i], nullptr, 10);
     } else if (arg == "--e5-reload-module") {
       boot_options.e5_reload_module = true;
     } else if (arg == "--conformance") {
@@ -1925,7 +2054,7 @@ static int lane_main(int argc, char** argv) {
     } else {
       std::printf("usage: mpt_dump_lane [--boot <title> [--frames N] [--every N] [--seed S] [--perturb [--perturb-samples N]]\n"
                   "                     [--hash-items FILE [--note-module-hits]] [--conformance] [--save-load-diff N]\n"
-                  "                     [--e5-round-trip N [--e5-reload-module]] [--reboot-trail]\n"
+                  "                     [--e5-round-trip N [--e5-reload-module]] [--reboot-trail] [--reboot-dirty [--reboot-dirty-party N]]\n"
                   "                     [--press button@frame[+frames][,...]]... [--capture DIR [--capture-every N]]\n"
                   "                     [--party [--party-board N [--party-unlock-bowser]] [--party-wheel FROM:TO]\n"
                   "                              [--watchdog N] [--replay FILE]\n"
