@@ -123,6 +123,14 @@ endif()
 mpt_set_warnings(mpt_dump_lane)
 add_test(NAME dump_lane_replays COMMAND mpt_dump_lane)
 set_tests_properties(dump_lane_replays PROPERTIES LABELS dump SKIP_RETURN_CODE 77)
+# A fresh MP4 runtime on the kept module after runtimes that link many RELs must match the first one
+# from its boot-time hash on (--reboot-dirty, docs/titles/mp4.md section 11). About a minute; skipped
+# (77) without MPT_DUMP_DIR.
+if(TARGET mpt_mp4_runtime)
+  add_test(NAME dump_lane_mp4_reboot_dirty
+    COMMAND mpt_dump_lane --supervise --boot mp4 --reboot-dirty --frames 120 --every 60)
+  set_tests_properties(dump_lane_mp4_reboot_dirty PROPERTIES LABELS dump SKIP_RETURN_CODE 77 TIMEOUT 1800)
+endif()
 # P1-17: the full-party event test on the M4-01 autopilot replay (tests/dump_lane/README.md, "Party
 # events"). The replay comes from MPT_MP4_PARTY_REPLAY or is recorded into the build cache by the first
 # run, which then skips (77): the next runs verify it, each in a fresh process. The replay is never in

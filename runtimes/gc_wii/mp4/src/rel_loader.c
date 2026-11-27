@@ -31,6 +31,19 @@ int mpt_mp4_rel_init(void) {
   return 1;
 }
 
+int mpt_mp4_rel_reset_all(void) {
+  if (s_pristine == 0) {
+    return 0;
+  }
+  for (unsigned i = 0; i < mpt_mp4_rel_count; ++i) {
+    const MptMp4RelInfo* rel = mpt_mp4_rel_table[i];
+    if (s_pristine[i] != 0) {
+      memcpy(rel->data_lo, s_pristine[i], (size_t)(rel->data_hi - rel->data_lo));
+    }
+  }
+  return 1;
+}
+
 const MptMp4RelInfo* mpt_mp4_rel_link(const char* name) {
   if (name == 0 || s_pristine == 0) {
     return 0;

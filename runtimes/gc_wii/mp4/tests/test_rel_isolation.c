@@ -1,5 +1,6 @@
 /* P1-15 unit check: two REL-local symbols with the same name resolve independently, and linking an
- * overlay again restores its .data and zeroes its .bss (mpt_mp4_rel.h, tools/MptMp4Rel.cmake). */
+ * overlay again restores its .data and zeroes its .bss (mpt_mp4_rel.h, tools/MptMp4Rel.cmake). Every
+ * boot restores every REL without linking it (mpt_mp4_rel_reset_all, docs/titles/mp4.md section 11). */
 #include <stdio.h>
 #include <string.h>
 
@@ -48,6 +49,18 @@ int main(void) {
   CHECK(mpt_rel_rel_a__setup_calls == 0);
   CHECK(mpt_rel_rel_a__shared_name() == 600);
   CHECK(mpt_rel_rel_b__shared_name() == 5201);
+
+  /* A boot restores every REL, linked or not: dirty both (B is not linked again), reset, and both hold
+   * their pristine values: .data back to its initial values, .bss back to zero. */
+  CHECK(mpt_rel_rel_a__shared_name() == 701);
+  CHECK(mpt_rel_rel_b__shared_name() == 5302);
+  mpt_mp4_rel_object_setup(a);
+  CHECK(mpt_rel_rel_a__setup_calls == 1);
+  CHECK(mpt_mp4_rel_reset_all());
+  CHECK(mpt_rel_rel_a__setup_calls == 0);
+  CHECK(mpt_rel_rel_a__shared_name() == 600);
+  CHECK(mpt_rel_rel_b__counter_plus(1) == 51);
+  CHECK(mpt_rel_rel_b__shared_name() == 5100);
 
   if (failures == 0) printf("rel isolation: all checks passed\n");
   return failures == 0 ? 0 : 1;
