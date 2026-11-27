@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <utility>
 #include <iterator>
 #include <memory>
 #include <optional>
@@ -354,6 +355,8 @@ inline std::vector<std::string> check_full_party(std::span<const PartyEvent> eve
   std::int32_t last_turn = 0;
   std::optional<MinigameId> running;
   std::size_t minigames = 0;
+  // Per turn_started event, in order: its turn and the minigames that started before the next one.
+  std::vector<std::pair<std::int32_t, std::size_t>> turns;
   std::uint64_t last_frame = 0;
   for (const PartyEvent& e : events) {
     if (e.frame < last_frame) problems.push_back(at(e, "events out of frame order"));
@@ -381,6 +384,7 @@ inline std::vector<std::string> check_full_party(std::span<const PartyEvent> eve
                                        std::to_string(last_turn)));
         }
         last_turn = e.snapshot.turn;
+        turns.emplace_back(e.snapshot.turn, 0);
         break;
       case PartyEvent::Kind::minigame_started:
         if (!e.minigame) {
@@ -394,6 +398,11 @@ inline std::vector<std::string> check_full_party(std::span<const PartyEvent> eve
         check_minigame(e, *e.minigame);
         running = e.minigame;
         ++minigames;
+        if (turns.empty()) {
+          problems.push_back(at(e, e.minigame->str() + " started before the first turn"));
+        } else {
+          ++turns.back().second;
+        }
         break;
       case PartyEvent::Kind::minigame_ended:
         if (!e.minigame || e.minigame != running) {
@@ -408,9 +417,13 @@ inline std::vector<std::string> check_full_party(std::span<const PartyEvent> eve
     problems.push_back("the last turn started was " + std::to_string(last_turn) + ", expected " +
                        std::to_string(expected.max_turns));
   }
-  // Every turn ends in a minigame; battle, Bowser and other space events can add more.
+  // Every turn ends in a minigame; battle, Bowser and other space events can add more. A turn's minigames
+  // are the ones that start between its turn_started and the next.
   if (minigames < static_cast<std::size_t>(expected.max_turns)) {
     problems.push_back(std::to_string(minigames) + " minigames for " + std::to_string(expected.max_turns) + " turns");
+  }
+  for (const auto& [turn, count] : turns) {
+    if (count == 0) problems.push_back("turn " + std::to_string(turn) + " has no minigame");
   }
   if (phase != PartyPhase::finished) problems.push_back(std::string("the events end in phase ") + phase_text(phase));
 

@@ -183,6 +183,40 @@ TEST_CASE("check_full_party rejects each way a party can go wrong") {
     });
     CHECK(mentions(p, "2 minigames for 3 turns"));
   }
+  SUBCASE("one turn without a minigame while another has two") {
+    const auto p = mutated([](std::vector<PartySnapshot>& f) {
+      const std::size_t m = frame_of(f, PartyPhase::minigame, 2);
+      f.erase(f.begin() + static_cast<std::ptrdiff_t>(m));
+      // Turn 3 gains a second minigame, so the total still equals the turn count.
+      const std::size_t after = frame_of(f, PartyPhase::minigame, 3) + 1;
+      PartySnapshot extra = f[after - 1];
+      PartySnapshot back = f[after];
+      f.insert(f.begin() + static_cast<std::ptrdiff_t>(after) + 1, extra);
+      f.insert(f.begin() + static_cast<std::ptrdiff_t>(after) + 2, back);
+    });
+    CHECK(mentions(p, "turn 2 has no minigame"));
+    CHECK_FALSE(mentions(p, "minigames for 3 turns"));
+  }
+  SUBCASE("a turn going backwards") {
+    const auto p = mutated([](std::vector<PartySnapshot>& f) {
+      for (std::size_t i = frame_of(f, PartyPhase::board, 3); i < f.size(); ++i) f[i].turn = 1;
+    });
+    CHECK(mentions(p, "turn 1 started after turn 2"));
+  }
+  SUBCASE("a negative final coin count") {
+    const auto p = mutated([](std::vector<PartySnapshot>& f) { f.back().players[1].coins = -5; });
+    CHECK(mentions(p, "final: player 2 has negative coins or stars"));
+  }
+  SUBCASE("a negative final star count") {
+    const auto p = mutated([](std::vector<PartySnapshot>& f) { f.back().players[3].stars = -1; });
+    CHECK(mentions(p, "final: player 4 has negative coins or stars"));
+  }
+  SUBCASE("player 1 as a CPU") {
+    const auto p = mutated([](std::vector<PartySnapshot>& f) {
+      for (PartySnapshot& s : f) s.players[0].is_cpu = true;
+    });
+    CHECK(mentions(p, "final: player 1 is a CPU"));
+  }
   SUBCASE("another board") {
     const auto p = mutated([](std::vector<PartySnapshot>& f) {
       for (PartySnapshot& s : f)
