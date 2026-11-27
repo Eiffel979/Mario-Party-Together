@@ -24,10 +24,10 @@ typedef struct MptMp4RelInfo {
 
 /* Takes the pristine copies. Called once by the module before game code runs. Returns 0 on failure. */
 int mpt_mp4_rel_init(void);
-/* The REL named `name`, with its data restored, or NULL if the module has no such REL. */
 /* Restores every REL's range to its pristine copy, as a freshly loaded module holds it. Called at every
  * boot. Returns 0 if mpt_mp4_rel_init has not run. */
 int mpt_mp4_rel_reset_all(void);
+/* The REL named `name`, with its data restored, or NULL if the module has no such REL. */
 const MptMp4RelInfo* mpt_mp4_rel_link(const char* name);
 void mpt_mp4_rel_object_setup(const MptMp4RelInfo* rel);
 void mpt_mp4_rel_unlink(const MptMp4RelInfo* rel);

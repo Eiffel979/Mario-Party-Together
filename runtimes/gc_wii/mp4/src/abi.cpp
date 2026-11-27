@@ -208,7 +208,7 @@ bool boot(MptMp4Game& game, std::optional<mpt::SaveMedia> card, std::string& err
   }
   // Every REL's data and bss too: they are hashed and saved (gameStateRegions) whether or not the REL is
   // linked, so a runtime that boots on the kept module after a party would otherwise start from the
-  // previous runtime's REL state (docs/titles/mp4.md section 21).
+  // previous runtime's REL state (docs/titles/mp4.md section 11, "Every REL restored at boot").
   if (!mpt_mp4_rel_reset_all()) {
     error = "the overlay table has no pristine copies";
     return false;
