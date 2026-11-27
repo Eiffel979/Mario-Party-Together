@@ -144,6 +144,11 @@ struct BootOptions {
   std::uint64_t watchdog = 36'000;     // --watchdog N: frames with no party change before failing
   std::filesystem::path replay_out;    // --replay FILE: where --party writes its .mptr
   std::filesystem::path verify_replay; // --verify-replay FILE
+  // P1-17: --party-events, the full-party event test (dump_lane.h, check_full_party) on the M4-01
+  // autopilot replay: MPT_MP4_PARTY_REPLAY, else one recorded into the build cache if missing.
+  bool party_events = false;
+  bool expect_full_party = false;      // set by --party-events for its --verify-replay pass
+  bool party_replay_keyed = false;     // --party-events' default replay: its name gets the module build ID
   // Diagnosis: --party-save-at N FILE writes the state before frame N; --party-resume FILE goes on from it.
   std::uint64_t party_save_at = 0;
   std::filesystem::path party_save;
@@ -1120,6 +1125,8 @@ int party_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Ti
   return 0;
 }
 
+int check_full_party_events(mpt::Session& session);
+
 // `--verify-replay FILE`: plays an .mptr on a fresh Session and checks every checkpoint's state hash and
 // party digest (verify_replay). Needs no sidecar: the replay's own checkpoints are the reference.
 int verify_replay_file(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::TitleRegistry& registry) {
@@ -1203,7 +1210,113 @@ int verify_replay_file(const BootOptions& options, const mpt::VerifiedDump& dump
               static_cast<unsigned long long>(v.trail.empty() ? 0 : v.trail.back().state_hash),
               phase_name(session.director().party().phase), all ? "PASS" : "FAIL");
   if (!v.status) std::printf("dump lane: %s\n", v.status.error().c_str());
-  return all ? 0 : 1;
+  if (!all || !options.expect_full_party) return all ? 0 : 1;
+  return check_full_party_events(session);
+}
+
+// P1-17: the Director's events and final snapshot after a played replay, against the full-party
+// rules (dump_lane.h) for the M4-01 autopilot party: Toad's Midway Madness, 20 turns, player 1 human.
+int check_full_party_events(mpt::Session& session) {
+  auto* mp4 = dynamic_cast<mpt::mp4::Mp4Runtime*>(&session.runtime());
+  if (mp4 == nullptr) {
+    std::puts("dump lane: party events: not an MP4 session");
+    return 1;
+  }
+  mpt::mp4::Mp4Adapter adapter(*mp4);  // the catalog is static (docs/titles/mp4.md section 12)
+  const mpt::Catalog catalog = adapter.catalog();
+  mpt::dump_lane::FullPartyExpectation expected;
+  expected.title = mpt::TitleId::mp4;
+  expected.max_turns = 20;
+  expected.board = mpt::mp4::board_for(0);
+  expected.party_eligible = [](const mpt::MinigameId& id) { return mpt::mp4::party_eligible(id); };
+  const auto events = session.director().events();
+  for (const mpt::PartyEvent& e : events) print_event(e);
+  std::size_t minigames = 0;
+  for (const mpt::PartyEvent& e : events)
+    if (e.kind == mpt::PartyEvent::Kind::minigame_started) ++minigames;
+  const mpt::PartySnapshot& f = session.director().party();
+  std::printf("dump lane: party events: %zu events, %zu minigames, final phase %s turn %d/%d board %s\n", events.size(),
+              minigames, phase_name(f.phase), f.turn, f.max_turns, f.board ? f.board->str().c_str() : "-");
+  for (std::size_t i = 0; i < mpt::kMaxPlayers; ++i) {
+    const mpt::PlayerState& p = f.players[i];
+    std::printf("dump lane: party events: final p%zu %s %s %d stars %d coins\n", i + 1,
+                p.character ? p.character->str().c_str() : "-", p.is_cpu ? "com" : "human", p.stars, p.coins);
+  }
+  const std::vector<std::string> problems = mpt::dump_lane::check_full_party(events, f, catalog, expected);
+  for (const std::string& p : problems) std::printf("dump lane: party events: %s\n", p.c_str());
+  std::printf("dump lane: party events: %s\n", problems.empty() ? "PASS" : "FAIL");
+  return problems.empty() ? 0 : 1;
+}
+
+// The game module's build ID (its runtime_build_version) from the build's manifest, or "".
+std::string module_build_id(const mpt::VerifiedDump& dump) {
+  const auto bytes = mpt::dump_lane::read_file(dump.build_dir / "manifest.json");
+  if (!bytes) return {};
+  std::string error;
+  const auto manifest = mpt::asset_import::BuildManifest::parse(
+      std::string_view(reinterpret_cast<const char*>(bytes->data()), bytes->size()), error);
+  return manifest ? manifest->runtime_build_version : std::string();
+}
+
+// `--party-events`: the replay named by MPT_MP4_PARTY_REPLAY, or else `<build cache>/dump-lane/
+// mp4_party_seed1-<module build ID>.mptr`, recorded there by the M4-01 autopilot (seed 1, the default
+// board) when it is missing; that run then exits as skipped (77). The build ID in the name makes a new
+// module record its own replay. A run that finds the replay plays it on a fresh Session, checks it
+// (verify_replay) and checks its events against the full-party rules. The replay is the user's own game
+// run: never in the repository (main refuses that) or in MPT_DUMP_DIR.
+int party_events_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::TitleRegistry& registry,
+                     std::filesystem::path replay) {
+  if (options.party_replay_keyed) {
+    const std::string id = module_build_id(dump);
+    const bool name_safe = std::all_of(id.begin(), id.end(), [](char c) {
+      return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '-' || c == '_' || c == '.';
+    });
+    if (id.empty() || !name_safe) {
+      std::printf("dump lane: party events: cannot read a module build ID for a file name from the build's manifest\n");
+      return 1;
+    }
+    replay.replace_filename("mp4_party_seed1-" + id + ".mptr");
+  }
+  std::error_code ec;
+  if (!std::filesystem::exists(replay, ec)) {
+    std::printf("dump lane: party events: no replay at %s, recording the M4-01 party there\n",
+                mpt::dump_lane::path_text(replay).c_str());
+    std::filesystem::create_directories(replay.parent_path(), ec);
+    std::filesystem::path partial = replay;
+    partial += ".partial";
+    BootOptions record = options;
+    record.party = true;
+    record.party_events = false;
+    record.replay_out = partial;
+    record.frames = 1'000'000;  // as --party: the party ends the run long before
+    if (const int rc = party_run(record, dump, registry); rc != 0) {
+      std::filesystem::remove(partial, ec);
+      return rc;
+    }
+    std::filesystem::rename(partial, replay, ec);
+    if (ec) {
+      std::printf("dump lane: party events: could not move the replay into place\n");
+      std::filesystem::remove(partial, ec);
+      return 1;
+    }
+    // The replay is verified in a fresh process, never in the one that recorded it: a Session started
+    // after a whole party in the same process diverged at frame 60 (docs/titles/mp4.md section 21).
+    std::printf("dump lane: party events: recorded; run again to verify it in a fresh process, skipping\n");
+    return kSkip;
+  }
+  BootOptions verify = options;
+  verify.party_events = false;
+  verify.expect_full_party = true;
+  verify.verify_replay = replay;
+  verify.frames = UINT64_MAX;
+  std::printf("dump lane: party events: verifying %s\n", mpt::dump_lane::path_text(replay).c_str());
+  const int rc = verify_replay_file(verify, dump, registry);
+  if (rc != 0) {
+    std::printf("dump lane: party events: FAILED on %s; if an intended change moved the state hashes, "
+                "delete it to re-record\n",
+                mpt::dump_lane::path_text(replay).c_str());
+  }
+  return rc;
 }
 #endif
 
@@ -1527,7 +1640,8 @@ int e2_run(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::Title
 #endif
 
 // The M1 check: boot headless on the dump, no input, and step.
-int boot(const BootOptions& options, const std::filesystem::path& dump_dir, const std::filesystem::path& cache) {
+int boot(const BootOptions& options, const std::filesystem::path& dump_dir, const std::filesystem::path& cache,
+         const std::filesystem::path& party_replay) {
   const std::optional<mpt::TitleId> title = mpt::parse_title_id(options.title);
   if (!title) {
     std::printf("dump lane: unknown title '%s'\n", options.title.c_str());
@@ -1539,7 +1653,8 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir, cons
     std::printf("dump lane: no runtime registered for %s\n", options.title.c_str());
     return 1;
   }
-  mpt::dump_lane::crash_note_run(options.party                    ? "party"
+  mpt::dump_lane::crash_note_run(options.party_events             ? "party-events"
+                                 : options.party                  ? "party"
                                  : !options.verify_replay.empty() ? "verify-replay"
                                  : options.save_load_diff != 0    ? "save-load-diff"
                                  : options.e5_round_trip != 0     ? "e5-round-trip"
@@ -1553,16 +1668,18 @@ int boot(const BootOptions& options, const std::filesystem::path& dump_dir, cons
     std::printf("dump lane: %s\n", failure->error().c_str());
     return 1;
   }
-  if (options.party || !options.verify_replay.empty()) {
+  if (options.party || !options.verify_replay.empty() || options.party_events) {
 #if defined(MPT_DUMP_LANE_MP4)
     if (*title != mpt::TitleId::mp4) {
-      std::puts("dump lane: --party and --verify-replay run on mp4 only for now");
+      std::puts("dump lane: --party, --verify-replay and --party-events run on mp4 only for now");
       return 1;
     }
     const mpt::VerifiedDump& verified = std::get<mpt::VerifiedDump>(dump);
+    if (options.party_events) return party_events_run(options, verified, registry, party_replay);
     return options.party ? party_run(options, verified, registry) : verify_replay_file(options, verified, registry);
 #else
-    std::puts("dump lane: --party and --verify-replay need the MP4 runtime");
+    (void)party_replay;
+    std::puts("dump lane: --party, --verify-replay and --party-events need the MP4 runtime");
     return 1;
 #endif
   }
@@ -1868,6 +1985,8 @@ static int lane_main(int argc, char** argv) {
       }
     } else if (arg == "--party") {
       boot_options.party = true;
+    } else if (arg == "--party-events") {
+      boot_options.party_events = true;
     } else if (arg == "--party-unlock-bowser") {
       boot_options.unlock_bowser = true;
     } else if (arg == "--party-board" && has_value) {
@@ -1934,6 +2053,7 @@ static int lane_main(int argc, char** argv) {
                   "                              [--party-save-at N FILE] [--party-resume FILE]\n"
                   "                              [--watch-word OFF,...] [--find-word VALUE@FRAME]\n"
                   "                              [--watch-write OFF,...@FRAME] [--dump-arena FRAME FILE]]\n"
+                  "                     [--party-events]  (MPT_MP4_PARTY_REPLAY, else a replay recorded into the build cache)\n"
                   "                     [--verify-replay FILE [--frames N] [--frame-log FILE] [--audio-out FILE]\n"
                   "                                       [--capture DIR [--capture-every N] [--capture-from N] [--capture-to N]]]]\n"
                   "       mpt_dump_lane --layout-probe\n"
@@ -1959,6 +2079,18 @@ static int lane_main(int argc, char** argv) {
   // ignored without a word. A replay never records the unlock, so --verify-replay cannot use it either.
   if (boot_options.unlock_bowser && (!boot_options.party || !boot_options.verify_replay.empty())) {
     std::printf("dump lane: --party-unlock-bowser needs --party and cannot go with --verify-replay\n");
+    return 2;
+  }
+  // --party-events records and plays the M4-01 party itself: the default seed and board, nothing else.
+  if (boot_options.party_events &&
+      (boot_options.title != "mp4" || boot_options.party || !boot_options.verify_replay.empty() ||
+       !boot_options.replay_out.empty() || boot_options.seed != 1 || boot_options.script.board != 0 ||
+       boot_options.unlock_bowser || !boot_options.party_resume.empty() || frames_given ||
+       !boot_options.frame_log.empty() || !boot_options.audio_out.empty() || !boot_options.capture_dir.empty())) {
+    // --frame-log, --audio-out and --capture would turn its --verify-replay pass into the unchecked
+    // diagnostics pass.
+    std::printf("dump lane: --party-events goes with --boot mp4 only (seed 1, the default board, no other party "
+                "or diagnostics option)\n");
     return 2;
   }
   const std::string dump_dir_env = environment("MPT_DUMP_DIR");
@@ -1998,7 +2130,24 @@ static int lane_main(int argc, char** argv) {
   // Captures (the user's game output) and the caches (an extracted disc, built modules, decomp
   // checkouts) must stay outside the repository too, and so must --hash-items (it names the game's
   // symbols).
-  const std::array<mpt::dump_lane::GuardedPath, 9> written = {{
+  // --party-events' replay: MPT_MP4_PARTY_REPLAY, else in the build cache. It is the user's own game run,
+  // so neither the repository nor MPT_DUMP_DIR (dumps only) may hold it.
+  std::filesystem::path party_replay;
+  if (boot_options.party_events) {
+    const std::string env = environment("MPT_MP4_PARTY_REPLAY");
+    // The default's file name gets the module build ID once the build is known (party_events_run); the
+    // guards below see its folder, which is the same.
+    party_replay = env.empty() ? cache.path / "dump-lane" / "mp4_party_seed1.mptr" : std::filesystem::path(env);
+    boot_options.party_replay_keyed = env.empty();
+    if (mpt::dump_lane::is_inside(party_replay, dump_dir)) {
+      std::printf("dump lane: the --party-events replay (%s) is inside MPT_DUMP_DIR, which holds dumps only; "
+                  "set MPT_MP4_PARTY_REPLAY or MPT_BUILD_CACHE outside it\n",
+                  mpt::dump_lane::path_text(party_replay).c_str());
+      return 1;
+    }
+  }
+  const std::array<mpt::dump_lane::GuardedPath, 10> written = {{
+      {"the --party-events replay", party_replay},
       {"--audio-out", boot_options.audio_out},
       {"--frame-log", boot_options.frame_log},
       {"--party-save-at", boot_options.party_save},
@@ -2013,7 +2162,7 @@ static int lane_main(int argc, char** argv) {
     std::printf("dump lane: %s\n", refused.c_str());
     return 1;
   }
-  if (!boot_options.title.empty()) return boot(boot_options, dump_dir, cache.path);
+  if (!boot_options.title.empty()) return boot(boot_options, dump_dir, cache.path, party_replay);
 
   const auto fixtures = mpt::dump_lane::find_fixtures(MPT_REPLAYS_DIR);
   if (fixtures.empty()) {

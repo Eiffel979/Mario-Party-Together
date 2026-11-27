@@ -108,6 +108,33 @@ TEST_CASE("Mp4Adapter on an unbooted Mp4Runtime: no party, the full catalog, onl
   }));
 }
 
+TEST_CASE("Mp4Adapter in Phase 1: writeParty is unused, launchMinigame fails, no minigame result") {
+  mpt::mp4::Mp4Runtime runtime;  // never booted
+  mpt::mp4::Mp4Adapter adapter(runtime);
+  const std::uint64_t hash = runtime.stateHash();
+  const mpt::PartySnapshot before = adapter.readParty();
+
+  // writeParty does nothing in Phase 1: the snapshot and the state are unchanged.
+  mpt::PartySnapshot written;
+  written.phase = mpt::PartyPhase::board;
+  written.turn = 3;
+  written.max_turns = 20;
+  written.board = mpt::ContentId::parse("mp4.board.toads_midway_madness");
+  written.players[0].coins = 99;
+  adapter.writeParty(written);
+  CHECK(adapter.readParty() == before);
+  CHECK(runtime.stateHash() == hash);
+
+  // launchMinigame is Phase 5 (ADR 0002): a failure with a reason, for a catalogued minigame too.
+  mpt::MinigameSetup setup;
+  setup.seed = 7;
+  const mpt::Result launched = adapter.launchMinigame(*mpt::ContentId::parse("mp4.minigame.manta_rings"), setup);
+  CHECK_FALSE(launched.ok());
+  CHECK_FALSE(launched.error().empty());
+  CHECK_FALSE(adapter.pollMinigameResult().has_value());
+  CHECK(runtime.stateHash() == hash);
+}
+
 TEST_CASE("mpt_mp4_api_has_v1_1 accepts only a v1.1 table with status") {
   MptMp4Api api{};
   api.abi_version = MPT_MP4_ABI_VERSION;
