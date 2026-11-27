@@ -445,12 +445,6 @@ int save_load_diff(const BootOptions& options, const mpt::VerifiedDump& dump, mp
 // and, on Windows, the module kept its handle and /GS cookie across the two runtimes. It also prints
 // how many guard words the arena holds at the save (stack_guard.h): the evidence that the saved frame
 // has suspended guarded game functions. --e5-reload-module unloads the module in between instead.
-// `--reboot-trail` (ADR 0008, "Game module kept loaded for the process", point 3): a fresh runtime on
-// the kept module must start as one on a freshly loaded module. In one process, runtime A boots with
-// --seed, B with --seed + 1 and C with --seed again; each steps --frames frames (no input but --press)
-// and is destroyed before the next is created, so B and C run on the module A loaded. Every checkpoint
-// is printed as "reboot <A|B|C> frame N hash H", for comparing with separate boot-mode runs (the M1
-// trail). The lane itself fails unless C's trail equals A's and B's differs from it.
 // One clean runtime for --reboot-trail and --reboot-dirty: boots with `seed` on the kept module and
 // steps --frames frames (no input but --press). `trail` gets the boot-time hash (frame 0) and every
 // --every checkpoint after it, each printed as "reboot <name> frame N hash H".
@@ -573,6 +567,9 @@ bool reboot_dirty_run(const mpt::VerifiedDump& dump, mpt::TitleRegistry& registr
 // a few minigames booted straight in (test_start), 600 frames each. A and C (both --seed, --frames from
 // boot) must have equal trails from the boot-time hash (frame 0) on. Each REL's data is part of the
 // state hash whether it is linked or not, so C differs from A unless every boot restores every REL.
+// The fewest overlays --reboot-dirty accepts between A and C (the default run has 12).
+constexpr std::size_t kRebootDirtyMinOverlays = 10;
+
 int reboot_dirty(const BootOptions& options, const mpt::VerifiedDump& dump, mpt::TitleRegistry& registry) {
   std::vector<std::uint64_t> a, c;
   if (!reboot_run(options, dump, registry, "A", options.seed, a)) return 1;
@@ -584,6 +581,16 @@ int reboot_dirty(const BootOptions& options, const mpt::VerifiedDump& dump, mpt:
   std::string list;
   for (const std::string& o : overlays) list += (list.empty() ? "" : ",") + o;
   std::printf("dump lane: reboot dirty: %zu overlays ran in between: %s\n", overlays.size(), list.c_str());
+  // The check must not pass trivially: the runtimes in between have to have dirtied many RELs, the four
+  // minigames among them.
+  std::string missing;
+  for (const char* m : {"m410Dll", "m424Dll", "m429Dll", "m457Dll"})
+    if (overlays.count(m) == 0) missing += (missing.empty() ? "" : ",") + std::string(m);
+  if (overlays.size() < kRebootDirtyMinOverlays || !missing.empty()) {
+    std::printf("dump lane: reboot dirty: FAIL: %zu overlays ran in between (at least %zu needed)%s%s\n",
+                overlays.size(), kRebootDirtyMinOverlays, missing.empty() ? "" : "; did not run: ", missing.c_str());
+    return 1;
+  }
   if (!reboot_run(options, dump, registry, "C", options.seed, c)) return 1;
   std::size_t first_diff = 0;
   while (first_diff < a.size() && first_diff < c.size() && a[first_diff] == c[first_diff]) ++first_diff;

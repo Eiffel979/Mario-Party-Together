@@ -122,6 +122,14 @@ endif()
 mpt_set_warnings(mpt_dump_lane)
 add_test(NAME dump_lane_replays COMMAND mpt_dump_lane)
 set_tests_properties(dump_lane_replays PROPERTIES LABELS dump SKIP_RETURN_CODE 77)
+# A fresh MP4 runtime on the kept module after runtimes that link many RELs must match the first one
+# from its boot-time hash on (--reboot-dirty, docs/titles/mp4.md section 11). About a minute; skipped
+# (77) without MPT_DUMP_DIR.
+if(TARGET mpt_mp4_runtime)
+  add_test(NAME dump_lane_mp4_reboot_dirty
+    COMMAND mpt_dump_lane --supervise --boot mp4 --reboot-dirty --frames 120 --every 60)
+  set_tests_properties(dump_lane_mp4_reboot_dirty PROPERTIES LABELS dump SKIP_RETURN_CODE 77 TIMEOUT 1800)
+endif()
 # Crash reports (M4-04, dump_lane/supervise.h): --supervise debugs the lane to report /GS fail-fasts
 # (DbgHelp walks the stack); on Linux the lane's own __stack_chk_fail reports, exported so the game
 # module binds to it. The self-test crashes a synthetic stub module (mp4_loader/overrun_stub.cpp) and
