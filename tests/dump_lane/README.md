@@ -206,7 +206,9 @@ module kept loaded for the process"). Every normal exit of the lane releases it 
     m410, m424, m429 and m457 booted straight in (four idle human seats), 600 frames each;
   - then runtime C (`--seed`) steps `--frames` frames from boot.
 
-  It prints the overlays that ran in between. It exits 0 only if C's trail equals A's from frame 0.
+  It prints the overlays that ran in between. It fails if fewer than 10 ran or if one of the four
+  minigames did not, so it cannot pass trivially, and exits 0 only if C's trail equals A's from frame 0.
+  CTest runs it as `dump_lane_mp4_reboot_dirty` (label `dump`, `--frames 120 --every 60`).
   The default takes about a minute, and `--reboot-dirty-party 252000` plays the whole party. Every REL's
   data is part of the state hash whether it is linked or not, so this fails unless every boot restores
   every REL (`docs/titles/mp4.md` §11).
