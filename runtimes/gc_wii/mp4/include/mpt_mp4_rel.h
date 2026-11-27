@@ -4,7 +4,9 @@
  * writable data sits in its own range [data_lo, data_hi): .data with its initial values and .bss as
  * zeros (RELs are compiled with -fno-zero-initialized-in-bss). A pristine copy of each range is taken
  * once, before any game code runs, and restored on every link: that is what OSLink gives on the
- * console, where each link maps the REL afresh.
+ * console, where each link maps the REL afresh. Every boot restores all of them too
+ * (mpt_mp4_rel_reset_all), because the ranges are part of the state hash and the save state: a fresh
+ * runtime on the kept module must not carry the previous runtime's REL state.
  */
 #ifndef MPT_MP4_REL_H
 #define MPT_MP4_REL_H
@@ -23,6 +25,9 @@ typedef struct MptMp4RelInfo {
 /* Takes the pristine copies. Called once by the module before game code runs. Returns 0 on failure. */
 int mpt_mp4_rel_init(void);
 /* The REL named `name`, with its data restored, or NULL if the module has no such REL. */
+/* Restores every REL's range to its pristine copy, as a freshly loaded module holds it. Called at every
+ * boot. Returns 0 if mpt_mp4_rel_init has not run. */
+int mpt_mp4_rel_reset_all(void);
 const MptMp4RelInfo* mpt_mp4_rel_link(const char* name);
 void mpt_mp4_rel_object_setup(const MptMp4RelInfo* rel);
 void mpt_mp4_rel_unlink(const MptMp4RelInfo* rel);

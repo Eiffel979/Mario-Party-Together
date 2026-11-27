@@ -169,8 +169,9 @@ std::vector<std::span<std::byte>> gameStateRegions() {
 // The module stays loaded for the process (ADR 0008, "Game module kept loaded for the process", point 3;
 // host/src/module_loader.h), so every create must start from what a freshly loaded module holds. The
 // game-visible module state is taken here once, at load, before any create and before any game code:
-//  - the game core's writable data and every REL's (game_data.c, rel_loader.c keep the images and
-//    restore them at boot and at each REL link);
+//  - the game core's writable data and every REL's (game_data.c and rel_loader.c keep the images;
+//    boot() restores both, mpt_mp4_game_data_reset and mpt_mp4_rel_reset_all, and each REL link
+//    restores that REL's again, as OSLink maps it afresh);
 //  - MusyX's data and bss (MusyxEngine keeps its image and restores it at boot);
 //  - the GX layer's object ID counters, which a game advances and the next create would otherwise
 //    start from.
@@ -203,6 +204,13 @@ bool boot(MptMp4Game& game, std::optional<mpt::SaveMedia> card, std::string& err
   game.sdk.reset();
   if (!mpt_mp4_game_data_reset()) {
     error = "out of memory for the game's pristine data";
+    return false;
+  }
+  // Every REL's data and bss too: they are hashed and saved (gameStateRegions) whether or not the REL is
+  // linked, so a runtime that boots on the kept module after a party would otherwise start from the
+  // previous runtime's REL state (docs/titles/mp4.md section 21).
+  if (!mpt_mp4_rel_reset_all()) {
+    error = "the overlay table has no pristine copies";
     return false;
   }
   char dol_error[256] = {};
