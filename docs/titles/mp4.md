@@ -227,6 +227,28 @@ There is no GBA link, no microphone, no keyboard and no Wii hardware. Input is t
 - **Save states into a fresh process (E5)** need: the arena reserved at a fixed virtual address; HuPrc coroutine stacks inside the arena; and the game module loaded at a fixed base (ADR 0008 §11. Windows: fixed image base, no dynamic base. Linux: no fixed-address `dlopen`, so either a non-PIE module mapped at its fixed address by our own loader, or relocation on load); and the stack guard value the state was saved under (below). Without a fixed base, every function pointer saved in the arena (process entry points, object callbacks, overlay hooks) is wrong in a new process. **Flagged as a risk to E5.**
 - **Equal addresses are not enough: the stack guard value** (ADR 0008, "Stack guard values in save states"; `docs/phases/phase-1.md`, ruling M4-I). The module is built with `/GS`. A game function that is suspended at the save has the guard value in its frame, which lies in the arena and so in the state. On Windows that value comes from the module's `__security_cookie`, made anew every time the module is loaded; on Linux the stack protector's canary is made once per process. A state loaded under another value fails fast (0xC0000409 on Windows) when that function returns, although nothing overran. Seen with `--party-resume` (§21 "M4-03"). Fresh-process save states are a Phase 2 item, with the ADR that closes ADR 0008 §10's exception. Phase 1 has one check, M4-16: the in-process E5 round trip, saved at a frame with a suspended guarded function. It failed while the module reloaded between runtimes, and passes with the module kept loaded for the process (next bullet).
 
+- **Every REL restored at boot (2026-11-26, `mp4-rel-reset-at-boot`).** `boot()` (`src/abi.cpp`) restored the game core's writable data but not the RELs'. A REL's data and bss were restored only when that REL was linked (`mpt_mp4_rel_link`, `src/rel_loader.c`). Every REL's range is hashed and saved whether it is linked or not, so a fresh runtime on the kept module booted with the previous runtime's REL state. That broke ADR 0008 point 3 for any runtime after the first.
+  - **Found by** qa-reviewer, from the P1-17 party-events test (§21): a replay verified in the process that had just recorded a whole party differed at frame 60.
+  - **Why the old checks missed it.** `--reboot-trail` compared only from frame 100, and the RELs a title-screen run touches are linked again before then.
+  - **Fix.** `mpt_mp4_rel_reset_all` restores every REL's pristine copy at every boot, next to `mpt_mp4_game_data_reset`. The `LoadImage` comment in `abi.cpp` now says so.
+  - **Rest of the load image.** The GX object ID counters (`game.boot_ids`, set at every boot) and MusyX's data (`MusyxEngine::reset`) were already restored at boot. The loader keeps no other per-REL state: `mpt_mp4_rel_unlink` frees nothing, and objdll's tables are game core data.
+  - **Stronger checks.**
+    - `--reboot-trail` now compares from the boot-time hash (frame 0).
+    - `--e5-round-trip` requires the fresh runtime to boot at the first runtime's hash before it loads the state.
+    - The new `--reboot-dirty` boots a clean runtime, then runtimes that link many RELs, then a second clean runtime that must match the first from frame 0 (`tests/dump_lane/README.md`).
+  - **Results** (Windows, Release, null backend, the user's dump, one lane process at a time):
+
+    | Run | Before the fix (main's runtime) | With the fix |
+    |---|---|---|
+    | `--reboot-dirty --frames 600 --every 60`, seed 1 (12 overlays in between) | FAIL: C differs from A at frame 0 (`527954ba68dab883` against `723f6a9552168d2e`) | PASS, 11 of 11 checkpoints from frame 0 |
+    | `--reboot-dirty --reboot-dirty-party 252000`, seed 1 (the whole party then four minigames, 30 overlays) | not run | PASS, 11 of 11 |
+    | `--e5-round-trip 5000 --frames 10000 --every 100`, seed 1 | FAIL: the fresh runtime boots at `b8bcc2214f420fef`, not `723f6a9552168d2e` | PASS: boot-time hashes equal; 50 of 50; `2523e333cd8cc6cc`; same handle and cookie |
+    | the same, seed 2 | not run | PASS: boot-time hashes equal (`0e8fd1f3ad9b3bc5`); 50 of 50; `5677a93bacfda417` |
+    | `--reboot-trail --frames 10000 --every 100`, seed 1 | — | PASS, 101 checkpoints from frame 0; A and C end at `2523e333cd8cc6cc`, B at `5677a93bacfda417`; one cookie |
+    | M1, fresh process, `--boot mp4 --frames 10000 --every 100`, seeds 1 and 2 | — | `2523e333cd8cc6cc` and `5677a93bacfda417`, unchanged: a fresh process's first boot already starts from pristine RELs |
+
+  - **Build ID.** The fix changes the module's build ID (`mp4-ac8abdfd59c65439` to `mp4-3573ec54fa757b78`), but no fresh-process hash.
+
 ## 12. Catalog: content IDs
 
 IDs follow `mp4.<kind>.<snake_name>`. Display names are the English USA names, shown as text only. The DLL and category come from the decomp's minigame table (`mgInfoTbl`, `game/objsub.c`, field `type`) and from REL labels in `configure.py`. Category names for `type` values are inferred from how board code launches them (type 4 from battle spaces, 3 from Bowser events, 5 from fortune events).
@@ -1288,6 +1310,8 @@ The phase is `board` on the instruction and results screens, and `minigame` with
 - **Seed 5 failed fast in turn 2** (Party Board patch 0022). `CoasterPathUpdate` (`w01Dll`, Toad's Midway Madness) passes a three-entry `s16` list to `BoardSpaceLinkTargetListGet`, which clears and fills `BOARD_SPACE_LINKMAX` (4). The module is built with `/GS`, so the overrun hit the stack cookie and the return failed fast (0xC0000409, `FAST_FAIL_STACK_COOKIE_CHECK_FAILURE`). On the console the two bytes land in the frame. The list now has four entries, as the board's other caller already has. The other callers all leave room for four.
 
 **Conformance on the dump lane.** `mpt_dump_lane --boot mp4 --conformance --frames 1200 --every 60 --press start@900` runs every check in `tests/conformance/conformance.h` against `Mp4Runtime` and `Mp4Adapter` on the real game. It then runs `check_hash_coverage` against the deep hash on a runtime with debug hooks: 6 fixed targets and 64 sampled bytes. **All checks pass** (Windows, null backend), including the save-state round trip after the draw-sync fix, with 70 of 70 coverage targets checked. Rerun after patches 0021 and 0022: 0 problems, 70 of 70.
+
+**A second runtime in one process (fixed 2026-11-26).** A runtime booted after a whole party in the same process used to start from the previous runtime's REL data. Every boot now restores every REL, and `--reboot-dirty --reboot-dirty-party 252000` passes from frame 0 (§11, "Every REL restored at boot").
 
 ### M4-01: a whole party on an autopilot (`m4-01-party-autopilot`)
 

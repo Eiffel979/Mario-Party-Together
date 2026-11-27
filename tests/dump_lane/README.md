@@ -173,6 +173,7 @@ mpt_dump_lane --boot mp4 --verify-replay FILE [--frames N] [--frame-log FILE] [-
 ```
 mpt_dump_lane --supervise --boot mp4 --e5-round-trip N [--frames M] [--every K] [--seed S] [--e5-reload-module]
 mpt_dump_lane --supervise --boot mp4 --reboot-trail [--frames M] [--every K] [--seed S]
+mpt_dump_lane --supervise --boot mp4 --reboot-dirty [--reboot-dirty-party N] [--frames M] [--every K] [--seed S]
 mpt_dump_lane [--supervise] --guard-reload-selftest STUB keep|reload
 ```
 
@@ -183,7 +184,8 @@ module kept loaded for the process"). Every normal exit of the lane releases it 
 - `--e5-round-trip N` is E5 as narrowed (`docs/phases/phase-1.md`, M4-D): one runtime steps `--frames`
   frames with no input (or `--press`), saving the state before frame N and keeping the state hash at
   every `--every` checkpoint. The lane destroys it, boots a fresh runtime with the same seed, loads the
-  state and steps frames N to `--frames`. Exit 0 only if every checkpoint after N has the uninterrupted
+  state and steps frames N to `--frames`. Before it loads the state, the fresh runtime's boot-time hash
+  (frame 0) must equal the first runtime's. Exit 0 only if every checkpoint after N has the uninterrupted
   run's hash and the module stayed loaded across the two runtimes, with the same handle and the same
   `/GS` cookie. On Windows it also prints how many `/GS` guard words the arena holds at the save
   (`stack_guard.h`: words that are the module's cookie XOR an address next to them, i.e. suspended
@@ -194,9 +196,20 @@ module kept loaded for the process"). Every normal exit of the lane releases it 
   reason the module is kept loaded.
 - `--reboot-trail` checks that a fresh runtime on the kept module starts as one on a freshly loaded
   module: runtimes A (`--seed`), B (`--seed` + 1) and C (`--seed`) each step `--frames` frames in turn,
-  each destroyed before the next is created. It prints every checkpoint as `reboot <A|B|C> frame N hash
-  H` for comparison with separate boot-mode runs (the M1 trail), and exits 0 only if C's trail equals
-  A's and B's differs from it.
+  each destroyed before the next is created. It prints every checkpoint from the boot-time hash
+  (frame 0) on as `reboot <A|B|C> frame N hash H` for comparison with separate boot-mode runs (the M1
+  trail), and exits 0 only if C's trail equals A's and B's differs from it.
+- `--reboot-dirty` is the same check after runtimes that link many RELs:
+  - runtime A (`--seed`) steps `--frames` frames from boot;
+  - then come runtimes that dirty many RELs' data: the autopilot party for `--reboot-dirty-party`
+    frames (default 15,000: menus, party setup, the board, its first minigame and results), then
+    m410, m424, m429 and m457 booted straight in (four idle human seats), 600 frames each;
+  - then runtime C (`--seed`) steps `--frames` frames from boot.
+
+  It prints the overlays that ran in between. It exits 0 only if C's trail equals A's from frame 0.
+  The default takes about a minute, and `--reboot-dirty-party 252000` plays the whole party. Every REL's
+  data is part of the state hash whether it is linked or not, so this fails unless every boot restores
+  every REL (`docs/titles/mp4.md` §11).
 - `--guard-reload-selftest STUB keep|reload` needs no dump: it suspends a guarded function of a synthetic
   stub (`tests/mp4_loader/guard_stub.cpp`) on a fiber, keeps or reloads the stub, and resumes it. CTest
   runs both (`dump_lane_guard_reload_keep`, `dump_lane_guard_reload_fails_fast`) on Windows x64.
